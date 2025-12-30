@@ -65,6 +65,7 @@ export interface Show {
 	contentRating?: string;
 	genres?: string;
 	cast?: string;
+	crew?: string;
 	network?: string;
 	posterPath?: string;
 	backdropPath?: string;
@@ -1299,6 +1300,25 @@ export async function getMovieSuggestions(movieId: number): Promise<{ results: T
 	return response.json();
 }
 
+// TV Show suggestions
+export interface TMDBShowResult {
+	id: number;
+	name: string;
+	overview: string;
+	first_air_date: string;
+	poster_path: string | null;
+	backdrop_path: string | null;
+	vote_average: number;
+}
+
+export async function getShowSuggestions(showId: number): Promise<{ results: TMDBShowResult[] }> {
+	const response = await fetch(`${API_BASE}/shows/suggestions/${showId}`);
+	if (!response.ok) {
+		throw new Error(`API error: ${response.status}`);
+	}
+	return response.json();
+}
+
 // Genre types
 export interface Genre {
 	id: number;
@@ -1496,4 +1516,135 @@ export async function getSubtitleTracks(mediaType: 'movie' | 'episode', mediaId:
 
 export function getSubtitleTrackUrl(mediaType: 'movie' | 'episode', mediaId: number, trackIndex: number): string {
 	return `${API_BASE}/subtitles/${mediaType}/${mediaId}/track/${trackIndex}`;
+}
+
+// Person types
+
+export interface PersonCredit {
+	id: number;
+	mediaType: 'movie' | 'tv';
+	title: string;
+	character?: string;
+	job?: string;
+	posterPath: string | null;
+	releaseDate: string | null;
+	voteAverage: number;
+}
+
+export interface LibraryAppearance {
+	id: number;
+	type: 'movie' | 'show';
+	title: string;
+	year: number;
+	posterPath: string | null;
+}
+
+export interface PersonDetail {
+	id: number;
+	name: string;
+	biography: string;
+	birthday: string | null;
+	deathday: string | null;
+	placeOfBirth: string | null;
+	profilePath: string | null;
+	knownFor: string;
+	credits: PersonCredit[];
+	alsoInLibrary: LibraryAppearance[];
+}
+
+export async function getPersonDetail(personId: number): Promise<PersonDetail> {
+	const response = await fetch(`${API_BASE}/person/${personId}`);
+	if (!response.ok) {
+		throw new Error(`API error: ${response.status}`);
+	}
+	return response.json();
+}
+
+// Watchlist types and functions
+
+export interface WatchlistItem {
+	id: number;
+	userId: number;
+	tmdbId: number;
+	mediaType: 'movie' | 'tv';
+	addedAt: string;
+	// Enriched fields
+	title: string;
+	posterPath: string | null;
+	backdropPath: string | null;
+	year: number;
+	inLibrary: boolean;
+	libraryId?: number;
+	progress?: number;
+}
+
+export async function getWatchlist(): Promise<WatchlistItem[]> {
+	const response = await fetch(`${API_BASE}/watchlist`);
+	if (!response.ok) {
+		throw new Error(`API error: ${response.status}`);
+	}
+	return response.json();
+}
+
+export async function addToWatchlist(tmdbId: number, mediaType: 'movie' | 'tv'): Promise<void> {
+	const response = await fetch(`${API_BASE}/watchlist`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ tmdbId, mediaType })
+	});
+	if (!response.ok) {
+		throw new Error(`API error: ${response.status}`);
+	}
+}
+
+export async function removeFromWatchlist(tmdbId: number, mediaType: 'movie' | 'tv'): Promise<void> {
+	const response = await fetch(`${API_BASE}/watchlist/${tmdbId}/${mediaType}`, {
+		method: 'DELETE'
+	});
+	if (!response.ok) {
+		throw new Error(`API error: ${response.status}`);
+	}
+}
+
+export async function isInWatchlist(tmdbId: number, mediaType: 'movie' | 'tv'): Promise<boolean> {
+	const response = await fetch(`${API_BASE}/watchlist/${tmdbId}/${mediaType}`);
+	if (!response.ok) {
+		throw new Error(`API error: ${response.status}`);
+	}
+	const result = await response.json();
+	return result.inWatchlist;
+}
+
+// Enhanced discover detail types (with status)
+
+export interface DiscoverMovieDetailWithStatus extends DiscoverMovieDetail {
+	inLibrary: boolean;
+	libraryId?: number;
+	requested: boolean;
+	requestId?: number;
+	requestStatus?: string;
+}
+
+export interface DiscoverShowDetailWithStatus extends DiscoverShowDetail {
+	inLibrary: boolean;
+	libraryId?: number;
+	requested: boolean;
+	requestId?: number;
+	requestStatus?: string;
+}
+
+export async function getDiscoverMovieDetailWithStatus(id: number): Promise<DiscoverMovieDetailWithStatus> {
+	const response = await fetch(`${API_BASE}/discover/movie/${id}`);
+	if (!response.ok) {
+		throw new Error(`API error: ${response.status}`);
+	}
+	return response.json();
+}
+
+export async function getDiscoverShowDetailWithStatus(id: number): Promise<DiscoverShowDetailWithStatus> {
+	const response = await fetch(`${API_BASE}/discover/show/${id}`);
+	if (!response.ok) {
+		throw new Error(`API error: ${response.status}`);
+	}
+	return response.json();
 }

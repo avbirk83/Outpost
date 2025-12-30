@@ -83,7 +83,7 @@
 		{@render children()}
 	{:else}
 		<!-- Standard app layout -->
-		<div class="min-h-screen bg-bg-primary text-text-primary">
+		<div class="min-h-screen bg-bg-primary text-text-primary overflow-x-hidden">
 			<!-- Sidebar -->
 			<Sidebar isAdmin={user.role === 'admin'} />
 

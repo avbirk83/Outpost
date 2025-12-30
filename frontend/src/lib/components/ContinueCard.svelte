@@ -7,16 +7,17 @@
 		subtitle?: string;
 		backdropUrl?: string;
 		posterUrl?: string;
-		progress: number;
+		progress?: number;
 		duration?: string;
-		type: 'movie' | 'episode';
+		type: 'movie' | 'episode' | 'series';
 		href?: string;
 		onRemove?: () => void;
 	}
 
 	let { id, title, subtitle, backdropUrl, posterUrl, progress, duration, type, href, onRemove }: Props = $props();
 
-	const link = href ?? (type === 'movie' ? `/watch/movie/${id}` : `/watch/episode/${id}`);
+	// Use $derived for reactive computed values
+	const link = $derived(href ?? (type === 'movie' ? `/watch/movie/${id}` : `/watch/episode/${id}`));
 </script>
 
 <div class="group relative">
@@ -69,18 +70,20 @@
 				{#if subtitle}
 					<p class="text-sm text-white/70 truncate mt-0.5">{subtitle}</p>
 				{/if}
-				<!-- Progress bar -->
-				<div class="mt-3 flex items-center gap-3">
-					<div class="flex-1 h-1 bg-white/30 rounded-full overflow-hidden">
-						<div
-							class="h-full bg-white/50 rounded-full transition-all duration-300"
-							style="width: {progress}%"
-						></div>
+				<!-- Progress bar - only show if progress exists -->
+				{#if progress !== undefined && progress > 0}
+					<div class="mt-3 flex items-center gap-3">
+						<div class="flex-1 h-1 bg-white/30 rounded-full overflow-hidden">
+							<div
+								class="h-full bg-white/50 rounded-full transition-all duration-300"
+								style="width: {progress}%"
+							></div>
+						</div>
+						{#if duration}
+							<span class="text-xs text-white/70 whitespace-nowrap">{duration}</span>
+						{/if}
 					</div>
-					{#if duration}
-						<span class="text-xs text-white/70 whitespace-nowrap">{duration}</span>
-					{/if}
-				</div>
+				{/if}
 			</div>
 		</div>
 	</a>

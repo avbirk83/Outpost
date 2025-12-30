@@ -310,6 +310,10 @@ func (s *Service) FetchShowMetadata(show *database.Show) error {
 		cast := tmdb.CastToJSON(details.Credits.Cast, 0)
 		show.Cast = &cast
 	}
+	if len(details.Credits.Crew) > 0 {
+		crew := tmdb.CrewToJSON(details.Credits.Crew, 0)
+		show.Crew = &crew
+	}
 	if len(details.Networks) > 0 {
 		show.Network = &details.Networks[0].Name
 	}
@@ -376,6 +380,10 @@ func (s *Service) FetchShowMetadataByTmdbID(show *database.Show, tmdbID int64) e
 	if len(details.Credits.Cast) > 0 {
 		cast := tmdb.CastToJSON(details.Credits.Cast, 0)
 		show.Cast = &cast
+	}
+	if len(details.Credits.Crew) > 0 {
+		crew := tmdb.CrewToJSON(details.Credits.Crew, 0)
+		show.Crew = &crew
 	}
 	if len(details.Networks) > 0 {
 		show.Network = &details.Networks[0].Name

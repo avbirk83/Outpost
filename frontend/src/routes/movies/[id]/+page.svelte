@@ -5,10 +5,12 @@
 	import {
 		getMovie, refreshMovieMetadata, getImageUrl, getTmdbImageUrl, createWantedItem,
 		getQualityProfiles, getWatchStatus, markAsWatched, markAsUnwatched,
-		getMediaInfo, getMovieSuggestions, type Movie, type QualityProfile, type MediaInfo, type TMDBMovieResult
+		getMediaInfo, getMovieSuggestions, addToWatchlist, removeFromWatchlist, isInWatchlist,
+		type Movie, type QualityProfile, type MediaInfo, type TMDBMovieResult
 	} from '$lib/api';
 	import { auth } from '$lib/stores/auth';
 	import Dropdown from '$lib/components/Dropdown.svelte';
+	import PersonModal from '$lib/components/PersonModal.svelte';
 
 	let movie: Movie | null = $state(null);
 	let loading = $state(true);
@@ -23,6 +25,7 @@
 	let selectedAudio = $state<number>(0);
 	let showManageMenu = $state(false);
 	let inWatchlist = $state(false);
+	let watchlistLoading = $state(false);
 	let showTrailerModal = $state(false);
 	let selectedVideo = $state(0);
 	let recommendations: TMDBMovieResult[] = $state([]);
@@ -32,6 +35,8 @@
 	let crewScrollContainer: HTMLElement;
 	let canScrollCrewLeft = $state(false);
 	let canScrollCrewRight = $state(true);
+	let selectedPersonId = $state<number | null>(null);
+	let selectedPersonName = $state<string>('');
 
 	function updateCastScrollState() {
 		if (!castScrollContainer) return;
@@ -65,6 +70,18 @@
 		setTimeout(updateCrewScrollState, 350);
 	}
 
+	function handlePersonClick(person: { id?: number; name: string }) {
+		if (person.id) {
+			selectedPersonId = person.id;
+			selectedPersonName = person.name;
+		}
+	}
+
+	function closePersonModal() {
+		selectedPersonId = null;
+		selectedPersonName = '';
+	}
+
 	auth.subscribe((value) => {
 		user = value;
 	});
@@ -81,6 +98,10 @@
 			mediaInfo = await getMediaInfo('movie', id);
 			const defaultSub = mediaInfo.subtitleTracks?.find(t => t.default);
 			if (defaultSub) selectedSubtitle = defaultSub.index;
+			// Check watchlist status using TMDB ID
+			if (movie?.tmdbId) {
+				inWatchlist = await isInWatchlist(movie.tmdbId, 'movie').catch(() => false);
+			}
 			// Load suggestions based on genres, excluding library items
 			if (movie) {
 				try {
@@ -141,6 +162,24 @@
 		}
 	}
 
+	async function handleToggleWatchlist() {
+		if (!movie?.tmdbId) return;
+		watchlistLoading = true;
+		try {
+			if (inWatchlist) {
+				await removeFromWatchlist(movie.tmdbId, 'movie');
+				inWatchlist = false;
+			} else {
+				await addToWatchlist(movie.tmdbId, 'movie');
+				inWatchlist = true;
+			}
+		} catch (e) {
+			console.error('Failed to update watchlist:', e);
+		} finally {
+			watchlistLoading = false;
+		}
+	}
+
 	function formatRuntime(minutes?: number): string {
 		if (!minutes) return '';
 		const h = Math.floor(minutes / 60);
@@ -165,8 +204,6 @@
 
 	function formatMoney(amount?: number): string {
 		if (!amount || amount === 0) return '-';
-		if (amount >= 1_000_000_000) return `$${(amount / 1_000_000_000).toFixed(1)}B`;
-		if (amount >= 1_000_000) return `$${(amount / 1_000_000).toFixed(0)}M`;
 		return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(amount);
 	}
 
@@ -183,21 +220,25 @@
 	}
 
 	function getLanguageName(code?: string): string {
-		if (!code) return '-';
-		const languages: Record<string, string> = {
-			en: 'English', es: 'Spanish', fr: 'French', de: 'German', it: 'Italian',
-			pt: 'Portuguese', ja: 'Japanese', ko: 'Korean', zh: 'Chinese', ru: 'Russian',
-			hi: 'Hindi', ar: 'Arabic', nl: 'Dutch', sv: 'Swedish', pl: 'Polish'
-		};
-		return languages[code] || code.toUpperCase();
+		if (!code || code === 'und') return 'Unknown';
+		try {
+			const displayNames = new Intl.DisplayNames(['en'], { type: 'language' });
+			return displayNames.of(code) || code;
+		} catch {
+			return code;
+		}
 	}
 
-	function formatResolution(height?: number): string {
-		if (!height) return '';
-		if (height >= 2160) return '4K';
-		if (height >= 1080) return '1080p';
-		if (height >= 720) return '720p';
-		return `${height}p`;
+	function formatResolution(width?: number, height?: number): string {
+		if (!width && !height) return '';
+		const w = width || 0;
+		const h = height || 0;
+		// Check both width and height to handle widescreen content
+		if (w >= 3840 || h >= 2160) return '4K';
+		if (w >= 1920 || h >= 1080) return '1080p';
+		if (w >= 1280 || h >= 720) return '720p';
+		if (h > 0) return `${h}p`;
+		return '';
 	}
 
 	function formatAudioChannels(channels?: number): string {
@@ -216,25 +257,34 @@
 	}
 
 	function getCountryFlag(code?: string): string {
+		if (!code || code.length !== 2) return '';
+		// Convert 2-letter country code to flag emoji
+		return code.toUpperCase().split('').map(c => String.fromCodePoint(127397 + c.charCodeAt(0))).join('');
+	}
+
+	function getCountryName(code?: string): string {
 		if (!code) return '';
-		const flags: Record<string, string> = {
-			'US': '🇺🇸', 'USA': '🇺🇸', 'United States': '🇺🇸', 'United States of America': '🇺🇸',
-			'UK': '🇬🇧', 'GB': '🇬🇧', 'United Kingdom': '🇬🇧',
-			'CA': '🇨🇦', 'Canada': '🇨🇦',
-			'AU': '🇦🇺', 'Australia': '🇦🇺',
-			'FR': '🇫🇷', 'France': '🇫🇷',
-			'DE': '🇩🇪', 'Germany': '🇩🇪',
-			'JP': '🇯🇵', 'Japan': '🇯🇵',
-			'KR': '🇰🇷', 'South Korea': '🇰🇷',
-			'CN': '🇨🇳', 'China': '🇨🇳',
-			'IN': '🇮🇳', 'India': '🇮🇳',
-			'IT': '🇮🇹', 'Italy': '🇮🇹',
-			'ES': '🇪🇸', 'Spain': '🇪🇸',
-			'MX': '🇲🇽', 'Mexico': '🇲🇽',
-			'BR': '🇧🇷', 'Brazil': '🇧🇷',
-			'NZ': '🇳🇿', 'New Zealand': '🇳🇿'
-		};
-		return flags[code] || '';
+		try {
+			const displayNames = new Intl.DisplayNames(['en'], { type: 'region' });
+			return displayNames.of(code.toUpperCase()) || code;
+		} catch {
+			return code;
+		}
+	}
+
+	function getStatusColor(status?: string): string {
+		switch (status?.toLowerCase()) {
+			case 'released':
+				return 'text-green-400';
+			case 'in production':
+			case 'post production':
+				return 'text-yellow-400';
+			case 'planned':
+			case 'rumored':
+				return 'text-text-muted';
+			default:
+				return 'text-green-400';
+		}
 	}
 
 	// Get tags from genres
@@ -376,8 +426,9 @@
 					<!-- Icon bubble controls -->
 					<div class="flex items-center gap-3 mb-5">
 						<button
-							onclick={() => inWatchlist = !inWatchlist}
-							class="w-11 h-11 rounded-full flex items-center justify-center transition-all border {inWatchlist ? 'bg-blue-600 border-blue-500 text-white' : 'bg-white/10 border-white/20 text-white hover:bg-white/20'}"
+							onclick={handleToggleWatchlist}
+							disabled={watchlistLoading}
+							class="w-11 h-11 rounded-full flex items-center justify-center transition-all border disabled:opacity-50 {inWatchlist ? 'bg-blue-600 border-blue-500 text-white' : 'bg-white/10 border-white/20 text-white hover:bg-white/20'}"
 							title="{inWatchlist ? 'Remove from' : 'Add to'} Watchlist"
 						>
 							{#if inWatchlist}
@@ -457,7 +508,7 @@
 							{#if mediaInfo.videoStreams?.length}
 								<Dropdown
 									icon="video"
-									options={mediaInfo.videoStreams.map((v, i) => ({ value: i, label: `${formatResolution(v.height)} ${v.codec?.toUpperCase() || ''}` }))}
+									options={mediaInfo.videoStreams.map((v, i) => ({ value: i, label: `${formatResolution(v.width, v.height)} ${v.codec?.toUpperCase() || ''}` }))}
 									value={selectedVideo}
 									onchange={(v) => selectedVideo = v as number}
 								/>
@@ -472,7 +523,7 @@
 							{/if}
 							<Dropdown
 								icon="subtitles"
-								options={[{ value: null, label: 'Off' }, ...(mediaInfo.subtitleTracks || []).map(s => ({ value: s.index, label: s.title || s.language || 'Unknown' }))]}
+								options={[{ value: null, label: 'Off' }, ...(mediaInfo.subtitleTracks || []).map(s => ({ value: s.index, label: s.title || getLanguageName(s.language) }))]}
 								value={selectedSubtitle}
 								onchange={(v) => selectedSubtitle = v as number | null}
 							/>
@@ -482,17 +533,17 @@
 
 				<!-- RIGHT: Info Panel Card -->
 				<div class="flex-shrink-0 w-72">
-					<div class="liquid-card p-4 space-y-3 text-sm">
+					<div class="liquid-card p-4 space-y-2.5 text-sm">
 						<!-- Status -->
 						<div class="flex justify-between">
 							<span class="text-text-muted">Status</span>
-							<span class="text-green-400 font-medium">{movie.status || 'Released'}</span>
+							<span class="{getStatusColor(movie.status)} font-medium">{movie.status || 'Released'}</span>
 						</div>
 
-						<!-- Year -->
+						<!-- Release Date -->
 						{#if movie.year}
 							<div class="flex justify-between">
-								<span class="text-text-muted">🎬 Year</span>
+								<span class="text-text-muted">Released</span>
 								<span>{movie.year}</span>
 							</div>
 						{/if}
@@ -504,6 +555,8 @@
 								<span>{formatRuntime(movie.runtime)}</span>
 							</div>
 						{/if}
+
+						<div class="border-t border-white/10 my-2"></div>
 
 						<!-- Budget -->
 						{#if movie.budget}
@@ -517,8 +570,12 @@
 						{#if movie.revenue}
 							<div class="flex justify-between">
 								<span class="text-text-muted">Revenue</span>
-								<span class="text-green-400">{formatMoney(movie.revenue)}</span>
+								<span class="{movie.revenue > (movie.budget || 0) ? 'text-green-400' : 'text-red-400'}">{formatMoney(movie.revenue)}</span>
 							</div>
+						{/if}
+
+						{#if movie.budget || movie.revenue}
+							<div class="border-t border-white/10 my-2"></div>
 						{/if}
 
 						<!-- Language -->
@@ -531,17 +588,12 @@
 
 						<!-- Country -->
 						{#if movie.country}
-							<div class="flex justify-between">
+							<div class="flex justify-between items-center">
 								<span class="text-text-muted">Country</span>
-								<span>{getCountryFlag(movie.country)} {movie.country}</span>
-							</div>
-						{/if}
-
-						<!-- Director -->
-						{#if movie.director}
-							<div class="flex justify-between">
-								<span class="text-text-muted">Director</span>
-								<span class="truncate ml-2">{movie.director}</span>
+								<span class="flex items-center gap-1.5">
+									<span class="text-base">{getCountryFlag(movie.country)}</span>
+									<span>{getCountryName(movie.country)}</span>
+								</span>
 							</div>
 						{/if}
 
@@ -552,21 +604,21 @@
 							<div class="flex justify-between items-center">
 								<span class="text-text-muted">Parental</span>
 								<span class="flex items-center gap-2">
-									{movie.contentRating}
+									<span class="px-1.5 py-0.5 bg-white/10 rounded text-xs font-medium">{movie.contentRating}</span>
 									{#if movie.imdbId}
-										<a href="https://www.imdb.com/title/{movie.imdbId}/parentalguide" target="_blank" class="text-sky-400 hover:underline text-xs">
-											↗
+										<a href="https://www.imdb.com/title/{movie.imdbId}/parentalguide" target="_blank" class="text-sky-400 hover:text-sky-300 text-xs">
+											View ↗
 										</a>
 									{/if}
 								</span>
 							</div>
 						{/if}
 
-						<!-- Added date -->
+						<!-- Date Added -->
 						{#if movie.addedAt}
 							<div class="flex justify-between">
 								<span class="text-text-muted">Added</span>
-								<span class="text-xs">{new Date(movie.addedAt).toLocaleDateString()}</span>
+								<span>{new Date(movie.addedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
 							</div>
 						{/if}
 
@@ -648,7 +700,7 @@
 							{#if mediaInfo.videoStreams?.[0]}
 								<div class="absolute top-3 left-3">
 									<div class="liquid-badge-sm !bg-black/90 text-white">
-										{formatResolution(mediaInfo.videoStreams[0].height)}
+										{formatResolution(mediaInfo.videoStreams[0].width, mediaInfo.videoStreams[0].height)}
 									</div>
 								</div>
 							{/if}
@@ -705,11 +757,14 @@
 				<div
 					bind:this={castScrollContainer}
 					onscroll={updateCastScrollState}
-					class="flex gap-5 overflow-x-auto pb-2 scrollbar-thin"
+					class="flex gap-5 overflow-x-auto pt-1 pl-1 pb-2 -ml-1 scrollbar-thin"
 				>
 					{#each parseCast(movie.cast) as actor}
-						<div class="flex-shrink-0 w-28 text-center">
-							<div class="w-28 h-28 rounded-full bg-bg-elevated overflow-hidden mx-auto ring-2 ring-white/10">
+						<button
+							onclick={() => handlePersonClick(actor)}
+							class="flex-shrink-0 w-28 text-center cursor-pointer group"
+						>
+							<div class="w-28 h-28 rounded-full bg-bg-elevated overflow-hidden mx-auto ring-2 ring-white/10 group-hover:ring-white/30 transition-all">
 								{#if actor.profile_path}
 									<img
 										src={getTmdbImageUrl(actor.profile_path, 'w185')}
@@ -722,9 +777,9 @@
 									</div>
 								{/if}
 							</div>
-							<p class="mt-2 text-sm font-medium text-text-primary truncate">{actor.name}</p>
+							<p class="mt-2 text-sm font-medium text-text-primary truncate group-hover:text-white transition-colors">{actor.name}</p>
 							<p class="text-xs text-text-muted truncate">{actor.character}</p>
-						</div>
+						</button>
 					{/each}
 				</div>
 			</section>
@@ -761,11 +816,14 @@
 				<div
 					bind:this={crewScrollContainer}
 					onscroll={updateCrewScrollState}
-					class="flex gap-5 overflow-x-auto pb-2 scrollbar-thin"
+					class="flex gap-5 overflow-x-auto pt-1 pl-1 pb-2 -ml-1 scrollbar-thin"
 				>
 					{#each parseCrew(movie.crew) as member}
-						<div class="flex-shrink-0 w-28 text-center">
-							<div class="w-28 h-28 rounded-full bg-bg-elevated overflow-hidden mx-auto ring-2 ring-white/10">
+						<button
+							onclick={() => handlePersonClick(member)}
+							class="flex-shrink-0 w-28 text-center cursor-pointer group"
+						>
+							<div class="w-28 h-28 rounded-full bg-bg-elevated overflow-hidden mx-auto ring-2 ring-white/10 group-hover:ring-white/30 transition-all">
 								{#if member.profile_path}
 									<img
 										src={getTmdbImageUrl(member.profile_path, 'w185')}
@@ -778,9 +836,9 @@
 									</div>
 								{/if}
 							</div>
-							<p class="mt-2 text-sm font-medium text-text-primary truncate">{member.name}</p>
+							<p class="mt-2 text-sm font-medium text-text-primary truncate group-hover:text-white transition-colors">{member.name}</p>
 							<p class="text-xs text-text-muted truncate">{member.job}</p>
-						</div>
+						</button>
 					{/each}
 				</div>
 			</section>
@@ -835,7 +893,7 @@
 			<footer class="px-6 pb-8">
 				<div class="text-xs text-text-muted text-center">
 					{#if mediaInfo.videoStreams?.[0]}
-						{mediaInfo.videoStreams[0].codec?.toUpperCase()} {formatResolution(mediaInfo.videoStreams[0].height)}
+						{mediaInfo.videoStreams[0].codec?.toUpperCase()} {formatResolution(mediaInfo.videoStreams[0].width, mediaInfo.videoStreams[0].height)}
 					{/if}
 					{#if mediaInfo.audioStreams?.[0]}
 						• {mediaInfo.audioStreams[0].codec?.toUpperCase()} {formatAudioChannels(mediaInfo.audioStreams[0].channels)}
@@ -877,5 +935,12 @@
 			</div>
 		</div>
 	{/if}
+
+	<!-- Person Modal -->
+	<PersonModal
+		personId={selectedPersonId}
+		personName={selectedPersonName}
+		onClose={closePersonModal}
+	/>
 
 {/if}

@@ -69,7 +69,7 @@
 
 		<!-- Watched badge -->
 		{#if watched}
-			<div class="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-green-500 flex items-center justify-center">
+			<div class="absolute top-1 right-1 w-5 h-5 rounded-full bg-green-500 flex items-center justify-center">
 				<svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" />
 				</svg>

@@ -28,10 +28,11 @@
 	}
 
 	function formatResolution(width: number, height: number): string {
-		if (height >= 2160) return '4K';
-		if (height >= 1440) return '1440p';
-		if (height >= 1080) return '1080p';
-		if (height >= 720) return '720p';
+		// Check both width and height to handle widescreen content
+		if (width >= 3840 || height >= 2160) return '4K';
+		if (width >= 2560 || height >= 1440) return '1440p';
+		if (width >= 1920 || height >= 1080) return '1080p';
+		if (width >= 1280 || height >= 720) return '720p';
 		return `${height}p`;
 	}
 

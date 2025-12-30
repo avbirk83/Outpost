@@ -13,6 +13,7 @@
 		getMoviesByGenre,
 		getTVByGenre,
 		createRequest,
+		addToWatchlist,
 		type DiscoverItem,
 		type Genre
 	} from '$lib/api';

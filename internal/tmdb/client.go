@@ -228,6 +228,50 @@ type ReleaseDate struct {
 	Type          int    `json:"type"`
 }
 
+// Person types
+type PersonDetails struct {
+	ID                 int64  `json:"id"`
+	Name               string `json:"name"`
+	Biography          string `json:"biography"`
+	Birthday           string `json:"birthday"`
+	Deathday           string `json:"deathday"`
+	PlaceOfBirth       string `json:"place_of_birth"`
+	ProfilePath        string `json:"profile_path"`
+	KnownForDepartment string `json:"known_for_department"`
+	Gender             int    `json:"gender"`
+}
+
+type PersonCombinedCredits struct {
+	Cast []PersonCreditCast `json:"cast"`
+	Crew []PersonCreditCrew `json:"crew"`
+}
+
+type PersonCreditCast struct {
+	ID           int64   `json:"id"`
+	MediaType    string  `json:"media_type"`
+	Title        string  `json:"title"`
+	Name         string  `json:"name"`
+	Character    string  `json:"character"`
+	PosterPath   string  `json:"poster_path"`
+	ReleaseDate  string  `json:"release_date"`
+	FirstAirDate string  `json:"first_air_date"`
+	VoteAverage  float64 `json:"vote_average"`
+	Popularity   float64 `json:"popularity"`
+}
+
+type PersonCreditCrew struct {
+	ID           int64   `json:"id"`
+	MediaType    string  `json:"media_type"`
+	Title        string  `json:"title"`
+	Name         string  `json:"name"`
+	Job          string  `json:"job"`
+	Department   string  `json:"department"`
+	PosterPath   string  `json:"poster_path"`
+	ReleaseDate  string  `json:"release_date"`
+	FirstAirDate string  `json:"first_air_date"`
+	Popularity   float64 `json:"popularity"`
+}
+
 // API methods
 
 func (c *Client) get(endpoint string, params map[string]string) ([]byte, error) {
@@ -567,6 +611,33 @@ func (c *Client) AnalyzeFocalPointFromURL(backdropPath string) (float64, float64
 	// Bias Y towards top for movie/TV backdrops - faces are typically in upper third
 	focalY = focalY*0.6 + 0.25*0.4
 	return focalX, focalY, nil
+}
+
+
+// GetPersonDetails fetches detailed info about a person
+func (c *Client) GetPersonDetails(personID int64) (*PersonDetails, error) {
+	data, err := c.get(fmt.Sprintf("/person/%d", personID), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result PersonDetails
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetPersonCombinedCredits fetches all movie and TV credits for a person
+func (c *Client) GetPersonCombinedCredits(personID int64) (*PersonCombinedCredits, error) {
+	data, err := c.get(fmt.Sprintf("/person/%d/combined_credits", personID), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result PersonCombinedCredits
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 // Helper functions
@@ -984,4 +1055,66 @@ func (c *Client) GetGenreNameToIDMap() (map[string]int, error) {
 		genreMap[g.Name] = g.ID
 	}
 	return genreMap, nil
+}
+
+// GetTVGenreNameToIDMap returns a map of TV genre names to TMDB IDs
+func (c *Client) GetTVGenreNameToIDMap() (map[string]int, error) {
+	genres, err := c.GetTVGenres()
+	if err != nil {
+		return nil, err
+	}
+
+	genreMap := make(map[string]int)
+	for _, g := range genres {
+		genreMap[g.Name] = g.ID
+	}
+	return genreMap, nil
+}
+
+// DiscoverTVByGenres returns popular TV shows matching any of the given genre IDs
+func (c *Client) DiscoverTVByGenres(genreIDs []int, page int) (*DiscoverTVResult, error) {
+	// Convert genre IDs to comma-separated string (OR logic in TMDB)
+	genreStrs := make([]string, len(genreIDs))
+	for i, id := range genreIDs {
+		genreStrs[i] = strconv.Itoa(id)
+	}
+
+	params := map[string]string{
+		"with_genres":      strings.Join(genreStrs, "|"), // | = OR, , = AND
+		"sort_by":          "popularity.desc",
+		"include_adult":    "false",
+		"vote_count.gte":   "100", // Only shows with decent vote count
+		"vote_average.gte": "6.0", // Minimum rating
+	}
+	if page > 0 {
+		params["page"] = strconv.Itoa(page)
+	}
+
+	data, err := c.get("/discover/tv", params)
+	if err != nil {
+		return nil, err
+	}
+
+	var result DiscoverTVResult
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
+// GetTVRecommendations returns TV show recommendations for a given show
+func (c *Client) GetTVRecommendations(tmdbID int64) (*DiscoverTVResult, error) {
+	endpoint := fmt.Sprintf("/tv/%d/recommendations", tmdbID)
+	data, err := c.get(endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var result DiscoverTVResult
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
 }

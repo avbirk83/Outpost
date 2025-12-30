@@ -10,11 +10,14 @@
 		getContinueWatching,
 		removeContinueWatching,
 		getRequests,
+		getWatchlist,
+		removeFromWatchlist,
 		type DiscoverItem,
 		type Movie,
 		type Show,
 		type ContinueWatchingItem,
-		type Request
+		type Request,
+		type WatchlistItem
 	} from '$lib/api';
 	import MediaRow from '$lib/components/MediaRow.svelte';
 	import PosterCard from '$lib/components/PosterCard.svelte';
@@ -29,6 +32,7 @@
 	let recentShows: Show[] = $state([]);
 	let continueWatching: ContinueWatchingItem[] = $state([]);
 	let recentRequests: Request[] = $state([]);
+	let watchlistItems: WatchlistItem[] = $state([]);
 
 	// Hero carousel state
 	let heroItems: DiscoverItem[] = $state([]);
@@ -74,13 +78,14 @@
 
 	onMount(async () => {
 		try {
-			const [trendingMoviesRes, trendingShowsRes, movies, shows, cw, requests] = await Promise.all([
+			const [trendingMoviesRes, trendingShowsRes, movies, shows, cw, requests, watchlist] = await Promise.all([
 				getTrendingMovies(),
 				getTrendingShows(),
 				getMovies().catch(() => []),
 				getShows().catch(() => []),
 				getContinueWatching().catch(() => []),
-				getRequests().catch(() => [])
+				getRequests().catch(() => []),
+				getWatchlist().catch(() => [])
 			]);
 
 			// Combine trending movies and shows for hero carousel
@@ -105,6 +110,7 @@
 			continueWatching = cw;
 			// Recent requests (limit to 10, newest first)
 			recentRequests = requests.slice(0, 10);
+			watchlistItems = watchlist;
 
 			// Start autoplay
 			resetAutoplay();
@@ -159,6 +165,24 @@
 		} catch (e) {
 			console.error('Failed to remove from continue watching:', e);
 		}
+	}
+
+	async function handleRemoveFromWatchlist(item: WatchlistItem) {
+		try {
+			await removeFromWatchlist(item.tmdbId, item.mediaType);
+			watchlistItems = watchlistItems.filter(
+				i => !(i.tmdbId === item.tmdbId && i.mediaType === item.mediaType)
+			);
+		} catch (e) {
+			console.error('Failed to remove from watchlist:', e);
+		}
+	}
+
+	function getWatchlistItemHref(item: WatchlistItem): string {
+		if (item.inLibrary && item.libraryId) {
+			return item.mediaType === 'movie' ? `/movies/${item.libraryId}` : `/tv/${item.libraryId}`;
+		}
+		return item.mediaType === 'movie' ? `/discover/movie/${item.tmdbId}` : `/discover/show/${item.tmdbId}`;
 	}
 </script>
 
@@ -285,9 +309,10 @@
 		{/if}
 
 		<div class="space-y-10 px-6 pb-8">
-			<!-- Continue Watching - FIRST ROW, ALWAYS -->
-			{#if continueWatching.length > 0}
-				<MediaRow title="Continue Watching">
+			<!-- Watchlist - combines continue watching and manually added items -->
+			{#if continueWatching.length > 0 || watchlistItems.length > 0}
+				<MediaRow title="Watchlist">
+					<!-- Continue Watching items first (have progress) -->
 					{#each continueWatching as item}
 						<div class="flex-shrink-0 w-72 md:w-80">
 							<ContinueCard
@@ -300,6 +325,22 @@
 								duration={formatTimeLeft(item.position, item.duration)}
 								type={item.mediaType === 'movie' ? 'movie' : 'episode'}
 								onRemove={() => handleRemoveFromContinue(item)}
+							/>
+						</div>
+					{/each}
+					<!-- Manually added watchlist items -->
+					{#each watchlistItems as item}
+						<div class="flex-shrink-0 w-72 md:w-80">
+							<ContinueCard
+								id={item.libraryId || item.tmdbId}
+								title={item.title}
+								subtitle={item.year?.toString() || ''}
+								backdropUrl={item.backdropPath ? (item.inLibrary ? getImageUrl(item.backdropPath) : getTmdbImageUrl(item.backdropPath, 'w780')) : undefined}
+								posterUrl={item.posterPath ? (item.inLibrary ? getImageUrl(item.posterPath) : getTmdbImageUrl(item.posterPath, 'w300')) : undefined}
+								progress={item.progress}
+								type={item.mediaType === 'movie' ? 'movie' : 'series'}
+								href={getWatchlistItemHref(item)}
+								onRemove={() => handleRemoveFromWatchlist(item)}
 							/>
 						</div>
 					{/each}

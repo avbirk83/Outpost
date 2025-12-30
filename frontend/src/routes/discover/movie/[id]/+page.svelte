@@ -5,19 +5,33 @@
 		getDiscoverMovieDetail,
 		createRequest,
 		getTmdbImageUrl,
-		type DiscoverMovieDetail
+		addToWatchlist,
+		removeFromWatchlist,
+		isInWatchlist,
+		type DiscoverMovieDetailWithStatus
 	} from '$lib/api';
 
-	let movie: DiscoverMovieDetail | null = $state(null);
+	let movie: DiscoverMovieDetailWithStatus | null = $state(null);
 	let loading = $state(true);
 	let error: string | null = $state(null);
 	let requesting = $state(false);
 	let requested = $state(false);
+	let inWatchlist = $state(false);
+	let watchlistLoading = $state(false);
 
 	onMount(async () => {
 		const id = parseInt($page.params.id);
 		try {
-			movie = await getDiscoverMovieDetail(id);
+			const [movieData, watchlistStatus] = await Promise.all([
+				getDiscoverMovieDetail(id),
+				isInWatchlist(id, 'movie').catch(() => false)
+			]);
+			movie = movieData as DiscoverMovieDetailWithStatus;
+			inWatchlist = watchlistStatus;
+			// Set requested state from API response
+			if (movie.requested) {
+				requested = true;
+			}
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load movie details';
 		} finally {
@@ -61,6 +75,24 @@
 	function getYear(dateStr: string | undefined): string {
 		if (!dateStr) return '';
 		return dateStr.substring(0, 4);
+	}
+
+	async function toggleWatchlist() {
+		if (!movie) return;
+		watchlistLoading = true;
+		try {
+			if (inWatchlist) {
+				await removeFromWatchlist(movie.id, 'movie');
+				inWatchlist = false;
+			} else {
+				await addToWatchlist(movie.id, 'movie');
+				inWatchlist = true;
+			}
+		} catch (e) {
+			console.error('Failed to update watchlist:', e);
+		} finally {
+			watchlistLoading = false;
+		}
 	}
 </script>
 
@@ -106,12 +138,27 @@
 				{/if}
 			</div>
 			<div class="mt-4 space-y-2">
-				{#if requested}
+				{#if movie.inLibrary && movie.libraryId}
+					<a
+						href="/movies/{movie.libraryId}"
+						class="liquid-btn w-full !bg-green-500/20 !border-t-green-400/40 text-green-400 flex items-center justify-center gap-2"
+					>
+						<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+						</svg>
+						View in Library
+					</a>
+				{:else if requested || movie.requested}
 					<button
 						disabled
-						class="liquid-btn w-full !bg-green-500/20 !border-t-green-400/40 text-green-400"
+						class="liquid-btn w-full !bg-blue-500/20 !border-t-blue-400/40 text-blue-400"
 					>
-						Requested
+						<span class="flex items-center justify-center gap-2">
+							<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+							</svg>
+							{movie.requestStatus === 'approved' ? 'Approved' : 'Requested'}
+						</span>
 					</button>
 				{:else}
 					<button
@@ -122,6 +169,24 @@
 						{requesting ? 'Requesting...' : 'Request'}
 					</button>
 				{/if}
+				<!-- Watchlist toggle -->
+				<button
+					onclick={toggleWatchlist}
+					disabled={watchlistLoading}
+					class="liquid-btn-secondary w-full flex items-center justify-center gap-2 disabled:opacity-50"
+				>
+					{#if inWatchlist}
+						<svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+							<path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2" fill="none" />
+						</svg>
+						In Watchlist
+					{:else}
+						<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+						</svg>
+						Add to Watchlist
+					{/if}
+				</button>
 			</div>
 		</div>
 

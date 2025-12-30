@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -131,6 +132,9 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/tmdb/search/movie", s.requireAdmin(s.handleTmdbSearchMovie))
 	s.mux.HandleFunc("/api/tmdb/search/tv", s.requireAdmin(s.handleTmdbSearchTV))
 
+	// Person details route
+	s.mux.HandleFunc("/api/person/", s.requireAuth(s.handlePerson))
+
 	// Metadata refresh route (admin only)
 	s.mux.HandleFunc("/api/metadata/refresh", s.requireAdmin(s.handleMetadataRefresh))
 
@@ -174,10 +178,15 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/discover/show/", s.requireAuth(s.handleDiscoverShowDetail))
 	s.mux.HandleFunc("/api/movie/recommendations/", s.requireAuth(s.handleMovieRecommendations))
 	s.mux.HandleFunc("/api/movies/suggestions/", s.requireAuth(s.handleMovieSuggestions))
+	s.mux.HandleFunc("/api/shows/suggestions/", s.requireAuth(s.handleShowSuggestions))
 
 	// Request routes
 	s.mux.HandleFunc("/api/requests", s.requireAuth(s.handleRequests))
 	s.mux.HandleFunc("/api/requests/", s.requireAuth(s.handleRequest))
+
+	// Watchlist routes
+	s.mux.HandleFunc("/api/watchlist", s.requireAuth(s.handleWatchlist))
+	s.mux.HandleFunc("/api/watchlist/", s.requireAuth(s.handleWatchlistItem))
 
 	// Image cache (public for posters)
 	s.mux.HandleFunc("/images/", s.handleImages)
@@ -3382,8 +3391,29 @@ func (s *Server) handleDiscoverMovieDetail(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Enrich with library/request status
+	response := struct {
+		*metadata.DiscoverMovieDetail
+		InLibrary     bool    `json:"inLibrary"`
+		LibraryID     *int64  `json:"libraryId,omitempty"`
+		Requested     bool    `json:"requested"`
+		RequestID     *int64  `json:"requestId,omitempty"`
+		RequestStatus *string `json:"requestStatus,omitempty"`
+	}{
+		DiscoverMovieDetail: result,
+	}
+
+	status, err := s.db.GetMovieStatusByTmdbID(id)
+	if err == nil && status != nil {
+		response.InLibrary = status.InLibrary
+		response.LibraryID = status.LibraryID
+		response.Requested = status.Requested
+		response.RequestID = status.RequestID
+		response.RequestStatus = status.RequestStatus
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	json.NewEncoder(w).Encode(response)
 }
 
 func (s *Server) handleDiscoverShowDetail(w http.ResponseWriter, r *http.Request) {
@@ -3411,8 +3441,29 @@ func (s *Server) handleDiscoverShowDetail(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Enrich with library/request status
+	response := struct {
+		*metadata.DiscoverShowDetail
+		InLibrary     bool    `json:"inLibrary"`
+		LibraryID     *int64  `json:"libraryId,omitempty"`
+		Requested     bool    `json:"requested"`
+		RequestID     *int64  `json:"requestId,omitempty"`
+		RequestStatus *string `json:"requestStatus,omitempty"`
+	}{
+		DiscoverShowDetail: result,
+	}
+
+	status, err := s.db.GetShowStatusByTmdbID(id)
+	if err == nil && status != nil {
+		response.InLibrary = status.InLibrary
+		response.LibraryID = status.LibraryID
+		response.Requested = status.Requested
+		response.RequestID = status.RequestID
+		response.RequestStatus = status.RequestStatus
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	json.NewEncoder(w).Encode(response)
 }
 
 func (s *Server) handleMovieRecommendations(w http.ResponseWriter, r *http.Request) {
@@ -3598,7 +3649,443 @@ func (s *Server) handleMovieSuggestions(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(suggestions)
 }
 
+// handleShowSuggestions returns TV show suggestions based on genres, excluding library items
+func (s *Server) handleShowSuggestions(w http.ResponseWriter, r *http.Request) {
+	// Extract show ID from path: /api/shows/suggestions/{id}
+	path := strings.TrimPrefix(r.URL.Path, "/api/shows/suggestions/")
+	idStr := strings.TrimSuffix(path, "/")
+
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid show ID", http.StatusBadRequest)
+		return
+	}
+
+	// Get the show from database
+	show, err := s.db.GetShow(id)
+	if err != nil {
+		http.Error(w, "Show not found", http.StatusNotFound)
+		return
+	}
+
+	if s.metadata == nil || s.metadata.GetTMDBClient() == nil {
+		http.Error(w, "TMDB not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	tmdbClient := s.metadata.GetTMDBClient()
+
+	// Get all TMDB IDs in library for filtering
+	libraryIDs, err := s.db.GetShowTMDBIDs()
+	if err != nil {
+		libraryIDs = make(map[int64]bool) // Continue without filtering if error
+	}
+
+	// Parse genres from show
+	var genres []string
+	if show.Genres != nil && *show.Genres != "" {
+		if err := json.Unmarshal([]byte(*show.Genres), &genres); err != nil {
+			genres = []string{}
+		}
+	}
+
+	// Response type matching TMDB format
+	type SuggestionResult struct {
+		Results []struct {
+			ID           int64   `json:"id"`
+			Name         string  `json:"name"`
+			Overview     string  `json:"overview"`
+			PosterPath   string  `json:"poster_path"`
+			BackdropPath string  `json:"backdrop_path"`
+			FirstAirDate string  `json:"first_air_date"`
+			VoteAverage  float64 `json:"vote_average"`
+			Popularity   float64 `json:"popularity"`
+		} `json:"results"`
+	}
+
+	var suggestions SuggestionResult
+
+	// Try genre-based discovery first
+	if len(genres) > 0 {
+		// Get genre name to ID mapping for TV
+		genreMap, err := tmdbClient.GetTVGenreNameToIDMap()
+		if err == nil {
+			// Convert genre names to IDs
+			var genreIDs []int
+			for _, name := range genres {
+				if id, ok := genreMap[name]; ok {
+					genreIDs = append(genreIDs, id)
+				}
+			}
+
+			if len(genreIDs) > 0 {
+				// Discover shows by genres
+				discovered, err := tmdbClient.DiscoverTVByGenres(genreIDs, 1)
+				if err == nil {
+					for _, s := range discovered.Results {
+						// Skip if already in library or is the same show
+						if libraryIDs[s.ID] || (show.TmdbID != nil && s.ID == *show.TmdbID) {
+							continue
+						}
+						suggestions.Results = append(suggestions.Results, struct {
+							ID           int64   `json:"id"`
+							Name         string  `json:"name"`
+							Overview     string  `json:"overview"`
+							PosterPath   string  `json:"poster_path"`
+							BackdropPath string  `json:"backdrop_path"`
+							FirstAirDate string  `json:"first_air_date"`
+							VoteAverage  float64 `json:"vote_average"`
+							Popularity   float64 `json:"popularity"`
+						}{
+							ID:           s.ID,
+							Name:         s.Name,
+							Overview:     s.Overview,
+							PosterPath:   s.PosterPath,
+							BackdropPath: s.BackdropPath,
+							FirstAirDate: s.FirstAirDate,
+							VoteAverage:  s.VoteAverage,
+							Popularity:   s.Popularity,
+						})
+						if len(suggestions.Results) >= 15 {
+							break
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// If not enough results, fall back to TMDB recommendations
+	if len(suggestions.Results) < 10 && show.TmdbID != nil {
+		recs, err := tmdbClient.GetTVRecommendations(*show.TmdbID)
+		if err == nil {
+			for _, s := range recs.Results {
+				// Skip if already in library or is the same show
+				if libraryIDs[s.ID] || s.ID == *show.TmdbID {
+					continue
+				}
+				// Check if already in suggestions
+				exists := false
+				for _, existing := range suggestions.Results {
+					if existing.ID == s.ID {
+						exists = true
+						break
+					}
+				}
+				if exists {
+					continue
+				}
+
+				suggestions.Results = append(suggestions.Results, struct {
+					ID           int64   `json:"id"`
+					Name         string  `json:"name"`
+					Overview     string  `json:"overview"`
+					PosterPath   string  `json:"poster_path"`
+					BackdropPath string  `json:"backdrop_path"`
+					FirstAirDate string  `json:"first_air_date"`
+					VoteAverage  float64 `json:"vote_average"`
+					Popularity   float64 `json:"popularity"`
+				}{
+					ID:           s.ID,
+					Name:         s.Name,
+					Overview:     s.Overview,
+					PosterPath:   s.PosterPath,
+					BackdropPath: s.BackdropPath,
+					FirstAirDate: s.FirstAirDate,
+					VoteAverage:  s.VoteAverage,
+					Popularity:   s.Popularity,
+				})
+				if len(suggestions.Results) >= 15 {
+					break
+				}
+			}
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(suggestions)
+}
+
 // Request handlers
+
+
+// handlePerson returns detailed information about a person (actor/crew member)
+func (s *Server) handlePerson(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract person ID from path: /api/person/{id}
+	path := strings.TrimPrefix(r.URL.Path, "/api/person/")
+	idStr := strings.TrimSuffix(path, "/")
+
+	personID, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid person ID", http.StatusBadRequest)
+		return
+	}
+
+	if s.metadata == nil || s.metadata.GetTMDBClient() == nil {
+		http.Error(w, "TMDB not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	tmdbClient := s.metadata.GetTMDBClient()
+
+	// Fetch person details and credits in parallel
+	type detailsResult struct {
+		details interface{}
+		err     error
+	}
+	type creditsResult struct {
+		credits interface{}
+		err     error
+	}
+
+	detailsChan := make(chan detailsResult)
+	creditsChan := make(chan creditsResult)
+
+	go func() {
+		details, err := tmdbClient.GetPersonDetails(personID)
+		detailsChan <- detailsResult{details: details, err: err}
+	}()
+
+	go func() {
+		credits, err := tmdbClient.GetPersonCombinedCredits(personID)
+		creditsChan <- creditsResult{credits: credits, err: err}
+	}()
+
+	detailsRes := <-detailsChan
+	creditsRes := <-creditsChan
+
+	if detailsRes.err != nil {
+		http.Error(w, "Failed to fetch person details", http.StatusInternalServerError)
+		return
+	}
+
+	// Find "Also in your library" - search cast JSON in movies and shows
+	alsoInLibrary := s.findPersonInLibrary(personID)
+
+	// Get known for credits sorted by popularity
+	knownFor := s.getKnownForCredits(creditsRes.credits, 20)
+
+	// Marshal details to JSON and unmarshal into a map for easy manipulation
+	detailsJSON, _ := json.Marshal(detailsRes.details)
+	var detailsMap map[string]interface{}
+	json.Unmarshal(detailsJSON, &detailsMap)
+
+	// Build response
+	response := map[string]interface{}{
+		"id":            personID,
+		"name":          detailsMap["name"],
+		"biography":     detailsMap["biography"],
+		"birthday":      detailsMap["birthday"],
+		"deathday":      detailsMap["deathday"],
+		"placeOfBirth":  detailsMap["place_of_birth"],
+		"profilePath":   detailsMap["profile_path"],
+		"knownFor":      detailsMap["known_for_department"],
+		"credits":       knownFor,
+		"alsoInLibrary": alsoInLibrary,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// findPersonInLibrary searches cast/crew JSON in movies and shows for a person
+func (s *Server) findPersonInLibrary(personID int64) []map[string]interface{} {
+	var results []map[string]interface{}
+
+	// Search movies
+	movies, err := s.db.GetMovies()
+	if err == nil {
+		for _, movie := range movies {
+			if movie.Cast != nil && containsPersonID(*movie.Cast, personID) {
+				var posterPath string
+				if movie.PosterPath != nil {
+					posterPath = *movie.PosterPath
+				}
+				results = append(results, map[string]interface{}{
+					"id":         movie.ID,
+					"type":       "movie",
+					"title":      movie.Title,
+					"year":       movie.Year,
+					"posterPath": posterPath,
+				})
+			}
+		}
+	}
+
+	// Search shows
+	shows, err := s.db.GetShows()
+	if err == nil {
+		for _, show := range shows {
+			if show.Cast != nil && containsPersonID(*show.Cast, personID) {
+				var posterPath string
+				if show.PosterPath != nil {
+					posterPath = *show.PosterPath
+				}
+				results = append(results, map[string]interface{}{
+					"id":         show.ID,
+					"type":       "show",
+					"title":      show.Title,
+					"year":       show.Year,
+					"posterPath": posterPath,
+				})
+			}
+		}
+	}
+
+	return results
+}
+
+// containsPersonID checks if a cast/crew JSON string contains a person with the given ID
+func containsPersonID(castJSON string, personID int64) bool {
+	var cast []struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(castJSON), &cast); err != nil {
+		return false
+	}
+	for _, c := range cast {
+		if c.ID == personID {
+			return true
+		}
+	}
+	return false
+}
+
+// getKnownForCredits returns sorted credits by popularity, filtered and deduplicated
+func (s *Server) getKnownForCredits(creditsInterface interface{}, limit int) []map[string]interface{} {
+	if creditsInterface == nil {
+		return nil
+	}
+
+	// Try to marshal and unmarshal to work with the data
+	data, err := json.Marshal(creditsInterface)
+	if err != nil {
+		return nil
+	}
+
+	var credits struct {
+		Cast []struct {
+			ID           int64   `json:"id"`
+			MediaType    string  `json:"media_type"`
+			Title        string  `json:"title"`
+			Name         string  `json:"name"`
+			Character    string  `json:"character"`
+			PosterPath   string  `json:"poster_path"`
+			ReleaseDate  string  `json:"release_date"`
+			FirstAirDate string  `json:"first_air_date"`
+			VoteAverage  float64 `json:"vote_average"`
+			Popularity   float64 `json:"popularity"`
+			GenreIDs     []int   `json:"genre_ids"`
+		} `json:"cast"`
+	}
+
+	if err := json.Unmarshal(data, &credits); err != nil {
+		return nil
+	}
+
+	// Filter out talk shows, news, and reality TV (genre IDs: 10767=Talk, 10763=News, 10764=Reality)
+	// Also filter out items where the character is "Self" or "Themselves" (talk show appearances)
+	excludeGenres := map[int]bool{10767: true, 10763: true, 10764: true}
+	var filtered []struct {
+		ID           int64
+		MediaType    string
+		Title        string
+		Name         string
+		Character    string
+		PosterPath   string
+		ReleaseDate  string
+		FirstAirDate string
+		VoteAverage  float64
+		Popularity   float64
+	}
+
+	for _, c := range credits.Cast {
+		// Skip if character is "Self", "Themselves", or similar
+		charLower := strings.ToLower(c.Character)
+		if charLower == "self" || charLower == "themselves" || charLower == "himself" || charLower == "herself" ||
+			strings.HasPrefix(charLower, "self ") || strings.HasPrefix(charLower, "himself ") ||
+			strings.HasPrefix(charLower, "herself ") || strings.Contains(charLower, "(uncredited)") {
+			continue
+		}
+
+		// Skip excluded genres
+		skip := false
+		for _, gid := range c.GenreIDs {
+			if excludeGenres[gid] {
+				skip = true
+				break
+			}
+		}
+		if skip {
+			continue
+		}
+
+		filtered = append(filtered, struct {
+			ID           int64
+			MediaType    string
+			Title        string
+			Name         string
+			Character    string
+			PosterPath   string
+			ReleaseDate  string
+			FirstAirDate string
+			VoteAverage  float64
+			Popularity   float64
+		}{
+			ID:           c.ID,
+			MediaType:    c.MediaType,
+			Title:        c.Title,
+			Name:         c.Name,
+			Character:    c.Character,
+			PosterPath:   c.PosterPath,
+			ReleaseDate:  c.ReleaseDate,
+			FirstAirDate: c.FirstAirDate,
+			VoteAverage:  c.VoteAverage,
+			Popularity:   c.Popularity,
+		})
+	}
+
+	// Sort by popularity descending
+	sort.Slice(filtered, func(i, j int) bool {
+		return filtered[i].Popularity > filtered[j].Popularity
+	})
+
+	// Deduplicate by ID (same movie/show appearing multiple times)
+	seen := make(map[int64]bool)
+	var results []map[string]interface{}
+
+	for _, c := range filtered {
+		if seen[c.ID] {
+			continue
+		}
+		seen[c.ID] = true
+
+		title := c.Title
+		if c.MediaType == "tv" {
+			title = c.Name
+		}
+		results = append(results, map[string]interface{}{
+			"id":          c.ID,
+			"mediaType":   c.MediaType,
+			"title":       title,
+			"character":   c.Character,
+			"posterPath":  c.PosterPath,
+			"releaseDate": c.ReleaseDate,
+			"voteAverage": c.VoteAverage,
+		})
+
+		if len(results) >= limit {
+			break
+		}
+	}
+
+	return results
+}
 
 func (s *Server) handleRequests(w http.ResponseWriter, r *http.Request) {
 	user := r.Context().Value(userContextKey).(*database.User)
@@ -3792,6 +4279,198 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if err := s.db.DeleteRequest(id); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// Watchlist handlers
+
+func (s *Server) handleWatchlist(w http.ResponseWriter, r *http.Request) {
+	user := r.Context().Value(userContextKey).(*database.User)
+
+	switch r.Method {
+	case http.MethodGet:
+		items, err := s.db.GetWatchlist(user.ID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		if items == nil {
+			items = []database.WatchlistItem{}
+		}
+
+		// Enrich with metadata
+		type EnrichedWatchlistItem struct {
+			database.WatchlistItem
+			Title        string   `json:"title"`
+			PosterPath   *string  `json:"posterPath"`
+			BackdropPath *string  `json:"backdropPath"`
+			Year         int      `json:"year"`
+			InLibrary    bool     `json:"inLibrary"`
+			LibraryID    *int64   `json:"libraryId,omitempty"`
+			Progress     *float64 `json:"progress,omitempty"`
+		}
+
+		enriched := make([]EnrichedWatchlistItem, 0, len(items))
+		for _, item := range items {
+			e := EnrichedWatchlistItem{
+				WatchlistItem: item,
+			}
+
+			// Check if in library and get metadata
+			if item.MediaType == "movie" {
+				status, err := s.db.GetMovieStatusByTmdbID(item.TmdbID)
+				if err == nil && status.InLibrary && status.LibraryID != nil {
+					e.InLibrary = true
+					e.LibraryID = status.LibraryID
+					// Get movie details
+					movie, err := s.db.GetMovie(*status.LibraryID)
+					if err == nil {
+						e.Title = movie.Title
+						e.PosterPath = movie.PosterPath
+						e.BackdropPath = movie.BackdropPath
+						e.Year = movie.Year
+						// Get progress
+						progress, err := s.db.GetProgress("movie", *status.LibraryID)
+						if err == nil && progress != nil && progress.Duration > 0 {
+							pct := (progress.Position / progress.Duration) * 100
+							e.Progress = &pct
+						}
+					}
+				} else if s.metadata != nil && s.metadata.GetTMDBClient() != nil {
+					// Fetch from TMDB
+					details, err := s.metadata.GetTMDBClient().GetMovieDetails(item.TmdbID)
+					if err == nil {
+						e.Title = details.Title
+						if details.PosterPath != "" {
+							e.PosterPath = &details.PosterPath
+						}
+						if details.BackdropPath != "" {
+							e.BackdropPath = &details.BackdropPath
+						}
+						if details.ReleaseDate != "" && len(details.ReleaseDate) >= 4 {
+							year, _ := strconv.Atoi(details.ReleaseDate[:4])
+							e.Year = year
+						}
+					}
+				}
+			} else {
+				status, err := s.db.GetShowStatusByTmdbID(item.TmdbID)
+				if err == nil && status.InLibrary && status.LibraryID != nil {
+					e.InLibrary = true
+					e.LibraryID = status.LibraryID
+					// Get show details
+					show, err := s.db.GetShow(*status.LibraryID)
+					if err == nil {
+						e.Title = show.Title
+						e.PosterPath = show.PosterPath
+						e.BackdropPath = show.BackdropPath
+						e.Year = show.Year
+					}
+				} else if s.metadata != nil && s.metadata.GetTMDBClient() != nil {
+					// Fetch from TMDB
+					details, err := s.metadata.GetTMDBClient().GetTVDetails(item.TmdbID)
+					if err == nil {
+						e.Title = details.Name
+						if details.PosterPath != "" {
+							e.PosterPath = &details.PosterPath
+						}
+						if details.BackdropPath != "" {
+							e.BackdropPath = &details.BackdropPath
+						}
+						if details.FirstAirDate != "" && len(details.FirstAirDate) >= 4 {
+							year, _ := strconv.Atoi(details.FirstAirDate[:4])
+							e.Year = year
+						}
+					}
+				}
+			}
+
+			enriched = append(enriched, e)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(enriched)
+
+	case http.MethodPost:
+		var req struct {
+			TmdbID    int64  `json:"tmdbId"`
+			MediaType string `json:"mediaType"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		if req.TmdbID == 0 || (req.MediaType != "movie" && req.MediaType != "tv") {
+			http.Error(w, "tmdbId and valid mediaType (movie/tv) are required", http.StatusBadRequest)
+			return
+		}
+
+		item := &database.WatchlistItem{
+			UserID:    user.ID,
+			TmdbID:    req.TmdbID,
+			MediaType: req.MediaType,
+		}
+
+		if err := s.db.AddToWatchlist(item); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusCreated)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleWatchlistItem(w http.ResponseWriter, r *http.Request) {
+	user := r.Context().Value(userContextKey).(*database.User)
+
+	// Path format: /api/watchlist/{tmdbId}/{mediaType}
+	path := strings.TrimPrefix(r.URL.Path, "/api/watchlist/")
+	parts := strings.Split(path, "/")
+
+	if len(parts) < 2 {
+		http.Error(w, "Invalid path, expected /api/watchlist/{tmdbId}/{mediaType}", http.StatusBadRequest)
+		return
+	}
+
+	tmdbID, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid TMDB ID", http.StatusBadRequest)
+		return
+	}
+
+	mediaType := parts[1]
+	if mediaType != "movie" && mediaType != "tv" {
+		http.Error(w, "Invalid media type", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		// Check if in watchlist
+		inWatchlist, err := s.db.IsInWatchlist(user.ID, tmdbID, mediaType)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]bool{"inWatchlist": inWatchlist})
+
+	case http.MethodDelete:
+		if err := s.db.RemoveFromWatchlist(user.ID, tmdbID, mediaType); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

@@ -46,7 +46,7 @@
 	<button
 		type="button"
 		onclick={toggle}
-		class="flex items-center gap-2 px-4 py-2 liquid-glass hover:!bg-white/15 transition-all {open ? 'rounded-t-xl !rounded-b-none' : 'rounded-xl'}"
+		class="flex items-center gap-2 px-4 py-2 min-w-[160px] liquid-glass hover:!bg-white/15 transition-all {open ? 'rounded-t-xl !rounded-b-none' : 'rounded-xl'}"
 		style={open ? 'border-bottom-color: transparent;' : ''}
 	>
 		{#if icon === 'video'}
@@ -62,14 +62,14 @@
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
 			</svg>
 		{/if}
-		<span class="text-sm text-white truncate max-w-[150px]">{selectedOption?.label || placeholder}</span>
+		<span class="flex-1 text-sm text-white whitespace-nowrap">{selectedOption?.label || placeholder}</span>
 		<svg class="w-4 h-4 text-text-muted flex-shrink-0 transition-transform duration-200 {open ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 			<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
 		</svg>
 	</button>
 
 	{#if open}
-		<div class="absolute left-0 top-full min-w-full liquid-glass !rounded-t-none rounded-b-xl !border-t-0 py-1 max-h-64 overflow-y-auto">
+		<div class="absolute left-0 right-0 top-full liquid-glass !rounded-t-none rounded-b-xl !border-t-0 py-1 max-h-64 overflow-y-auto scrollbar-thin">
 			{#each options as opt}
 				<button
 					type="button"

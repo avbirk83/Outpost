@@ -1097,7 +1097,7 @@
 										</div>
 									</div>
 								{/if}
-								<div class="absolute top-2 right-2">
+								<div class="absolute top-1 right-1">
 									<span class="px-2 py-0.5 text-xs rounded {getFormatColor(book.format)}">
 										{book.format.toUpperCase()}
 									</span>

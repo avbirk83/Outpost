@@ -71,6 +71,7 @@ type Show struct {
 	ContentRating *string  `json:"contentRating,omitempty"`
 	Genres        *string  `json:"genres,omitempty"`
 	Cast          *string  `json:"cast,omitempty"`
+	Crew          *string  `json:"crew,omitempty"`
 	Network       *string  `json:"network,omitempty"`
 	PosterPath    *string  `json:"posterPath,omitempty"`
 	BackdropPath  *string  `json:"backdropPath,omitempty"`
@@ -254,6 +255,16 @@ type Book struct {
 	AddedAt     time.Time `json:"addedAt"`
 }
 
+// Watchlist types
+
+type WatchlistItem struct {
+	ID        int64     `json:"id"`
+	UserID    int64     `json:"userId"`
+	TmdbID    int64     `json:"tmdbId"`
+	MediaType string    `json:"mediaType"` // "movie" or "tv"
+	AddedAt   time.Time `json:"addedAt"`
+}
+
 func New(dbPath string) (*Database, error) {
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -330,6 +341,7 @@ func (d *Database) migrate() error {
 		content_rating TEXT,
 		genres TEXT,
 		cast TEXT,
+		crew TEXT,
 		network TEXT,
 		poster_path TEXT,
 		backdrop_path TEXT,
@@ -396,6 +408,17 @@ func (d *Database) migrate() error {
 		expires_at DATETIME NOT NULL,
 		FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 	);
+
+	CREATE TABLE IF NOT EXISTS user_watchlist (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id INTEGER NOT NULL,
+		tmdb_id INTEGER NOT NULL,
+		media_type TEXT NOT NULL CHECK (media_type IN ('movie', 'tv')),
+		added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+		UNIQUE(user_id, tmdb_id, media_type)
+	);
+	CREATE INDEX IF NOT EXISTS idx_watchlist_user ON user_watchlist(user_id);
 
 	CREATE TABLE IF NOT EXISTS download_clients (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -547,6 +570,7 @@ func (d *Database) migrate() error {
 		"ALTER TABLE movies ADD COLUMN editor TEXT",
 		"ALTER TABLE movies ADD COLUMN producers TEXT",
 		"ALTER TABLE movies ADD COLUMN crew TEXT",
+		"ALTER TABLE shows ADD COLUMN crew TEXT",
 	}
 	for _, m := range migrations {
 		// Ignore errors (column may already exist)
@@ -681,6 +705,25 @@ func (d *Database) GetMovieTMDBIDs() (map[int64]bool, error) {
 	return ids, nil
 }
 
+// GetShowTMDBIDs returns a set of all TMDB IDs in the TV show library
+func (d *Database) GetShowTMDBIDs() (map[int64]bool, error) {
+	rows, err := d.db.Query(`SELECT tmdb_id FROM shows WHERE tmdb_id IS NOT NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	ids := make(map[int64]bool)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			continue
+		}
+		ids[id] = true
+	}
+	return ids, nil
+}
+
 func (d *Database) GetMovieByPath(path string) (*Movie, error) {
 	var m Movie
 	err := d.db.QueryRow(`
@@ -717,11 +760,11 @@ func (d *Database) UpdateShowMetadata(show *Show) error {
 	_, err := d.db.Exec(`
 		UPDATE shows SET
 			tmdb_id = ?, tvdb_id = ?, imdb_id = ?, original_title = ?, overview = ?,
-			status = ?, rating = ?, content_rating = ?, genres = ?, "cast" = ?,
+			status = ?, rating = ?, content_rating = ?, genres = ?, "cast" = ?, crew = ?,
 			network = ?, poster_path = ?, backdrop_path = ?, focal_x = ?, focal_y = ?
 		WHERE id = ?`,
 		show.TmdbID, show.TvdbID, show.ImdbID, show.OriginalTitle, show.Overview,
-		show.Status, show.Rating, show.ContentRating, show.Genres, show.Cast,
+		show.Status, show.Rating, show.ContentRating, show.Genres, show.Cast, show.Crew,
 		show.Network, show.PosterPath, show.BackdropPath, show.FocalX, show.FocalY, show.ID,
 	)
 	return err
@@ -730,7 +773,7 @@ func (d *Database) UpdateShowMetadata(show *Show) error {
 func (d *Database) GetShows() ([]Show, error) {
 	rows, err := d.db.Query(`
 		SELECT id, library_id, tmdb_id, tvdb_id, imdb_id, title, original_title, year,
-			overview, status, rating, content_rating, genres, "cast", network, poster_path, backdrop_path, focal_x, focal_y, path
+			overview, status, rating, content_rating, genres, "cast", crew, network, poster_path, backdrop_path, focal_x, focal_y, path
 		FROM shows ORDER BY title`)
 	if err != nil {
 		return nil, err
@@ -741,7 +784,7 @@ func (d *Database) GetShows() ([]Show, error) {
 	for rows.Next() {
 		var s Show
 		if err := rows.Scan(&s.ID, &s.LibraryID, &s.TmdbID, &s.TvdbID, &s.ImdbID, &s.Title, &s.OriginalTitle, &s.Year,
-			&s.Overview, &s.Status, &s.Rating, &s.ContentRating, &s.Genres, &s.Cast,
+			&s.Overview, &s.Status, &s.Rating, &s.ContentRating, &s.Genres, &s.Cast, &s.Crew,
 			&s.Network, &s.PosterPath, &s.BackdropPath, &s.FocalX, &s.FocalY, &s.Path); err != nil {
 			return nil, err
 		}
@@ -754,10 +797,10 @@ func (d *Database) GetShowByPath(path string) (*Show, error) {
 	var s Show
 	err := d.db.QueryRow(`
 		SELECT id, library_id, tmdb_id, tvdb_id, imdb_id, title, original_title, year,
-			overview, status, rating, content_rating, genres, "cast", network, poster_path, backdrop_path, focal_x, focal_y, path
+			overview, status, rating, content_rating, genres, "cast", crew, network, poster_path, backdrop_path, focal_x, focal_y, path
 		FROM shows WHERE path = ?`, path,
 	).Scan(&s.ID, &s.LibraryID, &s.TmdbID, &s.TvdbID, &s.ImdbID, &s.Title, &s.OriginalTitle, &s.Year,
-		&s.Overview, &s.Status, &s.Rating, &s.ContentRating, &s.Genres, &s.Cast,
+		&s.Overview, &s.Status, &s.Rating, &s.ContentRating, &s.Genres, &s.Cast, &s.Crew,
 		&s.Network, &s.PosterPath, &s.BackdropPath, &s.FocalX, &s.FocalY, &s.Path)
 	if err != nil {
 		return nil, err
@@ -769,10 +812,10 @@ func (d *Database) GetShow(id int64) (*Show, error) {
 	var s Show
 	err := d.db.QueryRow(`
 		SELECT id, library_id, tmdb_id, tvdb_id, imdb_id, title, original_title, year,
-			overview, status, rating, content_rating, genres, "cast", network, poster_path, backdrop_path, focal_x, focal_y, path
+			overview, status, rating, content_rating, genres, "cast", crew, network, poster_path, backdrop_path, focal_x, focal_y, path
 		FROM shows WHERE id = ?`, id,
 	).Scan(&s.ID, &s.LibraryID, &s.TmdbID, &s.TvdbID, &s.ImdbID, &s.Title, &s.OriginalTitle, &s.Year,
-		&s.Overview, &s.Status, &s.Rating, &s.ContentRating, &s.Genres, &s.Cast,
+		&s.Overview, &s.Status, &s.Rating, &s.ContentRating, &s.Genres, &s.Cast, &s.Crew,
 		&s.Network, &s.PosterPath, &s.BackdropPath, &s.FocalX, &s.FocalY, &s.Path)
 	if err != nil {
 		return nil, err
@@ -2399,4 +2442,55 @@ func (d *Database) GetBulkShowStatus(tmdbIDs []int64) (map[int64]*ItemStatus, er
 	}
 
 	return result, nil
+}
+
+// Watchlist methods
+
+func (d *Database) AddToWatchlist(item *WatchlistItem) error {
+	_, err := d.db.Exec(`
+		INSERT INTO user_watchlist (user_id, tmdb_id, media_type, added_at)
+		VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(user_id, tmdb_id, media_type) DO NOTHING
+	`, item.UserID, item.TmdbID, item.MediaType)
+	return err
+}
+
+func (d *Database) RemoveFromWatchlist(userID, tmdbID int64, mediaType string) error {
+	_, err := d.db.Exec(`
+		DELETE FROM user_watchlist
+		WHERE user_id = ? AND tmdb_id = ? AND media_type = ?
+	`, userID, tmdbID, mediaType)
+	return err
+}
+
+func (d *Database) GetWatchlist(userID int64) ([]WatchlistItem, error) {
+	rows, err := d.db.Query(`
+		SELECT id, user_id, tmdb_id, media_type, added_at
+		FROM user_watchlist
+		WHERE user_id = ?
+		ORDER BY added_at DESC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []WatchlistItem
+	for rows.Next() {
+		var item WatchlistItem
+		if err := rows.Scan(&item.ID, &item.UserID, &item.TmdbID, &item.MediaType, &item.AddedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+func (d *Database) IsInWatchlist(userID, tmdbID int64, mediaType string) (bool, error) {
+	var count int
+	err := d.db.QueryRow(`
+		SELECT COUNT(*) FROM user_watchlist
+		WHERE user_id = ? AND tmdb_id = ? AND media_type = ?
+	`, userID, tmdbID, mediaType).Scan(&count)
+	return count > 0, err
 }

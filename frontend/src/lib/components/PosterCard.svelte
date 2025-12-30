@@ -93,78 +93,71 @@
 
 		<!-- Type badge - top left -->
 		{#if mediaType}
-			<div class="absolute top-2 left-2">
+			<div class="absolute top-1 left-1">
 				<TypeBadge type={mediaType} />
 			</div>
 		{:else if badge}
 			<!-- Legacy badge support -->
-			<div class="absolute top-2 left-2">
+			<div class="absolute top-1 left-1">
 				<TypeBadge type={badge} />
 			</div>
 		{/if}
 
-		<!-- Status + Rating badges - top right -->
-		<div class="absolute top-2 right-2 flex flex-col items-end gap-1">
-			<!-- Status badge -->
-			{#if inLibrary}
-				<div class="w-5 h-5 rounded-full bg-green-600 flex items-center justify-center" title="In Library">
-					<svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" />
-					</svg>
-				</div>
-			{:else if requestStatus === 'approved' && downloadProgress !== undefined}
-				<!-- Downloading with progress -->
-				<div class="px-1.5 py-0.5 bg-blue-600 rounded text-[10px] font-bold text-white flex items-center gap-1" title="Downloading {downloadProgress}%">
-					<svg class="w-3 h-3 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-					</svg>
-					{downloadProgress}%
-				</div>
-			{:else if requestStatus === 'approved'}
-				<div class="w-5 h-5 rounded-full bg-blue-600 flex items-center justify-center" title="Downloading">
-					<svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-					</svg>
-				</div>
-			{:else if requested}
-				<div class="w-5 h-5 rounded-full bg-white/50 flex items-center justify-center" title="Requested">
-					<svg class="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 24 24">
-						<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67V7z" />
-					</svg>
-				</div>
-			{/if}
+		<!-- Rating badge - top right -->
+		{#if rating}
+			<div class="absolute top-1 right-1 liquid-badge-sm !bg-black/90 !gap-1">
+				<svg class="w-2.5 h-2.5 text-white" fill="currentColor" viewBox="0 0 24 24">
+					<path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+				</svg>
+				{rating.toFixed(1)}
+			</div>
+		{/if}
 
-			<!-- Watch state indicator -->
-			{#if watchState === 'watched'}
-				<div class="w-5 h-5 rounded-full bg-green-700 flex items-center justify-center" title="Watched">
-					<svg class="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 24 24">
-						<path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" />
-					</svg>
-				</div>
-			{:else if watchState === 'partial'}
-				<div class="w-5 h-5 rounded-full bg-white/40 flex items-center justify-center" title="In Progress">
-					<svg class="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 24 24">
-						<path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z" />
-					</svg>
-				</div>
-			{/if}
-
-			<!-- Rating badge -->
-			{#if rating}
-				<div class="px-1.5 py-0.5 bg-black/80 rounded text-[10px] font-medium text-white flex items-center gap-0.5">
-					<svg class="w-2.5 h-2.5 text-white" fill="currentColor" viewBox="0 0 24 24">
-						<path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
-					</svg>
-					{rating.toFixed(1)}
-				</div>
-			{/if}
-		</div>
+		<!-- Watch state indicator - bottom right -->
+		{#if watchState === 'watched'}
+			<div class="absolute bottom-1 right-1 w-6 h-6 rounded-full bg-green-600 flex items-center justify-center" title="Watched">
+				<svg class="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" />
+				</svg>
+			</div>
+		{:else if watchState === 'partial'}
+			<div class="absolute bottom-1 right-1 w-6 h-6 rounded-full bg-amber-500 flex items-center justify-center" title="In Progress">
+				<svg class="w-3.5 h-3.5 text-white" fill="currentColor" viewBox="0 0 24 24">
+					<path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z" />
+				</svg>
+			</div>
+		{:else if inLibrary}
+			<div class="absolute bottom-1 right-1 w-6 h-6 rounded-full bg-green-600 flex items-center justify-center" title="In Library">
+				<svg class="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" />
+				</svg>
+			</div>
+		{:else if requestStatus === 'approved' && downloadProgress !== undefined}
+			<div class="absolute bottom-1 right-1 px-1.5 py-0.5 bg-blue-600 rounded text-[10px] font-bold text-white flex items-center gap-1" title="Downloading {downloadProgress}%">
+				<svg class="w-3 h-3 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+				</svg>
+				{downloadProgress}%
+			</div>
+		{:else if requestStatus === 'approved'}
+			<div class="absolute bottom-1 right-1 w-6 h-6 rounded-full bg-blue-600 flex items-center justify-center" title="Downloading">
+				<svg class="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+				</svg>
+			</div>
+		{:else if requested}
+			<div class="absolute bottom-1 right-1 w-6 h-6 rounded-full bg-amber-500 flex items-center justify-center" title="Requested">
+				<svg class="w-3.5 h-3.5 text-white" fill="currentColor" viewBox="0 0 24 24">
+					<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67V7z" />
+				</svg>
+			</div>
+		{/if}
 
 		<!-- Request button on hover (for discover cards) -->
 		{#if onRequest && !inLibrary && !requested}
 			<button
 				onclick={(e) => { e.preventDefault(); e.stopPropagation(); onRequest(e); }}
-				class="absolute bottom-2 right-2 w-8 h-8 rounded-full bg-white/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-white/40"
+				class="absolute bottom-1 right-1 w-8 h-8 rounded-full bg-white/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-white/40"
 				title="Request"
 			>
 				<svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -175,7 +168,7 @@
 
 		<!-- Episode progress badge - bottom left -->
 		{#if computedEpisodeProgress()}
-			<div class="absolute bottom-2 left-2 px-1.5 py-0.5 bg-black/80 rounded text-[10px] font-medium text-white flex items-center gap-1">
+			<div class="absolute bottom-1 left-1 px-1.5 py-0.5 bg-black/80 rounded text-[10px] font-medium text-white flex items-center gap-1">
 				<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
 				</svg>
