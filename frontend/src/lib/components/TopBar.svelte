@@ -1,0 +1,668 @@
+<script lang="ts">
+	import { goto } from '$app/navigation';
+	import { page } from '$app/stores';
+	import type { Snippet } from 'svelte';
+	import { createRequest } from '$lib/api';
+
+	interface Props {
+		username?: string;
+		isAdmin?: boolean;
+		onLogout?: () => void;
+		left?: Snippet;
+	}
+
+	let { username = '', isAdmin = false, onLogout, left }: Props = $props();
+
+	let showUserMenu = $state(false);
+
+	// Search state
+	let query = $state('');
+	let libraryResults = $state<any[]>([]);
+	let discoverResults = $state<any[]>([]);
+	let loading = $state(false);
+	let selectedIndex = $state(0);
+	let showSearchDropdown = $state(false);
+	let searchInputRef: HTMLInputElement;
+	let debounceTimer: ReturnType<typeof setTimeout>;
+	let searchFilter = $state<'all' | 'movies' | 'tv' | 'music' | 'books'>('all');
+
+	// Cache library data
+	let cachedMovies: any[] | null = null;
+	let cachedShows: any[] | null = null;
+	let cachedArtists: any[] | null = null;
+	let cachedBooks: any[] | null = null;
+	let cacheTime = 0;
+	const CACHE_DURATION = 60000; // 1 minute
+
+	let allResults = $derived([...libraryResults, ...discoverResults]);
+
+	// Close dropdowns on navigation (when URL changes)
+	$effect(() => {
+		// Subscribe to page changes
+		const url = $page.url.pathname;
+		// This runs whenever the URL changes
+		showSearchDropdown = false;
+		showUserMenu = false;
+		query = '';
+	});
+
+	const filterOptions = [
+		{ id: 'all', label: 'All' },
+		{ id: 'movies', label: 'Movies' },
+		{ id: 'tv', label: 'TV' },
+		{ id: 'music', label: 'Music' },
+		{ id: 'books', label: 'Books' },
+	] as const;
+
+	function handleLogout() {
+		showUserMenu = false;
+		onLogout?.();
+	}
+
+	function toggleUserMenu() {
+		showUserMenu = !showUserMenu;
+	}
+
+	function closeUserMenu() {
+		showUserMenu = false;
+	}
+
+	// Search functions
+	function handleSearchFocus() {
+		showSearchDropdown = true;
+	}
+
+	function handleSearchBlur(e: FocusEvent) {
+		// Delay to allow click on dropdown items
+		setTimeout(() => {
+			if (!document.activeElement?.closest('.search-dropdown')) {
+				showSearchDropdown = false;
+			}
+		}, 200);
+	}
+
+	// Normalize text for search - remove special chars, lowercase
+	function normalizeText(text: string): string {
+		return text
+			.toLowerCase()
+			.normalize('NFD')
+			.replace(/[\u0300-\u036f]/g, '') // Remove accents
+			.replace(/[^a-z0-9\s]/g, ' ') // Replace special chars with space
+			.replace(/\s+/g, ' ') // Collapse whitespace
+			.trim();
+	}
+
+	// Fuzzy search scoring - higher score = better match
+	function searchScore(text: string, searchQuery: string): number {
+		if (!text || !searchQuery) return 0;
+
+		const t = normalizeText(text);
+		const q = normalizeText(searchQuery);
+
+		if (!t || !q) return 0;
+
+		// Exact match
+		if (t === q) return 100;
+
+		// Starts with query
+		if (t.startsWith(q)) return 95;
+
+		// Query starts with text (searching for partial title)
+		if (q.startsWith(t)) return 90;
+
+		// Contains query as complete substring
+		if (t.includes(q)) return 85;
+
+		// Word-level matching
+		const textWords = t.split(' ').filter(w => w.length > 0);
+		const queryWords = q.split(' ').filter(w => w.length > 0);
+
+		// Check if any word starts with query
+		for (const word of textWords) {
+			if (word.startsWith(q)) return 80;
+		}
+
+		// Check if query matches start of any word
+		for (const word of textWords) {
+			if (word.length >= 2 && q.startsWith(word)) return 75;
+		}
+
+		// Multi-word query: check if all query words appear in text
+		if (queryWords.length > 1) {
+			let allMatch = true;
+			let matchCount = 0;
+			for (const qWord of queryWords) {
+				const found = textWords.some(tWord => tWord.includes(qWord) || qWord.includes(tWord));
+				if (found) matchCount++;
+				else allMatch = false;
+			}
+			if (allMatch) return 70;
+			if (matchCount > 0) return 50 + (matchCount / queryWords.length) * 20;
+		}
+
+		// Partial substring match (query is part of a word)
+		for (const word of textWords) {
+			if (word.includes(q)) return 60;
+		}
+
+		// Check if text words are in query (reverse partial match)
+		for (const word of textWords) {
+			if (word.length >= 3 && q.includes(word)) return 55;
+		}
+
+		// Character sequence matching (for typos/partial typing)
+		let matchLen = 0;
+		let tIdx = 0;
+		for (let i = 0; i < q.length && tIdx < t.length; i++) {
+			const foundIdx = t.indexOf(q[i], tIdx);
+			if (foundIdx !== -1) {
+				matchLen++;
+				tIdx = foundIdx + 1;
+			}
+		}
+		const seqScore = (matchLen / q.length) * 40;
+		if (seqScore >= 30) return seqScore;
+
+		return 0;
+	}
+
+	async function loadLibraryCache() {
+		const now = Date.now();
+		if (cachedMovies && cachedShows && (now - cacheTime) < CACHE_DURATION) {
+			return; // Use cache
+		}
+
+		const [moviesRes, showsRes, artistsRes, booksRes] = await Promise.all([
+			fetch(`/api/movies`),
+			fetch(`/api/shows`),
+			fetch(`/api/artists`),
+			fetch(`/api/books`),
+		]);
+
+		cachedMovies = moviesRes.ok ? await moviesRes.json() : [];
+		cachedShows = showsRes.ok ? await showsRes.json() : [];
+		cachedArtists = artistsRes.ok ? await artistsRes.json() : [];
+		cachedBooks = booksRes.ok ? await booksRes.json() : [];
+		cacheTime = now;
+	}
+
+	function handleSearchInput() {
+		clearTimeout(debounceTimer);
+		selectedIndex = 0;
+		showSearchDropdown = true;
+
+		if (!query.trim()) {
+			libraryResults = [];
+			discoverResults = [];
+			return;
+		}
+
+		debounceTimer = setTimeout(async () => {
+			loading = true;
+			try {
+				// Determine what to search based on filter
+				const includeMovies = searchFilter === 'all' || searchFilter === 'movies';
+				const includeTV = searchFilter === 'all' || searchFilter === 'tv';
+				const includeMusic = searchFilter === 'all' || searchFilter === 'music';
+				const includeBooks = searchFilter === 'all' || searchFilter === 'books';
+
+				// Load library cache and TMDB results in parallel
+				// Admin can search TMDB for movies and/or TV based on filter
+				const tmdbPromises: Promise<Response>[] = [];
+				if (isAdmin && includeMovies) {
+					tmdbPromises.push(fetch(`/api/tmdb/search/movie?q=${encodeURIComponent(query)}`));
+				}
+				if (isAdmin && includeTV) {
+					tmdbPromises.push(fetch(`/api/tmdb/search/tv?q=${encodeURIComponent(query)}`));
+				}
+
+				await loadLibraryCache();
+				const tmdbResponses = await Promise.all(tmdbPromises);
+
+				// Parse TMDB results based on what we searched
+				let tmdbMovies: any[] = [];
+				let tmdbShows: any[] = [];
+				let responseIdx = 0;
+				if (isAdmin && includeMovies && tmdbResponses[responseIdx]) {
+					tmdbMovies = tmdbResponses[responseIdx].ok ? await tmdbResponses[responseIdx].json() : [];
+					responseIdx++;
+				}
+				if (isAdmin && includeTV && tmdbResponses[responseIdx]) {
+					tmdbShows = tmdbResponses[responseIdx].ok ? await tmdbResponses[responseIdx].json() : [];
+				}
+
+				// Filter and score library results based on filter
+				const searchTerm = query.trim();
+
+				const scoredMovies = includeMovies ? (cachedMovies || [])
+					.map((m: any) => ({ ...m, type: 'movie', source: 'library', score: searchScore(m.title, searchTerm) }))
+					.filter((m: any) => m.score > 0) : [];
+				const scoredShows = includeTV ? (cachedShows || [])
+					.map((s: any) => ({ ...s, type: 'show', source: 'library', score: searchScore(s.title, searchTerm) }))
+					.filter((s: any) => s.score > 0) : [];
+				const scoredArtists = includeMusic ? (cachedArtists || [])
+					.map((a: any) => ({ ...a, type: 'artist', source: 'library', score: searchScore(a.name, searchTerm) }))
+					.filter((a: any) => a.score > 0) : [];
+				const scoredBooks = includeBooks ? (cachedBooks || [])
+					.map((b: any) => ({ ...b, type: 'book', source: 'library', score: searchScore(b.title, searchTerm) }))
+					.filter((b: any) => b.score > 0) : [];
+
+				// Sort by score and take top results
+				libraryResults = [...scoredMovies, ...scoredShows, ...scoredArtists, ...scoredBooks]
+					.sort((a, b) => b.score - a.score)
+					.slice(0, 10);
+
+				// Build set of library TMDB IDs to exclude from discover results
+				const libraryTmdbIds = new Set([
+					...(cachedMovies || []).map((m: any) => m.tmdbId),
+					...(cachedShows || []).map((s: any) => s.tmdbId),
+				]);
+
+				// Combine TMDB results, excluding items already in library
+				// Sort by popularity (vote_count * rating approximation)
+				const allDiscoverResults = [
+					...tmdbMovies
+						.filter((m: any) => !libraryTmdbIds.has(m.id))
+						.map((m: any) => ({ ...m, type: 'movie', source: 'discover', popularity: m.popularity || 0 })),
+					...tmdbShows
+						.filter((s: any) => !libraryTmdbIds.has(s.id))
+						.map((s: any) => ({ ...s, type: 'show', source: 'discover', popularity: s.popularity || 0 })),
+				]
+					.sort((a, b) => b.popularity - a.popularity)
+					.slice(0, 10);
+
+				discoverResults = allDiscoverResults;
+			} catch (err) {
+				console.error('Search error:', err);
+				libraryResults = [];
+				discoverResults = [];
+			} finally {
+				loading = false;
+			}
+		}, 300);
+	}
+
+	function setFilter(filter: typeof searchFilter) {
+		searchFilter = filter;
+		if (query.trim()) {
+			handleSearchInput();
+		}
+	}
+
+	function handleSearchKeydown(e: KeyboardEvent) {
+		if (e.key === 'Escape') {
+			showSearchDropdown = false;
+			query = '';
+			searchInputRef?.blur();
+		} else if (e.key === 'ArrowDown') {
+			e.preventDefault();
+			selectedIndex = Math.min(selectedIndex + 1, allResults.length - 1);
+		} else if (e.key === 'ArrowUp') {
+			e.preventDefault();
+			selectedIndex = Math.max(selectedIndex - 1, 0);
+		} else if (e.key === 'Enter') {
+			e.preventDefault();
+			if (allResults.length > 0 && allResults[selectedIndex]) {
+				navigateToResult(allResults[selectedIndex]);
+			}
+		}
+	}
+
+	function navigateToResult(item: any) {
+		// Close dropdown first
+		showSearchDropdown = false;
+		query = '';
+
+		let path = '';
+		if (item.source === 'library') {
+			if (item.type === 'movie') {
+				path = `/movies/${item.id}`;
+			} else if (item.type === 'show') {
+				path = `/tv/${item.id}`;
+			} else if (item.type === 'artist') {
+				path = `/music/artists/${item.id}`;
+			} else if (item.type === 'book') {
+				path = `/books/${item.id}`;
+			}
+		} else {
+			if (item.type === 'movie') {
+				path = `/discover/movie/${item.id}`;
+			} else if (item.type === 'show') {
+				path = `/discover/show/${item.id}`;
+			}
+		}
+
+		if (path) {
+			goto(path);
+		}
+	}
+
+	function getTypeLabel(type: string): string {
+		switch (type) {
+			case 'movie': return 'Movie';
+			case 'show': return 'TV Show';
+			case 'artist': return 'Artist';
+			case 'book': return 'Book';
+			default: return type;
+		}
+	}
+
+	function getTypeIcon(type: string): string {
+		switch (type) {
+			case 'movie': return 'M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z';
+			case 'show': return 'M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z';
+			case 'artist': return 'M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3';
+			case 'book': return 'M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253';
+			default: return 'M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z';
+		}
+	}
+
+	async function handleInlineRequest(e: MouseEvent, item: any) {
+		e.preventDefault();
+		e.stopPropagation();
+
+		const dateStr = item.release_date || item.first_air_date;
+		try {
+			await createRequest({
+				type: item.type === 'movie' ? 'movie' : 'show',
+				tmdbId: item.id,
+				title: item.title || item.name,
+				year: dateStr ? parseInt(dateStr.substring(0, 4)) : undefined,
+				overview: item.overview,
+				posterPath: item.poster_path
+			});
+
+			discoverResults = discoverResults.map(r =>
+				r.id === item.id ? { ...r, requested: true } : r
+			);
+		} catch (err) {
+			console.error('Failed to create request:', err);
+		}
+	}
+</script>
+
+<header class="fixed top-0 left-16 right-0 h-16 glass-topbar flex items-center justify-between px-6 z-30">
+	<!-- Left section - Page title or breadcrumb -->
+	<div class="flex items-center">
+		{#if left}
+			{@render left()}
+		{/if}
+	</div>
+
+	<!-- Center section - Search with dropdown -->
+	<div class="flex-1 max-w-3xl mx-8 relative">
+		<div class="relative z-50">
+			<div class="flex items-center h-12 px-5 gap-3 liquid-glass rounded-2xl text-text-secondary hover:!bg-white/10 transition-all {showSearchDropdown ? '!rounded-b-none' : ''}">
+				<svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+				</svg>
+				<input
+					bind:this={searchInputRef}
+					bind:value={query}
+					oninput={handleSearchInput}
+					onfocus={handleSearchFocus}
+					onblur={handleSearchBlur}
+					onkeydown={handleSearchKeydown}
+					type="text"
+					placeholder="Search movies, shows, music, books..."
+					class="flex-1 bg-transparent text-white placeholder-text-secondary outline-none text-sm"
+				/>
+				{#if loading}
+					<div class="w-4 h-4 border-2 border-white/50 border-t-transparent rounded-full animate-spin"></div>
+				{/if}
+			</div>
+
+			<!-- Search Dropdown -->
+			{#if showSearchDropdown}
+				<!-- Backdrop to close on click outside -->
+				<button
+					class="fixed inset-0 z-40"
+					onclick={() => { showSearchDropdown = false; }}
+					aria-label="Close search"
+				></button>
+				<div class="search-dropdown absolute left-0 right-0 top-full liquid-glass !rounded-t-none rounded-b-2xl !border-t-0 z-50">
+					<!-- Filter Tabs -->
+					<div class="flex items-center gap-1 p-2 border-b border-white/5">
+						{#each filterOptions as option}
+							<button
+								onclick={() => setFilter(option.id)}
+								class="px-3 py-1.5 text-xs font-medium rounded-lg transition-all {searchFilter === option.id ? 'bg-white/15 text-white' : 'text-text-secondary hover:text-white hover:bg-white/5'}"
+							>
+								{option.label}
+							</button>
+						{/each}
+					</div>
+
+					<!-- Results -->
+					<div class="search-results max-h-[60vh] overflow-y-auto">
+						{#if loading}
+							<div class="p-6 flex items-center justify-center gap-2">
+								<div class="w-5 h-5 border-2 border-white/50 border-t-transparent rounded-full animate-spin"></div>
+								<span class="text-sm text-text-secondary">Searching...</span>
+							</div>
+						{:else if !query.trim()}
+							<div class="p-6 text-center text-text-secondary text-sm">
+								Type to search your library{isAdmin ? ' and discover new content' : ''}
+							</div>
+						{:else if libraryResults.length > 0 || discoverResults.length > 0}
+						<!-- Library results -->
+						{#if libraryResults.length > 0}
+							<div class="p-2">
+								<p class="px-3 py-1.5 text-xs text-text-muted uppercase tracking-wider flex items-center gap-2">
+									<svg class="w-3 h-3 text-green-400" fill="currentColor" viewBox="0 0 24 24">
+										<path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
+									</svg>
+									In Library
+								</p>
+								{#each libraryResults as item, i}
+									<button
+										onclick={() => navigateToResult(item)}
+										class="w-full flex items-center gap-3 p-2 rounded-lg transition-all
+											{selectedIndex === i ? 'bg-white/10' : 'hover:bg-white/5'}"
+									>
+										<div class="w-10 h-14 bg-bg-card rounded overflow-hidden flex-shrink-0 {item.type === 'artist' ? '!rounded-full !w-10 !h-10' : ''}">
+											{#if item.posterPath || item.imagePath || item.coverPath}
+												<img
+													src={`/api/images/poster${item.posterPath || item.imagePath || item.coverPath}`}
+													alt=""
+													class="w-full h-full object-cover"
+												/>
+											{:else}
+												<div class="w-full h-full flex items-center justify-center text-text-muted">
+													<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+														<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={getTypeIcon(item.type)} />
+													</svg>
+												</div>
+											{/if}
+										</div>
+										<div class="flex-1 text-left min-w-0">
+											<p class="text-white text-sm font-medium truncate">{item.title || item.name}</p>
+											<p class="text-xs text-text-secondary">
+												{getTypeLabel(item.type)}
+												{#if item.year || item.release_date || item.first_air_date}
+													· {item.year || new Date(item.release_date || item.first_air_date).getFullYear()}
+												{/if}
+											</p>
+										</div>
+										<svg class="w-4 h-4 text-green-400 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24">
+											<path d="M8 5v14l11-7z" />
+										</svg>
+									</button>
+								{/each}
+							</div>
+						{/if}
+
+						<!-- Discover results -->
+						{#if discoverResults.length > 0}
+							<div class="p-2 {libraryResults.length > 0 ? 'border-t border-white/5' : ''}">
+								<p class="px-3 py-1.5 text-xs text-text-muted uppercase tracking-wider flex items-center gap-2">
+									<svg class="w-3 h-3 text-white/50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+									</svg>
+									Request
+								</p>
+								{#each discoverResults as item, i}
+									{@const globalIndex = libraryResults.length + i}
+									<div
+										class="flex items-center gap-3 p-2 rounded-lg transition-all cursor-pointer
+											{selectedIndex === globalIndex ? 'bg-white/10' : 'hover:bg-white/5'}"
+										onclick={() => navigateToResult(item)}
+										role="button"
+										tabindex="0"
+									>
+										<div class="w-10 h-14 bg-bg-card rounded overflow-hidden flex-shrink-0">
+											{#if item.poster_path}
+												<img
+													src={`https://image.tmdb.org/t/p/w92${item.poster_path}`}
+													alt=""
+													class="w-full h-full object-cover"
+												/>
+											{:else}
+												<div class="w-full h-full flex items-center justify-center text-text-muted">
+													<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+														<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z" />
+													</svg>
+												</div>
+											{/if}
+										</div>
+										<div class="flex-1 text-left min-w-0">
+											<p class="text-white text-sm font-medium truncate">{item.title || item.name}</p>
+											<p class="text-xs text-text-secondary">
+												{item.type === 'movie' ? 'Movie' : 'TV Show'}
+												{#if item.release_date || item.first_air_date}
+													· {(item.release_date || item.first_air_date).substring(0, 4)}
+												{/if}
+											</p>
+										</div>
+										{#if item.requested}
+											<span class="text-xs text-white/60">Requested</span>
+										{:else}
+											<button
+												onclick={(e) => handleInlineRequest(e, item)}
+												class="liquid-btn-icon !w-8 !h-8 !rounded-full"
+												title="Request"
+											>
+												<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+													<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+												</svg>
+											</button>
+										{/if}
+									</div>
+								{/each}
+							</div>
+						{/if}
+						{:else}
+							<div class="p-6 text-center">
+								<svg class="w-12 h-12 mx-auto text-text-muted mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+								</svg>
+								<p class="text-text-secondary text-sm">No results found for "{query}"</p>
+								<p class="text-text-muted text-xs mt-1">Try a different search term or filter</p>
+							</div>
+						{/if}
+					</div>
+				</div>
+			{/if}
+		</div>
+	</div>
+
+	<!-- Right section - Notifications + Profile -->
+	<div class="flex items-center gap-4">
+		<!-- Notifications -->
+		<button
+			class="w-12 h-12 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center text-white hover:bg-white/20 transition-all"
+			title="Notifications"
+		>
+			<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+			</svg>
+		</button>
+
+		<!-- Support/Donate -->
+		<a
+			href="https://github.com/sponsors/avbirk83"
+			target="_blank"
+			rel="noopener noreferrer"
+			class="w-12 h-12 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center text-zinc-400 hover:text-pink-500 hover:bg-white/20 transition-all group"
+			title="Support Outpost"
+		>
+			<svg class="w-5 h-5 group-hover:fill-pink-500 transition-all" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+			</svg>
+		</a>
+
+		<!-- User menu -->
+		<div class="relative">
+			<button
+				onclick={toggleUserMenu}
+				class="flex items-center gap-3 px-4 h-12 min-w-[180px] liquid-glass hover:!bg-white/15 transition-all {showUserMenu ? 'rounded-t-xl !rounded-b-none' : 'rounded-xl'}"
+				style={showUserMenu ? 'border-bottom: none; box-shadow: none;' : ''}
+			>
+				<!-- Monochrome avatar -->
+				<div class="w-8 h-8 bg-white/10 border border-t-white/20 border-l-white/10 border-r-white/5 border-b-white/5 rounded-full grid place-items-center flex-shrink-0">
+					<span class="text-xs font-semibold text-white uppercase">
+						{username ? username.charAt(0) : 'U'}
+					</span>
+				</div>
+				<span class="text-sm text-white hidden md:block truncate">{username}</span>
+				<svg class="w-4 h-4 text-text-secondary hidden md:block flex-shrink-0 transition-transform ml-auto {showUserMenu ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+				</svg>
+			</button>
+
+			<!-- Dropdown menu -->
+			{#if showUserMenu}
+				<!-- Backdrop -->
+				<button
+					class="fixed inset-0 z-40"
+					onclick={closeUserMenu}
+					aria-label="Close menu"
+				></button>
+
+				<div class="absolute right-0 top-full min-w-[180px] liquid-glass !rounded-t-none rounded-b-xl !border-t-0 py-1.5 z-50">
+					<a
+						href="/profile"
+						class="flex items-center gap-3 px-4 py-2 text-text-secondary hover:text-white hover:bg-white/10 transition-all"
+						onclick={closeUserMenu}
+					>
+						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+						</svg>
+						<span class="text-sm">Profile</span>
+					</a>
+					{#if isAdmin}
+						<a
+							href="/users"
+							class="flex items-center gap-3 px-4 py-2 text-text-secondary hover:text-white hover:bg-white/10 transition-all"
+							onclick={closeUserMenu}
+						>
+							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+							</svg>
+							<span class="text-sm">Users</span>
+						</a>
+					{/if}
+					<button
+						onclick={handleLogout}
+						class="w-full flex items-center gap-3 px-4 py-2 text-text-secondary hover:text-white hover:bg-white/10 transition-all"
+					>
+						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+						</svg>
+						<span class="text-sm">Sign out</span>
+					</button>
+				</div>
+			{/if}
+		</div>
+	</div>
+</header>
+
+<style>
+	.search-results {
+		-ms-overflow-style: none;
+		scrollbar-width: none;
+	}
+	.search-results::-webkit-scrollbar {
+		display: none;
+	}
+</style>

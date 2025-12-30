@@ -1,0 +1,795 @@
+package metadata
+
+import (
+	"log"
+	"path/filepath"
+	"github.com/outpost/outpost/internal/database"
+	"github.com/outpost/outpost/internal/tmdb"
+)
+
+type Service struct {
+	db       *database.Database
+	tmdb     *tmdb.Client
+	imageDir string
+}
+
+func NewService(db *database.Database, apiKey, imageDir string) *Service {
+	return &Service{
+		db:       db,
+		tmdb:     tmdb.NewClient(apiKey, imageDir),
+		imageDir: imageDir,
+	}
+}
+
+// UpdateAPIKey updates the TMDB client with a new API key
+func (s *Service) UpdateAPIKey(apiKey string) {
+	s.tmdb = tmdb.NewClient(apiKey, s.imageDir)
+}
+
+// GetTMDBClient returns the TMDB client for direct API access
+func (s *Service) GetTMDBClient() *tmdb.Client {
+	return s.tmdb
+}
+
+// FetchMovieMetadata fetches metadata from TMDB for a movie
+func (s *Service) FetchMovieMetadata(movie *database.Movie) error {
+	// Search for the movie
+	searchResult, err := s.tmdb.SearchMovie(movie.Title, movie.Year)
+	if err != nil {
+		return err
+	}
+
+	if len(searchResult.Results) == 0 {
+		log.Printf("No TMDB results for movie: %s (%d)", movie.Title, movie.Year)
+		return nil
+	}
+
+	// Use the first result (best match)
+	bestMatch := searchResult.Results[0]
+
+	// Get detailed info
+	details, err := s.tmdb.GetMovieDetails(bestMatch.ID)
+	if err != nil {
+		return err
+	}
+
+	// Get content rating
+	contentRating, _ := s.tmdb.GetMovieContentRating(bestMatch.ID)
+
+	// Download and cache images
+	posterPath, _ := s.tmdb.DownloadImage(details.PosterPath, "w500")
+	backdropPath, _ := s.tmdb.DownloadImage(details.BackdropPath, "w1280")
+
+	// Analyze focal point for backdrop
+	if backdropPath != "" {
+		focalX, focalY, _ := s.tmdb.AnalyzeFocalPoint(backdropPath)
+		movie.FocalX = &focalX
+		movie.FocalY = &focalY
+	}
+
+	// Update movie with metadata
+	movie.TmdbID = &details.ID
+	if details.ImdbID != "" {
+		movie.ImdbID = &details.ImdbID
+	}
+	if details.OriginalTitle != "" && details.OriginalTitle != details.Title {
+		movie.OriginalTitle = &details.OriginalTitle
+	}
+	if details.Overview != "" {
+		movie.Overview = &details.Overview
+	}
+	if details.Tagline != "" {
+		movie.Tagline = &details.Tagline
+	}
+	if details.Runtime > 0 {
+		movie.Runtime = &details.Runtime
+	}
+	if details.VoteAverage > 0 {
+		movie.Rating = &details.VoteAverage
+	}
+	if contentRating != "" {
+		movie.ContentRating = &contentRating
+	}
+	if len(details.Genres) > 0 {
+		genres := tmdb.GenresToJSON(details.Genres)
+		movie.Genres = &genres
+	}
+	if len(details.Credits.Cast) > 0 {
+		cast := tmdb.CastToJSON(details.Credits.Cast, 0) // Full cast (0 = no limit)
+		movie.Cast = &cast
+	}
+	if len(details.Credits.Crew) > 0 {
+		crew := tmdb.CrewToJSON(details.Credits.Crew, 0) // Full crew (0 = no limit)
+		movie.Crew = &crew
+	}
+	director := tmdb.GetDirector(details.Credits.Crew)
+	if director != "" {
+		movie.Director = &director
+	}
+	writer := tmdb.GetWriter(details.Credits.Crew)
+	if writer != "" {
+		movie.Writer = &writer
+	}
+	editor := tmdb.GetEditor(details.Credits.Crew)
+	if editor != "" {
+		movie.Editor = &editor
+	}
+	producers := tmdb.GetProducers(details.Credits.Crew, 3)
+	if producers != "" {
+		movie.Producers = &producers
+	}
+	if details.Status != "" {
+		movie.Status = &details.Status
+	}
+	if details.Budget > 0 {
+		movie.Budget = &details.Budget
+	}
+	if details.Revenue > 0 {
+		movie.Revenue = &details.Revenue
+	}
+	if len(details.ProductionCountries) > 0 {
+		country := details.ProductionCountries[0].Name
+		movie.Country = &country
+	}
+	if details.OriginalLanguage != "" {
+		movie.OriginalLanguage = &details.OriginalLanguage
+	}
+	trailers := tmdb.TrailersToJSON(details.Videos)
+	if trailers != "" {
+		movie.Trailers = &trailers
+	}
+	if posterPath != "" {
+		movie.PosterPath = &posterPath
+	}
+	if backdropPath != "" {
+		movie.BackdropPath = &backdropPath
+	}
+
+	// Save to database
+	return s.db.UpdateMovieMetadata(movie)
+}
+
+// FetchMovieMetadataByTmdbID fetches metadata for a specific TMDB ID (manual match)
+func (s *Service) FetchMovieMetadataByTmdbID(movie *database.Movie, tmdbID int64) error {
+	details, err := s.tmdb.GetMovieDetails(tmdbID)
+	if err != nil {
+		return err
+	}
+
+	contentRating, _ := s.tmdb.GetMovieContentRating(tmdbID)
+	posterPath, _ := s.tmdb.DownloadImage(details.PosterPath, "w500")
+	backdropPath, _ := s.tmdb.DownloadImage(details.BackdropPath, "w1280")
+
+	// Analyze focal point for backdrop
+	if backdropPath != "" {
+		focalX, focalY, _ := s.tmdb.AnalyzeFocalPoint(backdropPath)
+		movie.FocalX = &focalX
+		movie.FocalY = &focalY
+	}
+
+	movie.TmdbID = &details.ID
+	if details.ImdbID != "" {
+		movie.ImdbID = &details.ImdbID
+	}
+	if details.OriginalTitle != "" && details.OriginalTitle != details.Title {
+		movie.OriginalTitle = &details.OriginalTitle
+	}
+	if details.Overview != "" {
+		movie.Overview = &details.Overview
+	}
+	if details.Tagline != "" {
+		movie.Tagline = &details.Tagline
+	}
+	if details.Runtime > 0 {
+		movie.Runtime = &details.Runtime
+	}
+	if details.VoteAverage > 0 {
+		movie.Rating = &details.VoteAverage
+	}
+	if contentRating != "" {
+		movie.ContentRating = &contentRating
+	}
+	if len(details.Genres) > 0 {
+		genres := tmdb.GenresToJSON(details.Genres)
+		movie.Genres = &genres
+	}
+	if len(details.Credits.Cast) > 0 {
+		cast := tmdb.CastToJSON(details.Credits.Cast, 0)
+		movie.Cast = &cast
+	}
+	director := tmdb.GetDirector(details.Credits.Crew)
+	if director != "" {
+		movie.Director = &director
+	}
+	writer := tmdb.GetWriter(details.Credits.Crew)
+	if writer != "" {
+		movie.Writer = &writer
+	}
+	editor := tmdb.GetEditor(details.Credits.Crew)
+	if editor != "" {
+		movie.Editor = &editor
+	}
+	producers := tmdb.GetProducers(details.Credits.Crew, 3)
+	if producers != "" {
+		movie.Producers = &producers
+	}
+	if details.Status != "" {
+		movie.Status = &details.Status
+	}
+	if details.Budget > 0 {
+		movie.Budget = &details.Budget
+	}
+	if details.Revenue > 0 {
+		movie.Revenue = &details.Revenue
+	}
+	if len(details.ProductionCountries) > 0 {
+		country := details.ProductionCountries[0].Name
+		movie.Country = &country
+	}
+	if details.OriginalLanguage != "" {
+		movie.OriginalLanguage = &details.OriginalLanguage
+	}
+	trailers := tmdb.TrailersToJSON(details.Videos)
+	if trailers != "" {
+		movie.Trailers = &trailers
+	}
+	if posterPath != "" {
+		movie.PosterPath = &posterPath
+	}
+	if backdropPath != "" {
+		movie.BackdropPath = &backdropPath
+	}
+
+	return s.db.UpdateMovieMetadata(movie)
+}
+
+// FetchShowMetadata fetches metadata from TMDB for a TV show
+func (s *Service) FetchShowMetadata(show *database.Show) error {
+	// Search for the show
+	searchResult, err := s.tmdb.SearchTV(show.Title, show.Year)
+	if err != nil {
+		return err
+	}
+
+	if len(searchResult.Results) == 0 {
+		log.Printf("No TMDB results for show: %s (%d)", show.Title, show.Year)
+		return nil
+	}
+
+	// Use the first result
+	bestMatch := searchResult.Results[0]
+
+	// Get detailed info
+	details, err := s.tmdb.GetTVDetails(bestMatch.ID)
+	if err != nil {
+		return err
+	}
+
+	// Get content rating
+	contentRating, _ := s.tmdb.GetTVContentRating(bestMatch.ID)
+
+	// Download and cache images
+	posterPath, _ := s.tmdb.DownloadImage(details.PosterPath, "w500")
+	backdropPath, _ := s.tmdb.DownloadImage(details.BackdropPath, "w1280")
+
+	// Analyze focal point for backdrop
+	if backdropPath != "" {
+		focalX, focalY, _ := s.tmdb.AnalyzeFocalPoint(backdropPath)
+		show.FocalX = &focalX
+		show.FocalY = &focalY
+	}
+
+	// Update show with metadata
+	show.TmdbID = &details.ID
+	if details.ExternalIDs.TvdbID > 0 {
+		show.TvdbID = &details.ExternalIDs.TvdbID
+	}
+	if details.ExternalIDs.ImdbID != "" {
+		show.ImdbID = &details.ExternalIDs.ImdbID
+	}
+	if details.OriginalName != "" && details.OriginalName != details.Name {
+		show.OriginalTitle = &details.OriginalName
+	}
+	if details.Overview != "" {
+		show.Overview = &details.Overview
+	}
+	if details.Status != "" {
+		show.Status = &details.Status
+	}
+	if details.VoteAverage > 0 {
+		show.Rating = &details.VoteAverage
+	}
+	if contentRating != "" {
+		show.ContentRating = &contentRating
+	}
+	if len(details.Genres) > 0 {
+		genres := tmdb.GenresToJSON(details.Genres)
+		show.Genres = &genres
+	}
+	if len(details.Credits.Cast) > 0 {
+		cast := tmdb.CastToJSON(details.Credits.Cast, 0)
+		show.Cast = &cast
+	}
+	if len(details.Networks) > 0 {
+		show.Network = &details.Networks[0].Name
+	}
+	if posterPath != "" {
+		show.PosterPath = &posterPath
+	}
+	if backdropPath != "" {
+		show.BackdropPath = &backdropPath
+	}
+
+	// Save show metadata
+	if err := s.db.UpdateShowMetadata(show); err != nil {
+		return err
+	}
+
+	// Fetch season and episode metadata
+	return s.fetchSeasonMetadata(show, details.ID)
+}
+
+// FetchShowMetadataByTmdbID fetches metadata for a specific TMDB ID (manual match)
+func (s *Service) FetchShowMetadataByTmdbID(show *database.Show, tmdbID int64) error {
+	details, err := s.tmdb.GetTVDetails(tmdbID)
+	if err != nil {
+		return err
+	}
+
+	contentRating, _ := s.tmdb.GetTVContentRating(tmdbID)
+	posterPath, _ := s.tmdb.DownloadImage(details.PosterPath, "w500")
+	backdropPath, _ := s.tmdb.DownloadImage(details.BackdropPath, "w1280")
+
+	// Analyze focal point for backdrop
+	if backdropPath != "" {
+		focalX, focalY, _ := s.tmdb.AnalyzeFocalPoint(backdropPath)
+		show.FocalX = &focalX
+		show.FocalY = &focalY
+	}
+
+	show.TmdbID = &details.ID
+	if details.ExternalIDs.TvdbID > 0 {
+		show.TvdbID = &details.ExternalIDs.TvdbID
+	}
+	if details.ExternalIDs.ImdbID != "" {
+		show.ImdbID = &details.ExternalIDs.ImdbID
+	}
+	if details.OriginalName != "" && details.OriginalName != details.Name {
+		show.OriginalTitle = &details.OriginalName
+	}
+	if details.Overview != "" {
+		show.Overview = &details.Overview
+	}
+	if details.Status != "" {
+		show.Status = &details.Status
+	}
+	if details.VoteAverage > 0 {
+		show.Rating = &details.VoteAverage
+	}
+	if contentRating != "" {
+		show.ContentRating = &contentRating
+	}
+	if len(details.Genres) > 0 {
+		genres := tmdb.GenresToJSON(details.Genres)
+		show.Genres = &genres
+	}
+	if len(details.Credits.Cast) > 0 {
+		cast := tmdb.CastToJSON(details.Credits.Cast, 0)
+		show.Cast = &cast
+	}
+	if len(details.Networks) > 0 {
+		show.Network = &details.Networks[0].Name
+	}
+	if posterPath != "" {
+		show.PosterPath = &posterPath
+	}
+	if backdropPath != "" {
+		show.BackdropPath = &backdropPath
+	}
+
+	if err := s.db.UpdateShowMetadata(show); err != nil {
+		return err
+	}
+
+	return s.fetchSeasonMetadata(show, tmdbID)
+}
+
+// fetchSeasonMetadata fetches metadata for all seasons of a show
+func (s *Service) fetchSeasonMetadata(show *database.Show, showTmdbID int64) error {
+	seasons, err := s.db.GetSeasonsByShow(show.ID)
+	if err != nil {
+		return err
+	}
+
+	for i := range seasons {
+		season := &seasons[i]
+
+		// Fetch season details from TMDB
+		seasonDetails, err := s.tmdb.GetSeasonDetails(showTmdbID, season.SeasonNumber)
+		if err != nil {
+			log.Printf("Failed to fetch season %d metadata: %v", season.SeasonNumber, err)
+			continue
+		}
+
+		// Download season poster
+		posterPath, _ := s.tmdb.DownloadImage(seasonDetails.PosterPath, "w500")
+
+		// Update season
+		if seasonDetails.Name != "" {
+			season.Name = &seasonDetails.Name
+		}
+		if seasonDetails.Overview != "" {
+			season.Overview = &seasonDetails.Overview
+		}
+		if posterPath != "" {
+			season.PosterPath = &posterPath
+		}
+		if seasonDetails.AirDate != "" {
+			season.AirDate = &seasonDetails.AirDate
+		}
+
+		if err := s.db.UpdateSeasonMetadata(season); err != nil {
+			log.Printf("Failed to update season %d metadata: %v", season.SeasonNumber, err)
+			continue
+		}
+
+		// Update episode metadata
+		episodes, err := s.db.GetEpisodesBySeason(season.ID)
+		if err != nil {
+			continue
+		}
+
+		for j := range episodes {
+			ep := &episodes[j]
+
+			// Find matching TMDB episode
+			for _, tmdbEp := range seasonDetails.Episodes {
+				if tmdbEp.EpisodeNumber == ep.EpisodeNumber {
+					// Download still image
+					stillPath, _ := s.tmdb.DownloadImage(tmdbEp.StillPath, "w300")
+
+					if tmdbEp.Name != "" {
+						ep.Title = tmdbEp.Name
+					}
+					if tmdbEp.Overview != "" {
+						ep.Overview = &tmdbEp.Overview
+					}
+					if tmdbEp.AirDate != "" {
+						ep.AirDate = &tmdbEp.AirDate
+					}
+					if tmdbEp.Runtime > 0 {
+						ep.Runtime = &tmdbEp.Runtime
+					}
+					if stillPath != "" {
+						ep.StillPath = &stillPath
+					}
+
+					if err := s.db.UpdateEpisodeMetadata(ep); err != nil {
+						log.Printf("Failed to update episode S%02dE%02d metadata: %v",
+							season.SeasonNumber, ep.EpisodeNumber, err)
+					}
+					break
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// SearchMovies searches TMDB for movies (for manual matching)
+func (s *Service) SearchMovies(query string, year int) ([]tmdb.MovieResult, error) {
+	result, err := s.tmdb.SearchMovie(query, year)
+	if err != nil {
+		return nil, err
+	}
+	return result.Results, nil
+}
+
+// SearchTV searches TMDB for TV shows (for manual matching)
+func (s *Service) SearchTV(query string, year int) ([]tmdb.TVResult, error) {
+	result, err := s.tmdb.SearchTV(query, year)
+	if err != nil {
+		return nil, err
+	}
+	return result.Results, nil
+}
+
+// GetImageURL returns the full URL for a cached image
+func GetImageURL(localPath string) string {
+	if localPath == "" {
+		return ""
+	}
+	return "/images/" + filepath.ToSlash(localPath)
+}
+
+// DiscoverItem represents a movie or TV show from discover endpoints
+type DiscoverItem struct {
+	ID           int64   `json:"id"`
+	Type         string  `json:"type"` // movie or show
+	Title        string  `json:"title"`
+	Overview     string  `json:"overview"`
+	ReleaseDate  string  `json:"releaseDate"`
+	PosterPath   string  `json:"posterPath"`
+	BackdropPath string  `json:"backdropPath"`
+	Rating       float64 `json:"rating"`
+	Popularity   float64  `json:"popularity"`
+	FocalX       *float64 `json:"focalX,omitempty"`
+	FocalY       *float64 `json:"focalY,omitempty"`
+}
+
+// DiscoverResult represents paginated discover results
+type DiscoverResult struct {
+	Page         int            `json:"page"`
+	TotalPages   int            `json:"totalPages"`
+	TotalResults int            `json:"totalResults"`
+	Results      []DiscoverItem `json:"results"`
+}
+
+// GetTrendingMovies returns trending movies
+func (s *Service) GetTrendingMovies(page int) (*DiscoverResult, error) {
+	result, err := s.tmdb.GetTrendingMovies(page)
+	if err != nil {
+		return nil, err
+	}
+	return s.convertMovieResults(result), nil
+}
+
+// GetTrendingTV returns trending TV shows
+func (s *Service) GetTrendingTV(page int) (*DiscoverResult, error) {
+	result, err := s.tmdb.GetTrendingTV(page)
+	if err != nil {
+		return nil, err
+	}
+	return s.convertTVResults(result), nil
+}
+
+// GetPopularMovies returns popular movies
+func (s *Service) GetPopularMovies(page int) (*DiscoverResult, error) {
+	result, err := s.tmdb.GetPopularMovies(page)
+	if err != nil {
+		return nil, err
+	}
+	return s.convertMovieResults(result), nil
+}
+
+// GetPopularTV returns popular TV shows
+func (s *Service) GetPopularTV(page int) (*DiscoverResult, error) {
+	result, err := s.tmdb.GetPopularTV(page)
+	if err != nil {
+		return nil, err
+	}
+	return s.convertTVResults(result), nil
+}
+
+// GetUpcomingMovies returns upcoming movies
+func (s *Service) GetUpcomingMovies(page int) (*DiscoverResult, error) {
+	result, err := s.tmdb.GetUpcomingMovies(page)
+	if err != nil {
+		return nil, err
+	}
+	return s.convertMovieResults(result), nil
+}
+
+// GetTopRatedMovies returns top rated movies
+func (s *Service) GetTopRatedMovies(page int) (*DiscoverResult, error) {
+	result, err := s.tmdb.GetTopRatedMovies(page)
+	if err != nil {
+		return nil, err
+	}
+	return s.convertMovieResults(result), nil
+}
+
+// GetTopRatedTV returns top rated TV shows
+func (s *Service) GetTopRatedTV(page int) (*DiscoverResult, error) {
+	result, err := s.tmdb.GetTopRatedTV(page)
+	if err != nil {
+		return nil, err
+	}
+	return s.convertTVResults(result), nil
+}
+
+// GetMovieGenres returns all movie genres from TMDB
+func (s *Service) GetMovieGenres() ([]tmdb.Genre, error) {
+	return s.tmdb.GetMovieGenres()
+}
+
+// GetTVGenres returns all TV genres from TMDB
+func (s *Service) GetTVGenres() ([]tmdb.Genre, error) {
+	return s.tmdb.GetTVGenres()
+}
+
+// GetMoviesByGenre returns movies by genre
+func (s *Service) GetMoviesByGenre(genreID int, page int) (*DiscoverResult, error) {
+	result, err := s.tmdb.GetMoviesByGenre(genreID, page)
+	if err != nil {
+		return nil, err
+	}
+	return s.convertMovieResults(result), nil
+}
+
+// GetTVByGenre returns TV shows by genre
+func (s *Service) GetTVByGenre(genreID int, page int) (*DiscoverResult, error) {
+	result, err := s.tmdb.GetTVByGenre(genreID, page)
+	if err != nil {
+		return nil, err
+	}
+	return s.convertTVResults(result), nil
+}
+
+func (s *Service) convertMovieResults(result *tmdb.DiscoverMovieResult) *DiscoverResult {
+	items := make([]DiscoverItem, len(result.Results))
+	for i, r := range result.Results {
+		items[i] = DiscoverItem{
+			ID:           r.ID,
+			Type:         "movie",
+			Title:        r.Title,
+			Overview:     r.Overview,
+			ReleaseDate:  r.ReleaseDate,
+			PosterPath:   r.PosterPath,
+			BackdropPath: r.BackdropPath,
+			Rating:       r.VoteAverage,
+			Popularity:   r.Popularity,
+		}
+	}
+	return &DiscoverResult{
+		Page:         result.Page,
+		TotalPages:   result.TotalPages,
+		TotalResults: result.TotalResults,
+		Results:      items,
+	}
+}
+
+func (s *Service) convertTVResults(result *tmdb.DiscoverTVResult) *DiscoverResult {
+	items := make([]DiscoverItem, len(result.Results))
+	for i, r := range result.Results {
+		items[i] = DiscoverItem{
+			ID:           r.ID,
+			Type:         "show",
+			Title:        r.Name,
+			Overview:     r.Overview,
+			ReleaseDate:  r.FirstAirDate,
+			PosterPath:   r.PosterPath,
+			BackdropPath: r.BackdropPath,
+			Rating:       r.VoteAverage,
+			Popularity:   r.Popularity,
+		}
+	}
+	return &DiscoverResult{
+		Page:         result.Page,
+		TotalPages:   result.TotalPages,
+		TotalResults: result.TotalResults,
+		Results:      items,
+	}
+}
+
+// DiscoverMovieDetail contains detailed info for a movie from TMDB
+type DiscoverMovieDetail struct {
+	ID           int64        `json:"id"`
+	Title        string       `json:"title"`
+	Overview     string       `json:"overview"`
+	Tagline      string       `json:"tagline"`
+	ReleaseDate  string       `json:"releaseDate"`
+	Runtime      int          `json:"runtime"`
+	Rating       float64      `json:"rating"`
+	PosterPath   string       `json:"posterPath"`
+	BackdropPath string       `json:"backdropPath"`
+	Genres       []string     `json:"genres"`
+	Cast         []CastMember `json:"cast"`
+	Director     string       `json:"director"`
+}
+
+// DiscoverShowDetail contains detailed info for a TV show from TMDB
+type DiscoverShowDetail struct {
+	ID           int64        `json:"id"`
+	Title        string       `json:"title"`
+	Overview     string       `json:"overview"`
+	FirstAirDate string       `json:"firstAirDate"`
+	Status       string       `json:"status"`
+	Rating       float64      `json:"rating"`
+	PosterPath   string       `json:"posterPath"`
+	BackdropPath string       `json:"backdropPath"`
+	Genres       []string     `json:"genres"`
+	Networks     []string     `json:"networks"`
+	Seasons      int          `json:"seasons"`
+	Cast         []CastMember `json:"cast"`
+}
+
+type CastMember struct {
+	Name      string `json:"name"`
+	Character string `json:"character"`
+	Photo     string `json:"photo"`
+}
+
+// GetMovieDetail gets detailed info for a movie from TMDB
+func (s *Service) GetMovieDetail(tmdbID int64) (*DiscoverMovieDetail, error) {
+	details, err := s.tmdb.GetMovieDetails(tmdbID)
+	if err != nil {
+		return nil, err
+	}
+
+	genres := make([]string, len(details.Genres))
+	for i, g := range details.Genres {
+		genres[i] = g.Name
+	}
+
+	cast := make([]CastMember, 0)
+	for i, c := range details.Credits.Cast {
+		if i >= 10 { // Limit to top 10 cast
+			break
+		}
+		cast = append(cast, CastMember{
+			Name:      c.Name,
+			Character: c.Character,
+			Photo:     c.ProfilePath,
+		})
+	}
+
+	director := ""
+	for _, c := range details.Credits.Crew {
+		if c.Job == "Director" {
+			director = c.Name
+			break
+		}
+	}
+
+	return &DiscoverMovieDetail{
+		ID:           details.ID,
+		Title:        details.Title,
+		Overview:     details.Overview,
+		Tagline:      details.Tagline,
+		ReleaseDate:  details.ReleaseDate,
+		Runtime:      details.Runtime,
+		Rating:       details.VoteAverage,
+		PosterPath:   details.PosterPath,
+		BackdropPath: details.BackdropPath,
+		Genres:       genres,
+		Cast:         cast,
+		Director:     director,
+	}, nil
+}
+
+// GetShowDetail gets detailed info for a TV show from TMDB
+func (s *Service) GetShowDetail(tmdbID int64) (*DiscoverShowDetail, error) {
+	details, err := s.tmdb.GetTVDetails(tmdbID)
+	if err != nil {
+		return nil, err
+	}
+
+	genres := make([]string, len(details.Genres))
+	for i, g := range details.Genres {
+		genres[i] = g.Name
+	}
+
+	networks := make([]string, len(details.Networks))
+	for i, n := range details.Networks {
+		networks[i] = n.Name
+	}
+
+	cast := make([]CastMember, 0)
+	for i, c := range details.Credits.Cast {
+		if i >= 10 { // Limit to top 10 cast
+			break
+		}
+		cast = append(cast, CastMember{
+			Name:      c.Name,
+			Character: c.Character,
+			Photo:     c.ProfilePath,
+		})
+	}
+
+	return &DiscoverShowDetail{
+		ID:           details.ID,
+		Title:        details.Name,
+		Overview:     details.Overview,
+		FirstAirDate: details.FirstAirDate,
+		Status:       details.Status,
+		Rating:       details.VoteAverage,
+		PosterPath:   details.PosterPath,
+		BackdropPath: details.BackdropPath,
+		Genres:       genres,
+		Networks:     networks,
+		Seasons:      len(details.Seasons),
+		Cast:         cast,
+	}, nil
+}

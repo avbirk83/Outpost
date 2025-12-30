@@ -1,0 +1,40 @@
+# Binaries
+*.exe
+*.dll
+*.so
+*.dylib
+outpost
+
+# Data
+*.db
+*.db-journal
+data/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Frontend (also in frontend/.gitignore)
+frontend/node_modules/
+frontend/.svelte-kit/
+frontend/build/
+
+# Logs
+*.log
+
+# Docker volumes
+docker-data/
+
+# Downloaded logos
+logos/
