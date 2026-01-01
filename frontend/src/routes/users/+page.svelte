@@ -134,20 +134,19 @@
 
 <div class="space-y-6">
 	<div class="flex items-center justify-between">
-		<div>
-			<h1 class="text-3xl font-bold text-text-primary">User Management</h1>
-			<p class="text-text-secondary mt-1">Manage users and their access levels</p>
-		</div>
+		<h1 class="text-2xl font-bold text-text-primary">Users</h1>
 		{#if !showAddForm && !editingUser}
-			<button
-				class="liquid-btn inline-flex items-center gap-2"
-				onclick={() => { showAddForm = true; editingUser = null; }}
-			>
-				<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-				</svg>
-				Add User
-			</button>
+			<div class="inline-flex items-center p-1.5 rounded-xl bg-black/40 backdrop-blur-md border border-white/10">
+				<button
+					class="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg text-white/60 hover:text-white hover:bg-white/5 transition-colors"
+					onclick={() => { showAddForm = true; editingUser = null; }}
+				>
+					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+					</svg>
+					Add User
+				</button>
+			</div>
 		{/if}
 	</div>
 

@@ -10,13 +10,23 @@
 	let { title, viewAllHref, children }: Props = $props();
 
 	let scrollContainer: HTMLDivElement;
+	let canScrollLeft = $state(false);
+	let canScrollRight = $state(true);
+
+	function updateScrollState() {
+		if (!scrollContainer) return;
+		canScrollLeft = scrollContainer.scrollLeft > 0;
+		canScrollRight = scrollContainer.scrollLeft < scrollContainer.scrollWidth - scrollContainer.clientWidth - 10;
+	}
 
 	function scrollLeft() {
 		scrollContainer?.scrollBy({ left: -400, behavior: 'smooth' });
+		setTimeout(updateScrollState, 350);
 	}
 
 	function scrollRight() {
 		scrollContainer?.scrollBy({ left: 400, behavior: 'smooth' });
+		setTimeout(updateScrollState, 350);
 	}
 </script>
 
@@ -36,22 +46,24 @@
 			{/if}
 
 			<!-- Scroll buttons -->
-			<div class="hidden md:flex items-center gap-1 ml-2">
+			<div class="flex items-center gap-1 ml-2">
 				<button
 					onclick={scrollLeft}
-					class="p-1.5 rounded-lg bg-bg-elevated hover:bg-bg-card text-text-secondary hover:text-text-primary transition-all"
+					disabled={!canScrollLeft}
+					class="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
 					aria-label="Scroll left"
 				>
-					<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
 					</svg>
 				</button>
 				<button
 					onclick={scrollRight}
-					class="p-1.5 rounded-lg bg-bg-elevated hover:bg-bg-card text-text-secondary hover:text-text-primary transition-all"
+					disabled={!canScrollRight}
+					class="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
 					aria-label="Scroll right"
 				>
-					<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
 					</svg>
 				</button>
@@ -62,6 +74,7 @@
 	<!-- Scrollable row -->
 	<div
 		bind:this={scrollContainer}
+		onscroll={updateScrollState}
 		class="flex gap-4 overflow-x-auto scrollbar-hide pb-2 -mx-6 px-6"
 	>
 		{@render children()}

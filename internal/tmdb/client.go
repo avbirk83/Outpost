@@ -161,6 +161,7 @@ type TVDetails struct {
 	Seasons       []SeasonInfo  `json:"seasons"`
 	Credits       Credits       `json:"credits"`
 	ExternalIDs   ExternalIDs   `json:"external_ids"`
+	Videos        Videos        `json:"videos"`
 }
 
 type Network struct {
@@ -398,10 +399,10 @@ func (c *Client) SearchTV(title string, year int) (*TVSearchResult, error) {
 	return &result, nil
 }
 
-// GetTVDetails gets detailed info about a TV show including credits and external IDs
+// GetTVDetails gets detailed info about a TV show including credits, external IDs, and videos
 func (c *Client) GetTVDetails(tmdbID int64) (*TVDetails, error) {
 	data, err := c.get(fmt.Sprintf("/tv/%d", tmdbID), map[string]string{
-		"append_to_response": "credits,external_ids",
+		"append_to_response": "credits,external_ids,videos",
 	})
 	if err != nil {
 		return nil, err

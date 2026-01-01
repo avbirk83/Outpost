@@ -390,9 +390,9 @@
 	</div>
 
 	<!-- Center section - Search with dropdown -->
-	<div class="flex-1 max-w-3xl mx-8 relative">
+	<div class="flex-1 max-w-2xl mx-8 relative">
 		<div class="relative z-50">
-			<div class="flex items-center h-12 px-5 gap-3 liquid-glass rounded-2xl text-text-secondary hover:!bg-white/10 transition-all {showSearchDropdown ? '!rounded-b-none' : ''}">
+			<div class="flex items-center h-11 px-4 gap-3 bg-white/8 border border-white/12 rounded-xl text-white hover:bg-white/12 hover:border-white/20 transition-all {showSearchDropdown ? '!rounded-b-none !border-b-transparent' : ''}">
 				<svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
 				</svg>
@@ -405,7 +405,7 @@
 					onkeydown={handleSearchKeydown}
 					type="text"
 					placeholder="Search movies, shows, music, books..."
-					class="flex-1 bg-transparent text-white placeholder-text-secondary outline-none text-sm"
+					class="flex-1 bg-transparent text-white placeholder-[#666666] outline-none text-sm"
 				/>
 				{#if loading}
 					<div class="w-4 h-4 border-2 border-white/50 border-t-transparent rounded-full animate-spin"></div>
@@ -420,7 +420,7 @@
 					onclick={() => { showSearchDropdown = false; }}
 					aria-label="Close search"
 				></button>
-				<div class="search-dropdown absolute left-0 right-0 top-full liquid-glass !rounded-t-none rounded-b-2xl !border-t-0 z-50">
+				<div class="search-dropdown absolute left-0 right-0 top-full bg-[#111111] backdrop-blur-xl border border-white/10 !border-t-0 rounded-b-xl z-50 shadow-2xl">
 					<!-- Filter Tabs -->
 					<div class="flex items-center gap-1 p-2 border-b border-white/5">
 						{#each filterOptions as option}
@@ -567,13 +567,13 @@
 	</div>
 
 	<!-- Right section - Notifications + Profile -->
-	<div class="flex items-center gap-4">
+	<div class="flex items-center gap-3">
 		<!-- Notifications -->
 		<button
-			class="w-12 h-12 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center text-white hover:bg-white/20 transition-all"
+			class="w-10 h-10 rounded-xl bg-white/8 border border-white/12 flex items-center justify-center text-[#666666] hover:text-white hover:bg-white/15 hover:border-white/25 transition-all"
 			title="Notifications"
 		>
-			<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+			<svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
 			</svg>
 		</button>
@@ -583,10 +583,10 @@
 			href="https://github.com/sponsors/avbirk83"
 			target="_blank"
 			rel="noopener noreferrer"
-			class="w-12 h-12 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center text-zinc-400 hover:text-pink-500 hover:bg-white/20 transition-all group"
+			class="w-10 h-10 rounded-xl bg-white/8 border border-white/12 flex items-center justify-center text-[#666666] hover:text-pink-400 hover:bg-pink-500/20 hover:border-pink-400/40 transition-all group"
 			title="Support Outpost"
 		>
-			<svg class="w-5 h-5 group-hover:fill-pink-500 transition-all" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+			<svg class="w-[18px] h-[18px] group-hover:fill-pink-400 transition-all" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
 			</svg>
 		</a>
@@ -595,17 +595,16 @@
 		<div class="relative">
 			<button
 				onclick={toggleUserMenu}
-				class="flex items-center gap-3 px-4 h-12 min-w-[180px] liquid-glass hover:!bg-white/15 transition-all {showUserMenu ? 'rounded-t-xl !rounded-b-none' : 'rounded-xl'}"
-				style={showUserMenu ? 'border-bottom: none; box-shadow: none;' : ''}
+				class="flex items-center gap-2.5 pl-1.5 pr-3 h-10 rounded-xl bg-white/8 border border-white/12 hover:bg-white/15 hover:border-white/25 transition-all {showUserMenu ? '!rounded-b-none !border-b-transparent' : ''}"
 			>
-				<!-- Monochrome avatar -->
-				<div class="w-8 h-8 bg-white/10 border border-t-white/20 border-l-white/10 border-r-white/5 border-b-white/5 rounded-full grid place-items-center flex-shrink-0">
-					<span class="text-xs font-semibold text-white uppercase">
+				<!-- Cream avatar -->
+				<div class="w-7 h-7 bg-white/15 border border-white/20 rounded-lg grid place-items-center flex-shrink-0">
+					<span class="text-[11px] font-semibold text-white uppercase">
 						{username ? username.charAt(0) : 'U'}
 					</span>
 				</div>
-				<span class="text-sm text-white hidden md:block truncate">{username}</span>
-				<svg class="w-4 h-4 text-text-secondary hidden md:block flex-shrink-0 transition-transform ml-auto {showUserMenu ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<span class="text-sm text-white hidden md:block">{username}</span>
+				<svg class="w-3.5 h-3.5 text-[#666666] hidden md:block flex-shrink-0 transition-transform {showUserMenu ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
 				</svg>
 			</button>
@@ -619,10 +618,10 @@
 					aria-label="Close menu"
 				></button>
 
-				<div class="absolute right-0 top-full min-w-[180px] liquid-glass !rounded-t-none rounded-b-xl !border-t-0 py-1.5 z-50">
+				<div class="absolute right-0 top-full min-w-full rounded-b-xl bg-[#111111] backdrop-blur-xl border border-white/10 border-t-0 py-1 z-50 shadow-2xl">
 					<a
 						href="/profile"
-						class="flex items-center gap-3 px-4 py-2 text-text-secondary hover:text-white hover:bg-white/10 transition-all"
+						class="flex items-center gap-2.5 px-3 py-2 mx-1 rounded-lg text-[#666666] hover:text-white hover:bg-white/10 transition-all"
 						onclick={closeUserMenu}
 					>
 						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -633,7 +632,7 @@
 					{#if isAdmin}
 						<a
 							href="/users"
-							class="flex items-center gap-3 px-4 py-2 text-text-secondary hover:text-white hover:bg-white/10 transition-all"
+							class="flex items-center gap-2.5 px-3 py-2 mx-1 rounded-lg text-[#666666] hover:text-white hover:bg-white/10 transition-all"
 							onclick={closeUserMenu}
 						>
 							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -642,9 +641,11 @@
 							<span class="text-sm">Users</span>
 						</a>
 					{/if}
+					<div class="my-1 mx-2 h-px bg-white/8"></div>
 					<button
 						onclick={handleLogout}
-						class="w-full flex items-center gap-3 px-4 py-2 text-text-secondary hover:text-white hover:bg-white/10 transition-all"
+						class="w-full flex items-center gap-2.5 px-3 py-2 mx-1 rounded-lg text-[#666666] hover:text-white hover:bg-white/10 transition-all"
+						style="width: calc(100% - 8px);"
 					>
 						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />

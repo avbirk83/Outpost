@@ -10,9 +10,10 @@
 		onchange: (value: string | number | null) => void;
 		placeholder?: string;
 		icon?: 'video' | 'audio' | 'subtitles' | 'none';
+		inline?: boolean;
 	}
 
-	let { options, value, onchange, placeholder = 'Select...', icon = 'none' }: Props = $props();
+	let { options, value, onchange, placeholder = 'Select...', icon = 'none', inline = false }: Props = $props();
 
 	let open = $state(false);
 
@@ -36,18 +37,18 @@
 {#if open}
 	<button
 		type="button"
-		class="fixed inset-0 z-40"
+		class="fixed inset-0 z-[100]"
 		onclick={close}
 		aria-label="Close dropdown"
 	></button>
 {/if}
 
-<div class="relative z-50">
+<div class="relative z-[101]">
 	<button
 		type="button"
 		onclick={toggle}
-		class="flex items-center gap-2 px-4 py-2 min-w-[160px] liquid-glass hover:!bg-white/15 transition-all {open ? 'rounded-t-xl !rounded-b-none' : 'rounded-xl'}"
-		style={open ? 'border-bottom-color: transparent;' : ''}
+		class="flex items-center gap-2 px-3 py-1.5 min-w-[140px] transition-all {inline ? 'bg-transparent hover:bg-white/5 rounded-lg' : 'liquid-glass hover:!bg-white/15 ' + (open ? 'rounded-t-xl !rounded-b-none' : 'rounded-xl')}"
+		style={!inline && open ? 'border-bottom-color: transparent;' : ''}
 	>
 		{#if icon === 'video'}
 			<svg class="w-4 h-4 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -69,7 +70,7 @@
 	</button>
 
 	{#if open}
-		<div class="absolute left-0 right-0 top-full liquid-glass !rounded-t-none rounded-b-xl !border-t-0 py-1 max-h-64 overflow-y-auto scrollbar-thin">
+		<div class="absolute left-0 right-0 top-full py-1 max-h-64 overflow-y-auto scrollbar-thin {inline ? 'mt-1 rounded-xl bg-black/80 backdrop-blur-xl border border-white/10' : 'liquid-glass !rounded-t-none rounded-b-xl !border-t-0'}">
 			{#each options as opt}
 				<button
 					type="button"

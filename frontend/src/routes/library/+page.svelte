@@ -1,41 +1,91 @@
 <script lang="ts">
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import {
 		getMovies,
 		getShows,
-		getArtists,
-		getAlbums,
-		getBooks,
 		getImageUrl,
 		type Movie,
-		type Show,
-		type Artist,
-		type Album,
-		type Book
+		type Show
 	} from '$lib/api';
 	import PosterCard from '$lib/components/PosterCard.svelte';
 
 	// Tab state from URL
-	type TabType = 'movies' | 'tv' | 'music' | 'books';
+	type TabType = 'movies' | 'tv';
 	let activeTab = $state<TabType>('movies');
 
 	// Data states
 	let movies: Movie[] = $state([]);
 	let shows: Show[] = $state([]);
-	let artists: Artist[] = $state([]);
-	let albums: Album[] = $state([]);
-	let books: Book[] = $state([]);
 
 	// Loading states per tab
 	let loadingMovies = $state(false);
 	let loadingShows = $state(false);
-	let loadingMusic = $state(false);
-	let loadingBooks = $state(false);
 	let loadedTabs = $state<Set<TabType>>(new Set());
 
 	let error: string | null = $state(null);
+
+	// Hero carousel state
+	let heroIndex = $state(0);
+	let autoplayTimer: ReturnType<typeof setInterval> | null = null;
+	const AUTOPLAY_INTERVAL = 15000; // 15 seconds
+
+	// Get hero items based on active tab - only movies and TV have backdrops
+	const heroItems = $derived(() => {
+		if (activeTab === 'movies') {
+			return movies.filter(m => m.backdropPath).slice(0, 10);
+		} else if (activeTab === 'tv') {
+			return shows.filter(s => s.backdropPath).slice(0, 10);
+		}
+		return [];
+	});
+
+	// Current hero item
+	const currentHero = $derived(() => {
+		const items = heroItems();
+		return items[heroIndex] || null;
+	});
+
+	// Reset hero index when tab changes
+	$effect(() => {
+		// When activeTab changes, reset hero index
+		activeTab;
+		heroIndex = 0;
+	});
+
+	function nextHero() {
+		const items = heroItems();
+		if (items.length > 0) {
+			heroIndex = (heroIndex + 1) % items.length;
+		}
+		resetAutoplay();
+	}
+
+	function prevHero() {
+		const items = heroItems();
+		if (items.length > 0) {
+			heroIndex = (heroIndex - 1 + items.length) % items.length;
+		}
+		resetAutoplay();
+	}
+
+	function goToHero(index: number) {
+		heroIndex = index;
+		resetAutoplay();
+	}
+
+	function resetAutoplay() {
+		if (autoplayTimer) {
+			clearInterval(autoplayTimer);
+		}
+		autoplayTimer = setInterval(() => {
+			const items = heroItems();
+			if (items.length > 0) {
+				heroIndex = (heroIndex + 1) % items.length;
+			}
+		}, AUTOPLAY_INTERVAL);
+	}
 
 	// Filter/sort states
 	let movieSearch = $state('');
@@ -58,10 +108,6 @@
 	let showRatingMin = $state(0);
 	let showRatingMax = $state(10);
 	let showFiltersExpanded = $state(false);
-
-	let musicView = $state<'artists' | 'albums'>('artists');
-
-	let bookSearch = $state('');
 
 	// Content rating options
 	const movieContentRatingOptions = ['G', 'PG', 'PG-13', 'R', 'NC-17', 'NR'];
@@ -195,10 +241,18 @@
 	// Read tab from URL on mount
 	onMount(() => {
 		const urlTab = $page.url.searchParams.get('tab') as TabType | null;
-		if (urlTab && ['movies', 'tv', 'music', 'books'].includes(urlTab)) {
+		if (urlTab && ['movies', 'tv'].includes(urlTab)) {
 			activeTab = urlTab;
 		}
 		loadTabData(activeTab);
+		// Start hero autoplay
+		resetAutoplay();
+	});
+
+	onDestroy(() => {
+		if (autoplayTimer) {
+			clearInterval(autoplayTimer);
+		}
 	});
 
 	// Update URL when tab changes
@@ -224,16 +278,6 @@
 					loadingShows = true;
 					shows = await getShows();
 					break;
-				case 'music':
-					loadingMusic = true;
-					const [a, al] = await Promise.all([getArtists(), getAlbums()]);
-					artists = a;
-					albums = al;
-					break;
-				case 'books':
-					loadingBooks = true;
-					books = await getBooks();
-					break;
 			}
 			loadedTabs.add(tab);
 		} catch (e) {
@@ -241,8 +285,6 @@
 		} finally {
 			loadingMovies = false;
 			loadingShows = false;
-			loadingMusic = false;
-			loadingBooks = false;
 		}
 	}
 
@@ -379,14 +421,6 @@
 		return result;
 	});
 
-	const filteredBooks = $derived(() => {
-		if (!bookSearch) return books;
-		return books.filter(b =>
-			b.title.toLowerCase().includes(bookSearch.toLowerCase()) ||
-			(b.author && b.author.toLowerCase().includes(bookSearch.toLowerCase()))
-		);
-	});
-
 	function getStatusColor(status: string | undefined): string {
 		switch (status?.toLowerCase()) {
 			case 'returning series':
@@ -400,29 +434,9 @@
 		}
 	}
 
-	function getFormatColor(format: string): string {
-		switch (format.toLowerCase()) {
-			case 'epub':
-				return 'bg-green-900 text-green-300';
-			case 'pdf':
-				return 'bg-white/20 text-white';
-			case 'mobi':
-			case 'azw':
-			case 'azw3':
-				return 'bg-yellow-900 text-yellow-300';
-			case 'cbz':
-			case 'cbr':
-				return 'bg-purple-900 text-purple-300';
-			default:
-				return 'bg-gray-700 text-gray-300';
-		}
-	}
-
 	const tabs = $derived([
 		{ id: 'movies' as TabType, label: 'Movies', count: movies.length },
 		{ id: 'tv' as TabType, label: 'TV Shows', count: shows.length },
-		{ id: 'music' as TabType, label: 'Music', count: artists.length + albums.length },
-		{ id: 'books' as TabType, label: 'Books', count: books.length },
 	]);
 </script>
 
@@ -430,20 +444,39 @@
 	<title>Library - Outpost</title>
 </svelte:head>
 
-<div class="space-y-6">
-	<!-- Header with tabs -->
-	<div class="flex flex-col gap-4">
-		<h1 class="text-3xl font-bold text-text-primary">Library</h1>
+<div class="space-y-6 -mt-22 -mx-6">
+	<!-- Hero Background - Only for Movies and TV -->
+	{#if (activeTab === 'movies' || activeTab === 'tv') && heroItems().length > 0}
+		{@const hero = currentHero()}
+		{#if hero}
+			<section class="relative h-[35vh] min-h-[280px] overflow-hidden">
+				<!-- Backdrop image with fade transition -->
+				{#key `${activeTab}-${heroIndex}`}
+					<img
+						src={getImageUrl(hero.backdropPath || '')}
+						alt=""
+						class="absolute inset-0 w-full h-full object-cover animate-fade-in pointer-events-none"
+						style="object-position: center {hero.focalY ?? 25}%;"
+						draggable="false"
+					/>
+				{/key}
 
+				<!-- Gradient overlays -->
+				<div class="absolute inset-0 bg-gradient-to-t from-bg-primary via-bg-primary/60 to-bg-primary/30 pointer-events-none"></div>
+			</section>
+		{/if}
+	{/if}
+
+	<div class="px-6 space-y-6 {(activeTab === 'movies' || activeTab === 'tv') && heroItems().length > 0 ? '-mt-56 relative z-10' : ''}">
 		<!-- Tab bar -->
-		<div class="flex gap-2">
+		<div class="inline-flex gap-1 p-1.5 rounded-xl bg-black/40 backdrop-blur-md border border-white/10">
 			{#each tabs as tab}
 				<button
 					onclick={() => setTab(tab.id)}
-					class="px-4 py-2 text-sm font-medium transition-all rounded-xl
+					class="px-4 py-2 text-sm font-medium transition-all rounded-lg
 						{activeTab === tab.id
-							? 'liquid-glass text-white'
-							: 'text-white/50 hover:text-white hover:bg-white/5'}"
+							? 'bg-white/15 text-white'
+							: 'text-white/60 hover:text-white hover:bg-white/5'}"
 				>
 					{tab.label}
 					{#if loadedTabs.has(tab.id) && tab.count > 0}
@@ -452,9 +485,8 @@
 				</button>
 			{/each}
 		</div>
-	</div>
 
-	{#if error}
+		{#if error}
 		<div class="bg-white/5 border border-white/10 text-text-secondary px-4 py-3 rounded-lg">
 			{error}
 			<button class="ml-2 underline" onclick={() => (error = null)}>Dismiss</button>
@@ -468,48 +500,49 @@
 			<div class="space-y-4">
 				<div class="flex flex-wrap items-center gap-3">
 					{#if movieViewMode === 'grid'}
-						<div class="relative">
-							<svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-							</svg>
-							<input
-								type="text"
-								placeholder="Search movies..."
-								bind:value={movieSearch}
-								class="liquid-input pl-10 pr-4 py-2 w-48 sm:w-64"
-							/>
+						<div class="inline-flex items-center gap-2 p-1.5 rounded-xl bg-black/40 backdrop-blur-md border border-white/10">
+							<div class="relative">
+								<svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+								</svg>
+								<input
+									type="text"
+									placeholder="Search..."
+									bind:value={movieSearch}
+									class="bg-transparent pl-9 pr-3 py-1.5 w-40 text-sm text-white placeholder-white/40 focus:outline-none"
+								/>
+							</div>
+							<div class="w-px h-6 bg-white/10"></div>
+							<select
+								bind:value={movieSort}
+								class="bg-transparent px-3 py-1.5 text-sm text-white/80 focus:outline-none cursor-pointer"
+							>
+								<option value="added" class="bg-zinc-900">Recently Added</option>
+								<option value="title" class="bg-zinc-900">Title A-Z</option>
+								<option value="year" class="bg-zinc-900">Year</option>
+								<option value="rating" class="bg-zinc-900">Rating</option>
+							</select>
+							<div class="w-px h-6 bg-white/10"></div>
+							<button
+								onclick={() => movieFiltersExpanded = !movieFiltersExpanded}
+								class="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg transition-colors {hasActiveMovieFilters() || movieFiltersExpanded ? 'bg-white/15 text-white' : 'text-white/60 hover:text-white hover:bg-white/5'}"
+							>
+								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+								</svg>
+								Filters
+								{#if hasActiveMovieFilters()}
+									<span class="w-1.5 h-1.5 rounded-full bg-white"></span>
+								{/if}
+							</button>
 						</div>
-						<select
-							bind:value={movieSort}
-							class="liquid-select px-4 py-2"
-						>
-							<option value="added">Recently Added</option>
-							<option value="title">Title A-Z</option>
-							<option value="year">Year</option>
-							<option value="rating">Rating</option>
-						</select>
-						<button
-							onclick={() => movieFiltersExpanded = !movieFiltersExpanded}
-							class="liquid-btn px-4 py-2 flex items-center gap-2 {hasActiveMovieFilters() ? '!border-t-white/20 !border-l-white/10 !bg-white/5' : ''}"
-						>
-							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
-							</svg>
-							Filters
-							{#if hasActiveMovieFilters()}
-								<span class="w-2 h-2 rounded-full bg-white/50"></span>
-							{/if}
-							<svg class="w-4 h-4 transition-transform {movieFiltersExpanded ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-							</svg>
-						</button>
 					{/if}
 
 					<!-- View toggle -->
-					<div class="flex gap-1 ml-auto">
+					<div class="inline-flex gap-1 p-1.5 rounded-xl bg-black/40 backdrop-blur-md border border-white/10 ml-auto">
 						<button
 							onclick={() => movieViewMode = 'grid'}
-							class="liquid-btn-icon {movieViewMode === 'grid' ? '!bg-white/10 !border-t-white/20 text-white' : ''}"
+							class="p-2 rounded-lg transition-colors {movieViewMode === 'grid' ? 'bg-white/15 text-white' : 'text-white/60 hover:text-white hover:bg-white/5'}"
 							title="Grid view"
 						>
 							<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -518,7 +551,7 @@
 						</button>
 						<button
 							onclick={() => movieViewMode = 'rows'}
-							class="liquid-btn-icon {movieViewMode === 'rows' ? '!bg-white/10 !border-t-white/20 text-white' : ''}"
+							class="p-2 rounded-lg transition-colors {movieViewMode === 'rows' ? 'bg-white/15 text-white' : 'text-white/60 hover:text-white hover:bg-white/5'}"
 							title="Rows by genre"
 						>
 							<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -703,48 +736,49 @@
 			<div class="space-y-4">
 				<div class="flex flex-wrap items-center gap-3">
 					{#if showViewMode === 'grid'}
-						<div class="relative">
-							<svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-							</svg>
-							<input
-								type="text"
-								placeholder="Search shows..."
-								bind:value={showSearch}
-								class="liquid-input pl-10 pr-4 py-2 w-48 sm:w-64"
-							/>
+						<div class="inline-flex items-center gap-2 p-1.5 rounded-xl bg-black/40 backdrop-blur-md border border-white/10">
+							<div class="relative">
+								<svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+								</svg>
+								<input
+									type="text"
+									placeholder="Search..."
+									bind:value={showSearch}
+									class="bg-transparent pl-9 pr-3 py-1.5 w-40 text-sm text-white placeholder-white/40 focus:outline-none"
+								/>
+							</div>
+							<div class="w-px h-6 bg-white/10"></div>
+							<select
+								bind:value={showSort}
+								class="bg-transparent px-3 py-1.5 text-sm text-white/80 focus:outline-none cursor-pointer"
+							>
+								<option value="added" class="bg-zinc-900">Recently Added</option>
+								<option value="title" class="bg-zinc-900">Title A-Z</option>
+								<option value="year" class="bg-zinc-900">Year</option>
+								<option value="rating" class="bg-zinc-900">Rating</option>
+							</select>
+							<div class="w-px h-6 bg-white/10"></div>
+							<button
+								onclick={() => showFiltersExpanded = !showFiltersExpanded}
+								class="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg transition-colors {hasActiveShowFilters() || showFiltersExpanded ? 'bg-white/15 text-white' : 'text-white/60 hover:text-white hover:bg-white/5'}"
+							>
+								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+								</svg>
+								Filters
+								{#if hasActiveShowFilters()}
+									<span class="w-1.5 h-1.5 rounded-full bg-white"></span>
+								{/if}
+							</button>
 						</div>
-						<select
-							bind:value={showSort}
-							class="liquid-select px-4 py-2"
-						>
-							<option value="added">Recently Added</option>
-							<option value="title">Title A-Z</option>
-							<option value="year">Year</option>
-							<option value="rating">Rating</option>
-						</select>
-						<button
-							onclick={() => showFiltersExpanded = !showFiltersExpanded}
-							class="liquid-btn px-4 py-2 flex items-center gap-2 {hasActiveShowFilters() ? '!border-t-white/20 !border-l-white/10 !bg-white/5' : ''}"
-						>
-							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
-							</svg>
-							Filters
-							{#if hasActiveShowFilters()}
-								<span class="w-2 h-2 rounded-full bg-white/50"></span>
-							{/if}
-							<svg class="w-4 h-4 transition-transform {showFiltersExpanded ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-							</svg>
-						</button>
 					{/if}
 
 					<!-- View toggle -->
-					<div class="flex gap-1 ml-auto">
+					<div class="inline-flex gap-1 p-1.5 rounded-xl bg-black/40 backdrop-blur-md border border-white/10 ml-auto">
 						<button
 							onclick={() => showViewMode = 'grid'}
-							class="liquid-btn-icon {showViewMode === 'grid' ? '!bg-white/10 !border-t-white/20 text-white' : ''}"
+							class="p-2 rounded-lg transition-colors {showViewMode === 'grid' ? 'bg-white/15 text-white' : 'text-white/60 hover:text-white hover:bg-white/5'}"
 							title="Grid view"
 						>
 							<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -753,7 +787,7 @@
 						</button>
 						<button
 							onclick={() => showViewMode = 'rows'}
-							class="liquid-btn-icon {showViewMode === 'rows' ? '!bg-white/10 !border-t-white/20 text-white' : ''}"
+							class="p-2 rounded-lg transition-colors {showViewMode === 'rows' ? 'bg-white/15 text-white' : 'text-white/60 hover:text-white hover:bg-white/5'}"
 							title="Rows by genre"
 						>
 							<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -922,195 +956,5 @@
 		</div>
 	{/if}
 
-	<!-- Music Tab -->
-	{#if activeTab === 'music'}
-		<div class="space-y-6">
-			<!-- View toggle -->
-			<div class="flex gap-2">
-				<button
-					class="{musicView === 'artists' ? 'liquid-chip-active' : 'liquid-chip'} px-4 py-2"
-					onclick={() => musicView = 'artists'}
-				>
-					Artists
-				</button>
-				<button
-					class="{musicView === 'albums' ? 'liquid-chip-active' : 'liquid-chip'} px-4 py-2"
-					onclick={() => musicView = 'albums'}
-				>
-					Albums
-				</button>
-			</div>
-
-			{#if loadingMusic}
-				<div class="flex items-center justify-center h-64">
-					<div class="flex items-center gap-3">
-						<div class="w-6 h-6 border-2 border-white/50 border-t-transparent rounded-full animate-spin"></div>
-						<p class="text-text-secondary">Loading music...</p>
-					</div>
-				</div>
-			{:else if musicView === 'artists'}
-				{#if artists.length === 0}
-					<div class="glass-card p-12 text-center">
-						<div class="w-16 h-16 mx-auto mb-4 rounded-full bg-bg-elevated flex items-center justify-center">
-							<svg class="w-8 h-8 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
-							</svg>
-						</div>
-						<h2 class="text-xl font-semibold text-text-primary mb-2">No artists found</h2>
-						<p class="text-text-secondary mb-6">Add a music library in Settings to scan for music.</p>
-						<a href="/settings" class="liquid-btn inline-flex items-center gap-2">
-							Go to Settings
-						</a>
-					</div>
-				{:else}
-					<div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 2xl:grid-cols-8 gap-4">
-						{#each artists as artist}
-							<a href="/music/artists/{artist.id}" class="group">
-								<div class="aspect-square bg-bg-card rounded-lg flex items-center justify-center overflow-hidden">
-									{#if artist.imagePath}
-										<img
-											src="/images/{artist.imagePath}"
-											alt={artist.name}
-											class="w-full h-full object-cover"
-										/>
-									{:else}
-										<div class="text-text-muted">
-											<svg class="w-10 h-10" fill="currentColor" viewBox="0 0 24 24">
-												<path d="M12 14.25c2.485 0 4.5-2.015 4.5-4.5s-2.015-4.5-4.5-4.5-4.5 2.015-4.5 4.5 2.015 4.5 4.5 4.5zm0 1.5c-3.315 0-9 1.665-9 4.98v.27c0 .825.675 1.5 1.5 1.5h15c.825 0 1.5-.675 1.5-1.5v-.27c0-3.315-5.685-4.98-9-4.98z"/>
-											</svg>
-										</div>
-									{/if}
-								</div>
-								<h3 class="mt-2 font-medium truncate text-text-primary group-hover:text-white transition-colors">{artist.name}</h3>
-							</a>
-						{/each}
-					</div>
-				{/if}
-			{:else}
-				{#if albums.length === 0}
-					<div class="glass-card p-12 text-center">
-						<div class="w-16 h-16 mx-auto mb-4 rounded-full bg-bg-elevated flex items-center justify-center">
-							<svg class="w-8 h-8 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
-							</svg>
-						</div>
-						<h2 class="text-xl font-semibold text-text-primary mb-2">No albums found</h2>
-						<p class="text-text-secondary mb-6">Add a music library in Settings to scan for music.</p>
-						<a href="/settings" class="liquid-btn inline-flex items-center gap-2">
-							Go to Settings
-						</a>
-					</div>
-				{:else}
-					<div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 2xl:grid-cols-8 gap-4">
-						{#each albums as album}
-							<a href="/music/albums/{album.id}" class="group">
-								<div class="aspect-square bg-bg-card rounded-lg flex items-center justify-center overflow-hidden">
-									{#if album.coverPath}
-										<img
-											src="/images/{album.coverPath}"
-											alt={album.title}
-											class="w-full h-full object-cover"
-										/>
-									{:else}
-										<div class="text-text-muted">
-											<svg class="w-10 h-10" fill="currentColor" viewBox="0 0 24 24">
-												<path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
-											</svg>
-										</div>
-									{/if}
-								</div>
-								<h3 class="mt-2 font-medium truncate text-text-primary group-hover:text-white transition-colors">{album.title}</h3>
-								{#if album.year}
-									<p class="text-sm text-text-secondary">{album.year}</p>
-								{/if}
-							</a>
-						{/each}
-					</div>
-				{/if}
-			{/if}
-		</div>
-	{/if}
-
-	<!-- Books Tab -->
-	{#if activeTab === 'books'}
-		<div class="space-y-6">
-			<!-- Controls -->
-			<div class="flex flex-wrap items-center gap-3">
-				<div class="relative">
-					<svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-					</svg>
-					<input
-						type="text"
-						placeholder="Search books..."
-						bind:value={bookSearch}
-						class="liquid-input pl-10 pr-4 py-2 w-48 sm:w-64"
-					/>
-				</div>
-			</div>
-
-			{#if loadingBooks}
-				<div class="flex items-center justify-center h-64">
-					<div class="flex items-center gap-3">
-						<div class="w-6 h-6 border-2 border-white/50 border-t-transparent rounded-full animate-spin"></div>
-						<p class="text-text-secondary">Loading books...</p>
-					</div>
-				</div>
-			{:else if books.length === 0}
-				<div class="glass-card p-12 text-center">
-					<div class="w-16 h-16 mx-auto mb-4 rounded-full bg-bg-elevated flex items-center justify-center">
-						<svg class="w-8 h-8 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-						</svg>
-					</div>
-					<h2 class="text-xl font-semibold text-text-primary mb-2">No books found</h2>
-					<p class="text-text-secondary mb-6">Add a books library in Settings to scan for books.</p>
-					<a href="/settings" class="liquid-btn inline-flex items-center gap-2">
-						Go to Settings
-					</a>
-				</div>
-			{:else if filteredBooks().length === 0}
-				<div class="glass-card p-8 text-center">
-					<p class="text-text-secondary">No books match your search.</p>
-					<button onclick={() => (bookSearch = '')} class="mt-2 text-white/70 hover:text-white transition-colors">
-						Clear search
-					</button>
-				</div>
-			{:else}
-				<div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 2xl:grid-cols-8 gap-4">
-					{#each filteredBooks() as book}
-						<a href="/books/{book.id}" class="group">
-							<div class="aspect-[2/3] bg-bg-card rounded-lg overflow-hidden relative">
-								{#if book.coverPath}
-									<img
-										src="/images/{book.coverPath}"
-										alt={book.title}
-										class="w-full h-full object-cover"
-									/>
-								{:else}
-									<div class="w-full h-full flex items-center justify-center text-text-muted p-4">
-										<div class="text-center">
-											<svg class="w-12 h-12 mx-auto mb-2" fill="currentColor" viewBox="0 0 24 24">
-												<path d="M18 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 4h5v8l-2.5-1.5L6 12V4z"/>
-											</svg>
-											<span class="text-xs">{book.format.toUpperCase()}</span>
-										</div>
-									</div>
-								{/if}
-								<div class="absolute top-1 right-1">
-									<span class="px-2 py-0.5 text-xs rounded {getFormatColor(book.format)}">
-										{book.format.toUpperCase()}
-									</span>
-								</div>
-							</div>
-							<h3 class="mt-2 font-medium text-sm truncate text-text-primary group-hover:text-white transition-colors">{book.title}</h3>
-							{#if book.author}
-								<p class="text-xs text-text-secondary truncate">{book.author}</p>
-							{/if}
-						</a>
-					{/each}
-				</div>
-			{/if}
-		</div>
-	{/if}
+	</div>
 </div>

@@ -8,6 +8,7 @@
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import TopBar from '$lib/components/TopBar.svelte';
 	import SearchOverlay from '$lib/components/SearchOverlay.svelte';
+	import Toast from '$lib/components/Toast.svelte';
 
 	let { children } = $props();
 	let user = $state<{ id: number; username: string; role: string } | null>(null);
@@ -69,7 +70,7 @@
 </svelte:head>
 
 {#if !initialized}
-	<div class="min-h-screen bg-bg-primary text-text-primary flex items-center justify-center">
+	<div class="min-h-screen bg-[#0a0a0a] text-text-primary flex items-center justify-center">
 		<div class="flex items-center gap-3">
 			<div class="w-6 h-6 border-2 border-white/50 border-t-transparent rounded-full animate-spin"></div>
 			<p class="text-text-secondary">Loading...</p>
@@ -83,7 +84,7 @@
 		{@render children()}
 	{:else}
 		<!-- Standard app layout -->
-		<div class="min-h-screen bg-bg-primary text-text-primary overflow-x-hidden">
+		<div class="min-h-screen bg-[#0a0a0a] text-text-primary overflow-x-hidden">
 			<!-- Sidebar -->
 			<Sidebar isAdmin={user.role === 'admin'} />
 
@@ -106,8 +107,11 @@
 			<SearchOverlay open={searchOpen} onClose={closeSearch} />
 		</div>
 	{/if}
+
+	<!-- Toast notifications (always visible when logged in) -->
+	<Toast />
 {:else}
-	<div class="min-h-screen bg-bg-primary text-text-primary flex items-center justify-center">
+	<div class="min-h-screen bg-[#0a0a0a] text-text-primary flex items-center justify-center">
 		<div class="flex items-center gap-3">
 			<div class="w-6 h-6 border-2 border-white/50 border-t-transparent rounded-full animate-spin"></div>
 			<p class="text-text-secondary">Redirecting...</p>

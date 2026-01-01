@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { formatRuntime } from '$lib/utils';
+
 	interface Props {
 		id: number;
 		episodeNumber: number;
@@ -12,13 +14,6 @@
 	}
 
 	let { id, episodeNumber, title, overview, stillPath, runtime, airDate, progress, watched }: Props = $props();
-
-	function formatRuntime(minutes: number): string {
-		if (minutes < 60) return `${minutes}m`;
-		const h = Math.floor(minutes / 60);
-		const m = minutes % 60;
-		return m > 0 ? `${h}h ${m}m` : `${h}h`;
-	}
 
 	function formatDate(dateStr: string): string {
 		const date = new Date(dateStr);

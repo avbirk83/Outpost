@@ -12,6 +12,9 @@
 		getRequests,
 		getWatchlist,
 		removeFromWatchlist,
+		createRequest,
+		addToWatchlist,
+		isInWatchlist,
 		type DiscoverItem,
 		type Movie,
 		type Show,
@@ -19,14 +22,12 @@
 		type Request,
 		type WatchlistItem
 	} from '$lib/api';
+	import { toast } from '$lib/stores/toast';
+	import { getYear, formatTimeLeft } from '$lib/utils';
 	import MediaRow from '$lib/components/MediaRow.svelte';
 	import PosterCard from '$lib/components/PosterCard.svelte';
 	import ContinueCard from '$lib/components/ContinueCard.svelte';
-
-	function getYear(dateStr: string | undefined): string {
-		if (!dateStr) return '';
-		return dateStr.substring(0, 4);
-	}
+	import TrailerModal from '$lib/components/TrailerModal.svelte';
 
 	let recentMovies: Movie[] = $state([]);
 	let recentShows: Show[] = $state([]);
@@ -40,8 +41,14 @@
 	let autoplayTimer: ReturnType<typeof setInterval> | null = null;
 	const AUTOPLAY_INTERVAL = 8000; // 8 seconds
 
+	// Hero action states
+	let heroWatchlistStatus: Map<string, boolean> = $state(new Map());
+	let requestingHero = $state(false);
+	let togglingWatchlist = $state(false);
+
 	let loading = $state(true);
 	let error: string | null = $state(null);
+	let showTrailerModal = $state(false);
 
 	// Current hero item
 	const currentHero = $derived(() => heroItems[heroIndex] || null);
@@ -102,15 +109,47 @@
 			}
 
 			// Filter for items with backdrop, limit to 15
-			heroItems = combined.filter(item => item.backdropPath).slice(0, 15);
+			const filteredHeroes = combined.filter(item => item.backdropPath).slice(0, 15);
 
-			// Recent additions sorted by ID (newest first)
-			recentMovies = movies.slice(0, 12);
-			recentShows = shows.slice(0, 12);
-			continueWatching = cw;
+			// Enrich hero items with request status from fetched requests
+			heroItems = filteredHeroes.map(item => {
+				const matchingRequest = requests.find(
+					req => req.tmdbId === item.id &&
+						((req.type === 'movie' && item.mediaType === 'movie') ||
+						 (req.type === 'show' && item.mediaType === 'tv'))
+				);
+				if (matchingRequest) {
+					// Map request status to what the UI expects
+					const status = matchingRequest.status === 'requested' ? 'pending' :
+								   matchingRequest.status === 'available' ? 'approved' :
+								   matchingRequest.status;
+					return { ...item, requestStatus: status };
+				}
+				return item;
+			});
+
+			// Check watchlist status for each hero item
+			const watchlistChecks = heroItems.map(async (item) => {
+				const key = getHeroWatchlistKey(item);
+				try {
+					const inWl = await isInWatchlist(item.id, item.mediaType === 'movie' ? 'movie' : 'tv');
+					heroWatchlistStatus.set(key, inWl);
+				} catch {
+					heroWatchlistStatus.set(key, false);
+				}
+			});
+			await Promise.all(watchlistChecks);
+			heroWatchlistStatus = new Map(heroWatchlistStatus);
+
+			// Recent additions sorted by ID (newest first) - limit to 25
+			recentMovies = movies.slice(0, 25);
+			recentShows = shows.slice(0, 25);
+			// Watchlist items - limit combined to 25
+			continueWatching = cw.slice(0, 25);
+			const watchlistLimit = Math.max(0, 25 - continueWatching.length);
+			watchlistItems = watchlist.slice(0, watchlistLimit);
 			// Recent requests (limit to 10, newest first)
 			recentRequests = requests.slice(0, 10);
-			watchlistItems = watchlist;
 
 			// Start autoplay
 			resetAutoplay();
@@ -145,17 +184,6 @@
 		}
 	}
 
-	function formatTimeLeft(position: number, duration: number): string {
-		const remaining = Math.max(0, duration - position);
-		const minutes = Math.floor(remaining / 60);
-		if (minutes >= 60) {
-			const hours = Math.floor(minutes / 60);
-			const mins = minutes % 60;
-			return `${hours}h ${mins}m left`;
-		}
-		return `${minutes}m left`;
-	}
-
 	async function handleRemoveFromContinue(item: ContinueWatchingItem) {
 		try {
 			await removeContinueWatching(item.mediaType, item.mediaId);
@@ -183,6 +211,100 @@
 			return item.mediaType === 'movie' ? `/movies/${item.libraryId}` : `/tv/${item.libraryId}`;
 		}
 		return item.mediaType === 'movie' ? `/discover/movie/${item.tmdbId}` : `/discover/show/${item.tmdbId}`;
+	}
+
+	// Helper to get watchlist key for a hero item
+	function getHeroWatchlistKey(hero: DiscoverItem): string {
+		return `${hero.mediaType}-${hero.id}`;
+	}
+
+	// Check if current hero is in watchlist
+	function isHeroInWatchlist(hero: DiscoverItem): boolean {
+		return heroWatchlistStatus.get(getHeroWatchlistKey(hero)) || false;
+	}
+
+	// Handle request for hero item
+	async function handleHeroRequest() {
+		const hero = currentHero();
+		if (!hero || requestingHero) return;
+
+		requestingHero = true;
+		try {
+			const title = hero.title || hero.name || '';
+			const dateStr = hero.releaseDate || hero.firstAirDate;
+			const year = dateStr ? parseInt(dateStr.substring(0, 4)) : undefined;
+
+			await createRequest({
+				type: hero.mediaType === 'movie' ? 'movie' : 'show',
+				tmdbId: hero.id,
+				title,
+				year,
+				overview: hero.overview || undefined,
+				posterPath: hero.posterPath || undefined
+			});
+			// Update the hero item's request status
+			heroItems = heroItems.map(item => {
+				if (item.id === hero.id && item.mediaType === hero.mediaType) {
+					return { ...item, requestStatus: 'pending' };
+				}
+				return item;
+			});
+			toast.success('Request submitted');
+		} catch (e) {
+			if (e instanceof Error && e.message === 'Already requested') {
+				// Already requested - update status
+				heroItems = heroItems.map(item => {
+					if (item.id === hero.id && item.mediaType === hero.mediaType) {
+						return { ...item, requestStatus: 'pending' };
+					}
+					return item;
+				});
+				toast.info('Already requested');
+			} else {
+				console.error('Failed to create request:', e);
+				toast.error('Failed to create request');
+			}
+		} finally {
+			requestingHero = false;
+		}
+	}
+
+	// Handle watchlist toggle for hero item
+	async function handleHeroWatchlist() {
+		const hero = currentHero();
+		if (!hero || togglingWatchlist) return;
+
+		togglingWatchlist = true;
+		const key = getHeroWatchlistKey(hero);
+		const inWatchlist = heroWatchlistStatus.get(key) || false;
+
+		try {
+			if (inWatchlist) {
+				await removeFromWatchlist(hero.id, hero.mediaType === 'movie' ? 'movie' : 'tv');
+				heroWatchlistStatus.set(key, false);
+				// Also remove from watchlistItems if present
+				watchlistItems = watchlistItems.filter(
+					item => !(item.tmdbId === hero.id && item.mediaType === hero.mediaType)
+				);
+				toast.success('Removed from watchlist');
+			} else {
+				await addToWatchlist(hero.id, hero.mediaType === 'movie' ? 'movie' : 'tv');
+				heroWatchlistStatus.set(key, true);
+				toast.success('Added to watchlist');
+			}
+			// Trigger reactivity
+			heroWatchlistStatus = new Map(heroWatchlistStatus);
+		} catch (e) {
+			console.error('Failed to toggle watchlist:', e);
+			toast.error('Failed to update watchlist');
+		} finally {
+			togglingWatchlist = false;
+		}
+	}
+
+	// Handle trailer button - opens TrailerModal
+	function handleHeroTrailer() {
+		showTrailerModal = true;
 	}
 </script>
 
@@ -232,10 +354,10 @@
 							{#key heroIndex}
 								<div class="animate-fade-in">
 									<div class="flex items-center gap-2 mb-4">
-										<span class="liquid-tag !bg-white/10 !border-t-white/20 !border-l-white/10">
+										<span class="px-3 py-1.5 text-xs font-medium rounded-lg bg-white/10 border border-white/20 text-white">
 											Trending Now
 										</span>
-										<span class="liquid-tag">
+										<span class="px-3 py-1.5 text-xs font-medium rounded-lg bg-white/10 border border-white/20 text-white">
 											{hero.mediaType === 'movie' ? 'Movie' : 'TV Series'}
 										</span>
 									</div>
@@ -252,22 +374,81 @@
 									{/if}
 								</div>
 							{/key}
-							<div class="flex items-center gap-3">
+							<div class="flex items-center gap-2">
+								<!-- Details -->
 								<a
 									href={hero.mediaType === 'movie' ? `/discover/movie/${hero.id}` : `/discover/show/${hero.id}`}
-									class="liquid-btn inline-flex items-center gap-2"
+									class="w-11 h-11 rounded-full bg-white/10 border border-white/20 text-white flex items-center justify-center hover:bg-white/20 transition-all"
+									title="View Details"
 								>
-									<svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-										<path d="M8 5v14l11-7z" />
+									<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
 									</svg>
-									View Details
 								</a>
+								<!-- Request -->
+								{#if hero.requestStatus === 'approved'}
+									<button
+										class="w-11 h-11 rounded-full bg-green-600 border border-green-500 text-white flex items-center justify-center transition-all cursor-default"
+										title="Available in Library"
+										disabled
+									>
+										<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+										</svg>
+									</button>
+								{:else if hero.requestStatus === 'pending'}
+									<button
+										class="w-11 h-11 rounded-full bg-yellow-600 border border-yellow-500 text-white flex items-center justify-center transition-all cursor-default"
+										title="Request Pending"
+										disabled
+									>
+										<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+										</svg>
+									</button>
+								{:else}
+									<button
+										onclick={handleHeroRequest}
+										disabled={requestingHero}
+										class="w-11 h-11 rounded-full bg-white/10 border border-white/20 text-white flex items-center justify-center hover:bg-white/20 transition-all disabled:opacity-50"
+										title="Request"
+									>
+										{#if requestingHero}
+											<div class="w-5 h-5 border-2 border-white/50 border-t-transparent rounded-full animate-spin"></div>
+										{:else}
+											<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+												<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+											</svg>
+										{/if}
+									</button>
+								{/if}
+								<!-- Watchlist -->
 								<button
-									class="liquid-btn-icon"
-									aria-label="Add to watchlist"
+									onclick={handleHeroWatchlist}
+									disabled={togglingWatchlist}
+									class="w-11 h-11 rounded-full text-white flex items-center justify-center transition-all disabled:opacity-50 {isHeroInWatchlist(hero) ? 'bg-green-600 border border-green-500 hover:bg-green-500' : 'bg-white/10 border border-white/20 hover:bg-white/20'}"
+									title={isHeroInWatchlist(hero) ? 'In Watchlist' : 'Add to Watchlist'}
 								>
-									<svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+									{#if togglingWatchlist}
+										<div class="w-5 h-5 border-2 border-white/50 border-t-transparent rounded-full animate-spin"></div>
+									{:else if isHeroInWatchlist(hero)}
+										<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+										</svg>
+									{:else}
+										<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+										</svg>
+									{/if}
+								</button>
+								<!-- Trailer -->
+								<button
+									onclick={handleHeroTrailer}
+									class="w-11 h-11 rounded-full bg-red-600 border border-red-500 text-white flex items-center justify-center hover:bg-red-500 transition-all"
+									title="Watch Trailer"
+								>
+									<svg class="w-5 h-5 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+										<path d="M8 5v14l11-7z" />
 									</svg>
 								</button>
 							</div>
@@ -277,10 +458,10 @@
 						<div class="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-3">
 							<button
 								onclick={prevHero}
-								class="w-8 h-8 rounded-full bg-black/60 hover:bg-black/80 flex items-center justify-center transition-colors border border-white/10"
+								class="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors border border-white/20"
 								aria-label="Previous"
 							>
-								<svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
 								</svg>
 							</button>
@@ -295,10 +476,10 @@
 							</div>
 							<button
 								onclick={nextHero}
-								class="w-8 h-8 rounded-full bg-black/60 hover:bg-black/80 flex items-center justify-center transition-colors border border-white/10"
+								class="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors border border-white/20"
 								aria-label="Next"
 							>
-								<svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
 								</svg>
 							</button>
@@ -308,10 +489,11 @@
 			{/if}
 		{/if}
 
-		<div class="space-y-10 px-6 pb-8">
+		<!-- Content sections -->
+		<div class="space-y-8 px-6 pb-8">
 			<!-- Watchlist - combines continue watching and manually added items -->
 			{#if continueWatching.length > 0 || watchlistItems.length > 0}
-				<MediaRow title="Watchlist">
+				<MediaRow title="Watchlist" viewAllHref="/library">
 					<!-- Continue Watching items first (have progress) -->
 					{#each continueWatching as item}
 						<div class="flex-shrink-0 w-72 md:w-80">
@@ -398,3 +580,13 @@
 		</div>
 	{/if}
 </div>
+
+<!-- Trailer Modal for hero items -->
+{#if currentHero()}
+	<TrailerModal
+		bind:open={showTrailerModal}
+		tmdbId={currentHero()?.id}
+		mediaType={currentHero()?.mediaType === 'movie' ? 'movie' : 'tv'}
+		title={currentHero()?.title || currentHero()?.name}
+	/>
+{/if}

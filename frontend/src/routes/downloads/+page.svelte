@@ -74,19 +74,18 @@
 
 <div class="space-y-6">
 	<div class="flex items-center justify-between">
-		<div>
-			<h1 class="text-3xl font-bold text-text-primary">Downloads</h1>
-			<p class="text-text-secondary mt-1">Monitor active and completed downloads</p>
+		<h1 class="text-2xl font-bold text-text-primary">Downloads</h1>
+		<div class="inline-flex items-center p-1.5 rounded-xl bg-black/40 backdrop-blur-md border border-white/10">
+			<button
+				class="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg text-white/60 hover:text-white hover:bg-white/5 transition-colors"
+				onclick={loadDownloads}
+			>
+				<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+				</svg>
+				Refresh
+			</button>
 		</div>
-		<button
-			class="liquid-btn-sm"
-			onclick={loadDownloads}
-		>
-			<svg class="w-4 h-4 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-			</svg>
-			Refresh
-		</button>
 	</div>
 
 	{#if error}

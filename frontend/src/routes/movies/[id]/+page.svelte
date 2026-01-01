@@ -9,8 +9,12 @@
 		type Movie, type QualityProfile, type MediaInfo, type TMDBMovieResult
 	} from '$lib/api';
 	import { auth } from '$lib/stores/auth';
+	import { toast } from '$lib/stores/toast';
+	import { formatRuntime, getOfficialTrailer } from '$lib/utils';
 	import Dropdown from '$lib/components/Dropdown.svelte';
 	import PersonModal from '$lib/components/PersonModal.svelte';
+	import TrailerModal from '$lib/components/TrailerModal.svelte';
+	import IconButton from '$lib/components/IconButton.svelte';
 
 	let movie: Movie | null = $state(null);
 	let loading = $state(true);
@@ -35,6 +39,9 @@
 	let crewScrollContainer: HTMLElement;
 	let canScrollCrewLeft = $state(false);
 	let canScrollCrewRight = $state(true);
+	let recsScrollContainer: HTMLElement;
+	let canScrollRecsLeft = $state(false);
+	let canScrollRecsRight = $state(true);
 	let selectedPersonId = $state<number | null>(null);
 	let selectedPersonName = $state<string>('');
 
@@ -68,6 +75,22 @@
 			behavior: 'smooth'
 		});
 		setTimeout(updateCrewScrollState, 350);
+	}
+
+	function updateRecsScrollState() {
+		if (!recsScrollContainer) return;
+		canScrollRecsLeft = recsScrollContainer.scrollLeft > 0;
+		canScrollRecsRight = recsScrollContainer.scrollLeft < recsScrollContainer.scrollWidth - recsScrollContainer.clientWidth - 10;
+	}
+
+	function scrollRecs(direction: 'left' | 'right') {
+		if (!recsScrollContainer) return;
+		const scrollAmount = 300;
+		recsScrollContainer.scrollBy({
+			left: direction === 'left' ? -scrollAmount : scrollAmount,
+			behavior: 'smooth'
+		});
+		setTimeout(updateRecsScrollState, 350);
 	}
 
 	function handlePersonClick(person: { id?: number; name: string }) {
@@ -106,7 +129,7 @@
 			if (movie) {
 				try {
 					const suggestResult = await getMovieSuggestions(movie.id);
-					recommendations = suggestResult.results.slice(0, 12);
+					recommendations = suggestResult.results.slice(0, 20);
 				} catch { /* Suggestions are optional */ }
 			}
 		} catch (e) {
@@ -180,13 +203,6 @@
 		}
 	}
 
-	function formatRuntime(minutes?: number): string {
-		if (!minutes) return '';
-		const h = Math.floor(minutes / 60);
-		const m = minutes % 60;
-		return h > 0 ? `${h}h ${m}m` : `${m}m`;
-	}
-
 	function parseGenres(g?: string): string[] {
 		if (!g) return [];
 		try { return JSON.parse(g); } catch { return []; }
@@ -202,21 +218,9 @@
 		try { return JSON.parse(c); } catch { return []; }
 	}
 
-	function formatMoney(amount?: number): string {
+	function formatMoneyDisplay(amount?: number): string {
 		if (!amount || amount === 0) return '-';
 		return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(amount);
-	}
-
-	function parseTrailers(t?: string): Array<{ key: string; name: string; type: string; site?: string; official?: boolean }> {
-		if (!t) return [];
-		try { return JSON.parse(t); } catch { return []; }
-	}
-
-	function getOfficialTrailer() {
-		const trailers = parseTrailers(movie?.trailers);
-		// Filter for official YouTube trailers
-		const official = trailers.find(t => t.type === 'Trailer' && (t.site === 'YouTube' || !t.site) && t.official !== false);
-		return official || trailers[0];
 	}
 
 	function getLanguageName(code?: string): string {
@@ -330,9 +334,9 @@
 			{/if}
 
 			<!-- Hero Content: 3 columns -->
-			<div class="relative z-10 px-6 pt-24 pb-8 flex gap-6">
+			<div class="relative z-10 px-6 pt-32 pb-8 flex gap-6">
 				<!-- LEFT: Poster Card -->
-				<div class="flex-shrink-0 w-64">
+				<div class="flex-shrink-0 w-64 mt-8">
 					<div class="liquid-card overflow-hidden">
 						<!-- Poster -->
 						<div class="relative aspect-[2/3] bg-bg-card">
@@ -424,11 +428,11 @@
 					{/if}
 
 					<!-- Icon bubble controls -->
-					<div class="flex items-center gap-3 mb-5">
-						<button
+					<div class="flex items-center gap-2 mb-5">
+						<IconButton
 							onclick={handleToggleWatchlist}
 							disabled={watchlistLoading}
-							class="w-11 h-11 rounded-full flex items-center justify-center transition-all border disabled:opacity-50 {inWatchlist ? 'bg-blue-600 border-blue-500 text-white' : 'bg-white/10 border-white/20 text-white hover:bg-white/20'}"
+							active={inWatchlist}
 							title="{inWatchlist ? 'Remove from' : 'Add to'} Watchlist"
 						>
 							{#if inWatchlist}
@@ -440,42 +444,41 @@
 									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
 								</svg>
 							{/if}
-						</button>
+						</IconButton>
 
-						<button
+						<IconButton
 							onclick={handleToggleWatched}
 							disabled={togglingWatched}
-							class="w-11 h-11 rounded-full flex items-center justify-center transition-all border {isWatched ? 'bg-green-600 border-green-500 text-white' : 'bg-white/10 border-white/20 text-white hover:bg-white/20'}"
+							active={isWatched}
 							title="{isWatched ? 'Mark as unwatched' : 'Mark as watched'}"
 						>
 							<svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
 								<path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>
 							</svg>
-						</button>
+						</IconButton>
 
-						{#if getOfficialTrailer()}
-							<button
+						{#if getOfficialTrailer(movie?.trailers)}
+							<IconButton
 								onclick={() => showTrailerModal = true}
-								class="w-11 h-11 rounded-full bg-red-600 border border-red-500 text-white flex items-center justify-center hover:bg-red-500 transition-all"
+								variant="red"
 								title="Watch Trailer"
 							>
 								<svg class="w-5 h-5 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
 									<path d="M8 5v14l11-7z" />
 								</svg>
-							</button>
+							</IconButton>
 						{/if}
 
 						<!-- Manage dropdown -->
 						<div class="relative">
-							<button
+							<IconButton
 								onclick={() => { console.log('Toggle menu', !showManageMenu); showManageMenu = !showManageMenu; }}
-								class="w-11 h-11 rounded-full bg-white/10 border border-white/20 text-white flex items-center justify-center hover:bg-white/20 transition-all"
 								title="Manage"
 							>
 								<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
 								</svg>
-							</button>
+							</IconButton>
 							{#if showManageMenu}
 								<!-- Backdrop to close menu -->
 								<button
@@ -504,35 +507,44 @@
 
 					<!-- Playback selectors -->
 					{#if mediaInfo}
-						<div class="flex flex-wrap items-center gap-3">
+						<div class="inline-flex items-center p-1.5 rounded-xl bg-black/40 backdrop-blur-md border border-white/10">
 							{#if mediaInfo.videoStreams?.length}
 								<Dropdown
 									icon="video"
 									options={mediaInfo.videoStreams.map((v, i) => ({ value: i, label: `${formatResolution(v.width, v.height)} ${v.codec?.toUpperCase() || ''}` }))}
 									value={selectedVideo}
 									onchange={(v) => selectedVideo = v as number}
+									inline={true}
 								/>
 							{/if}
 							{#if mediaInfo.audioStreams?.length}
+								{#if mediaInfo.videoStreams?.length}
+									<div class="w-px h-6 bg-white/10"></div>
+								{/if}
 								<Dropdown
 									icon="audio"
 									options={mediaInfo.audioStreams.map((a, i) => ({ value: i, label: `${a.language?.toUpperCase() || 'UNK'} ${a.codec?.toUpperCase() || ''} ${formatAudioChannels(a.channels)}` }))}
 									value={selectedAudio}
 									onchange={(v) => selectedAudio = v as number}
+									inline={true}
 								/>
+							{/if}
+							{#if mediaInfo.videoStreams?.length || mediaInfo.audioStreams?.length}
+								<div class="w-px h-6 bg-white/10"></div>
 							{/if}
 							<Dropdown
 								icon="subtitles"
 								options={[{ value: null, label: 'Off' }, ...(mediaInfo.subtitleTracks || []).map(s => ({ value: s.index, label: s.title || getLanguageName(s.language) }))]}
 								value={selectedSubtitle}
 								onchange={(v) => selectedSubtitle = v as number | null}
+								inline={true}
 							/>
 						</div>
 					{/if}
 				</div>
 
 				<!-- RIGHT: Info Panel Card -->
-				<div class="flex-shrink-0 w-72">
+				<div class="flex-shrink-0 w-72 mt-8">
 					<div class="liquid-card p-4 space-y-2.5 text-sm">
 						<!-- Status -->
 						<div class="flex justify-between">
@@ -562,7 +574,7 @@
 						{#if movie.budget}
 							<div class="flex justify-between">
 								<span class="text-text-muted">Budget</span>
-								<span>{formatMoney(movie.budget)}</span>
+								<span>{formatMoneyDisplay(movie.budget)}</span>
 							</div>
 						{/if}
 
@@ -570,7 +582,7 @@
 						{#if movie.revenue}
 							<div class="flex justify-between">
 								<span class="text-text-muted">Revenue</span>
-								<span class="{movie.revenue > (movie.budget || 0) ? 'text-green-400' : 'text-red-400'}">{formatMoney(movie.revenue)}</span>
+								<span class="{movie.revenue > (movie.budget || 0) ? 'text-green-400' : 'text-red-400'}">{formatMoneyDisplay(movie.revenue)}</span>
 							</div>
 						{/if}
 
@@ -699,7 +711,7 @@
 							<!-- Quality badge - top left -->
 							{#if mediaInfo.videoStreams?.[0]}
 								<div class="absolute top-3 left-3">
-									<div class="liquid-badge-sm !bg-black/90 text-white">
+									<div class="liquid-badge-sm">
 										{formatResolution(mediaInfo.videoStreams[0].width, mediaInfo.videoStreams[0].height)}
 									</div>
 								</div>
@@ -848,9 +860,39 @@
 		     5. SUGGESTIONS ROW
 		     ============================================ -->
 		<section class="px-6">
-			<h2 class="text-lg font-semibold text-text-primary mb-3">More Like This</h2>
+			<div class="flex items-center justify-between mb-3">
+				<h2 class="text-lg font-semibold text-text-primary">More Like This</h2>
+				{#if recommendations.length > 0}
+					<div class="flex gap-1">
+						<button
+							onclick={() => scrollRecs('left')}
+							disabled={!canScrollRecsLeft}
+							class="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+							aria-label="Scroll left"
+						>
+							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+							</svg>
+						</button>
+						<button
+							onclick={() => scrollRecs('right')}
+							disabled={!canScrollRecsRight}
+							class="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+							aria-label="Scroll right"
+						>
+							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+							</svg>
+						</button>
+					</div>
+				{/if}
+			</div>
 			{#if recommendations.length > 0}
-				<div class="flex gap-4 overflow-x-auto pb-2 scrollbar-thin">
+				<div
+					bind:this={recsScrollContainer}
+					onscroll={updateRecsScrollState}
+					class="flex gap-4 overflow-x-auto pb-2 scrollbar-thin"
+				>
 					{#each recommendations as rec}
 						<a href="/discover/movie/{rec.id}" class="flex-shrink-0 w-32 group">
 							<div class="relative aspect-[2/3] rounded-lg overflow-hidden bg-bg-card">
@@ -907,34 +949,11 @@
 	</div>
 
 	<!-- Trailer Modal -->
-	{#if showTrailerModal && getOfficialTrailer()}
-		{@const trailer = getOfficialTrailer()}
-		<div class="fixed inset-0 z-50 flex items-center justify-center">
-			<!-- Backdrop -->
-			<button
-				class="absolute inset-0 bg-black/90"
-				onclick={() => showTrailerModal = false}
-				aria-label="Close"
-			></button>
-			<!-- Modal -->
-			<div class="relative w-full max-w-4xl mx-4 aspect-video">
-				<iframe
-					src="https://www.youtube.com/embed/{trailer.key}?autoplay=1"
-					title={trailer.name}
-					class="w-full h-full rounded-lg"
-					frameborder="0"
-					allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-					allowfullscreen
-				></iframe>
-				<button
-					onclick={() => showTrailerModal = false}
-					class="absolute -top-12 right-0 text-white hover:text-text-secondary"
-				>
-					✕ Close
-				</button>
-			</div>
-		</div>
-	{/if}
+	<TrailerModal
+		bind:open={showTrailerModal}
+		trailersJson={movie?.trailers}
+		title={movie?.title}
+	/>
 
 	<!-- Person Modal -->
 	<PersonModal

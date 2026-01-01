@@ -176,6 +176,8 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/discover/genres/tv", s.requireAuth(s.handleTVGenres))
 	s.mux.HandleFunc("/api/discover/movie/", s.requireAuth(s.handleDiscoverMovieDetail))
 	s.mux.HandleFunc("/api/discover/show/", s.requireAuth(s.handleDiscoverShowDetail))
+	s.mux.HandleFunc("/api/trailers/movie/", s.requireAuth(s.handleMovieTrailers))
+	s.mux.HandleFunc("/api/trailers/tv/", s.requireAuth(s.handleTVTrailers))
 	s.mux.HandleFunc("/api/movie/recommendations/", s.requireAuth(s.handleMovieRecommendations))
 	s.mux.HandleFunc("/api/movies/suggestions/", s.requireAuth(s.handleMovieSuggestions))
 	s.mux.HandleFunc("/api/shows/suggestions/", s.requireAuth(s.handleShowSuggestions))
@@ -3466,6 +3468,86 @@ func (s *Server) handleDiscoverShowDetail(w http.ResponseWriter, r *http.Request
 	json.NewEncoder(w).Encode(response)
 }
 
+func (s *Server) handleMovieTrailers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	idStr := strings.TrimPrefix(r.URL.Path, "/api/trailers/movie/")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid ID", http.StatusBadRequest)
+		return
+	}
+
+	tmdbClient := s.metadata.GetTMDBClient()
+	if tmdbClient == nil {
+		http.Error(w, "TMDB not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	details, err := tmdbClient.GetMovieDetails(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	trailers := make([]map[string]interface{}, 0)
+	for _, v := range details.Videos.Results {
+		trailers = append(trailers, map[string]interface{}{
+			"key":      v.Key,
+			"name":     v.Name,
+			"type":     v.Type,
+			"site":     v.Site,
+			"official": v.Official,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(trailers)
+}
+
+func (s *Server) handleTVTrailers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	idStr := strings.TrimPrefix(r.URL.Path, "/api/trailers/tv/")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid ID", http.StatusBadRequest)
+		return
+	}
+
+	tmdbClient := s.metadata.GetTMDBClient()
+	if tmdbClient == nil {
+		http.Error(w, "TMDB not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	details, err := tmdbClient.GetTVDetails(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	trailers := make([]map[string]interface{}, 0)
+	for _, v := range details.Videos.Results {
+		trailers = append(trailers, map[string]interface{}{
+			"key":      v.Key,
+			"name":     v.Name,
+			"type":     v.Type,
+			"site":     v.Site,
+			"official": v.Official,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(trailers)
+}
+
 func (s *Server) handleMovieRecommendations(w http.ResponseWriter, r *http.Request) {
 	// Extract TMDB ID from path: /api/movie/recommendations/{tmdbId}
 	path := strings.TrimPrefix(r.URL.Path, "/api/movie/recommendations/")
@@ -3589,7 +3671,7 @@ func (s *Server) handleMovieSuggestions(w http.ResponseWriter, r *http.Request) 
 							VoteAverage:  m.VoteAverage,
 							Popularity:   m.Popularity,
 						})
-						if len(suggestions.Results) >= 15 {
+						if len(suggestions.Results) >= 25 {
 							break
 						}
 					}
@@ -3638,7 +3720,7 @@ func (s *Server) handleMovieSuggestions(w http.ResponseWriter, r *http.Request) 
 					VoteAverage:  m.VoteAverage,
 					Popularity:   m.Popularity,
 				})
-				if len(suggestions.Results) >= 15 {
+				if len(suggestions.Results) >= 25 {
 					break
 				}
 			}
@@ -3746,7 +3828,7 @@ func (s *Server) handleShowSuggestions(w http.ResponseWriter, r *http.Request) {
 							VoteAverage:  s.VoteAverage,
 							Popularity:   s.Popularity,
 						})
-						if len(suggestions.Results) >= 15 {
+						if len(suggestions.Results) >= 25 {
 							break
 						}
 					}
@@ -3795,7 +3877,7 @@ func (s *Server) handleShowSuggestions(w http.ResponseWriter, r *http.Request) {
 					VoteAverage:  s.VoteAverage,
 					Popularity:   s.Popularity,
 				})
-				if len(suggestions.Results) >= 15 {
+				if len(suggestions.Results) >= 25 {
 					break
 				}
 			}

@@ -148,11 +148,13 @@
 
 <div class="space-y-6">
 	<div class="flex items-center justify-between">
-		<div>
-			<h1 class="text-3xl font-bold text-text-primary">Wanted</h1>
-			<p class="text-text-secondary mt-1">
-				{items.filter(i => i.monitored).length} items monitored for upgrades
-			</p>
+		<div class="flex items-center gap-4">
+			<h1 class="text-2xl font-bold text-text-primary">Wanted</h1>
+			{#if items.length > 0}
+				<div class="inline-flex items-center px-3 py-1.5 rounded-xl bg-black/40 backdrop-blur-md border border-white/10 text-sm text-white/60">
+					{items.filter(i => i.monitored).length} monitored
+				</div>
+			{/if}
 		</div>
 	</div>
 

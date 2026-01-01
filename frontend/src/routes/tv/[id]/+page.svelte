@@ -9,8 +9,12 @@
 		type ShowDetail, type QualityProfile, type MediaInfo, type TMDBShowResult
 	} from '$lib/api';
 	import { auth } from '$lib/stores/auth';
+	import { toast } from '$lib/stores/toast';
+	import { formatRuntime, getOfficialTrailer } from '$lib/utils';
 	import Dropdown from '$lib/components/Dropdown.svelte';
 	import PersonModal from '$lib/components/PersonModal.svelte';
+	import TrailerModal from '$lib/components/TrailerModal.svelte';
+	import IconButton from '$lib/components/IconButton.svelte';
 
 	let show: ShowDetail | null = $state(null);
 	let loading = $state(true);
@@ -32,6 +36,9 @@
 	let crewScrollContainer: HTMLElement;
 	let canScrollCrewLeft = $state(false);
 	let canScrollCrewRight = $state(true);
+	let recsScrollContainer: HTMLElement;
+	let canScrollRecsLeft = $state(false);
+	let canScrollRecsRight = $state(true);
 	let selectedPersonId = $state<number | null>(null);
 	let selectedPersonName = $state<string>('');
 
@@ -67,6 +74,22 @@
 		setTimeout(updateCrewScrollState, 350);
 	}
 
+	function updateRecsScrollState() {
+		if (!recsScrollContainer) return;
+		canScrollRecsLeft = recsScrollContainer.scrollLeft > 0;
+		canScrollRecsRight = recsScrollContainer.scrollLeft < recsScrollContainer.scrollWidth - recsScrollContainer.clientWidth - 10;
+	}
+
+	function scrollRecs(direction: 'left' | 'right') {
+		if (!recsScrollContainer) return;
+		const scrollAmount = 300;
+		recsScrollContainer.scrollBy({
+			left: direction === 'left' ? -scrollAmount : scrollAmount,
+			behavior: 'smooth'
+		});
+		setTimeout(updateRecsScrollState, 350);
+	}
+
 	function handlePersonClick(person: { id?: number; name: string }) {
 		if (person.id) {
 			selectedPersonId = person.id;
@@ -98,7 +121,7 @@
 			if (show) {
 				try {
 					const suggestResult = await getShowSuggestions(show.id);
-					recommendations = suggestResult.results.slice(0, 12);
+					recommendations = suggestResult.results.slice(0, 20);
 				} catch { /* Suggestions are optional */ }
 			}
 		} catch (e) {
@@ -208,17 +231,6 @@
 	function parseCrew(c?: string): Array<{ name: string; job: string; department: string; profile_path?: string }> {
 		if (!c) return [];
 		try { return JSON.parse(c) || []; } catch { return []; }
-	}
-
-	function parseTrailers(t?: string): Array<{ key: string; name: string; type: string; site?: string; official?: boolean }> {
-		if (!t) return [];
-		try { return JSON.parse(t) || []; } catch { return []; }
-	}
-
-	function getOfficialTrailer() {
-		const trailers = parseTrailers(show?.trailers);
-		const official = trailers.find(t => t.type === 'Trailer' && (t.site === 'YouTube' || !t.site) && t.official !== false);
-		return official || trailers[0];
 	}
 
 	function getLanguageName(code?: string): string {
@@ -356,9 +368,9 @@
 			{/if}
 
 			<!-- Hero Content: 3 columns -->
-			<div class="relative z-10 px-6 pt-24 pb-8 flex gap-6">
+			<div class="relative z-10 px-6 pt-32 pb-8 flex gap-6">
 				<!-- LEFT: Poster Card -->
-				<div class="flex-shrink-0 w-64">
+				<div class="flex-shrink-0 w-64 mt-8">
 					<div class="liquid-card overflow-hidden">
 						<!-- Poster -->
 						<div class="relative aspect-[2/3] bg-bg-card">
@@ -456,7 +468,7 @@
 						<!-- Play button -->
 						<button
 							onclick={handlePlayNext}
-							class="h-11 px-6 rounded-full bg-white text-black font-semibold flex items-center gap-2 hover:bg-white/90 transition-all"
+							class="h-12 px-6 rounded-xl bg-white text-black font-semibold flex items-center gap-2 hover:bg-white/90 transition-all"
 						>
 							<svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
 								<path d="M8 5v14l11-7z" />
@@ -468,10 +480,10 @@
 							{/if}
 						</button>
 
-						<button
+						<IconButton
 							onclick={handleToggleWatchlist}
 							disabled={watchlistLoading}
-							class="w-11 h-11 rounded-full flex items-center justify-center transition-all border disabled:opacity-50 {inWatchlist ? 'bg-blue-600 border-blue-500 text-white' : 'bg-white/10 border-white/20 text-white hover:bg-white/20'}"
+							active={inWatchlist}
 							title="{inWatchlist ? 'Remove from' : 'Add to'} Watchlist"
 						>
 							{#if inWatchlist}
@@ -483,31 +495,30 @@
 									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
 								</svg>
 							{/if}
-						</button>
+						</IconButton>
 
-						{#if getOfficialTrailer()}
-							<button
+						{#if getOfficialTrailer(show?.trailers)}
+							<IconButton
 								onclick={() => showTrailerModal = true}
-								class="w-11 h-11 rounded-full bg-red-600 border border-red-500 text-white flex items-center justify-center hover:bg-red-500 transition-all"
+								variant="red"
 								title="Watch Trailer"
 							>
 								<svg class="w-5 h-5 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
 									<path d="M8 5v14l11-7z" />
 								</svg>
-							</button>
+							</IconButton>
 						{/if}
 
 						<!-- Manage dropdown -->
 						<div class="relative">
-							<button
+							<IconButton
 								onclick={() => showManageMenu = !showManageMenu}
-								class="w-11 h-11 rounded-full bg-white/10 border border-white/20 text-white flex items-center justify-center hover:bg-white/20 transition-all"
 								title="Manage"
 							>
 								<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
 								</svg>
-							</button>
+							</IconButton>
 							{#if showManageMenu}
 								<button
 									type="button"
@@ -534,7 +545,7 @@
 				</div>
 
 				<!-- RIGHT: Info Panel Card -->
-				<div class="flex-shrink-0 w-72">
+				<div class="flex-shrink-0 w-72 mt-8">
 					<div class="liquid-card p-4 space-y-3 text-sm">
 						<!-- Status -->
 						<div class="flex justify-between">
@@ -878,9 +889,39 @@
 		     5. SUGGESTIONS ROW
 		     ============================================ -->
 		<section class="px-6 pb-8">
-			<h2 class="text-lg font-semibold text-text-primary mb-3">More Like This</h2>
+			<div class="flex items-center justify-between mb-3">
+				<h2 class="text-lg font-semibold text-text-primary">More Like This</h2>
+				{#if recommendations.length > 0}
+					<div class="flex gap-1">
+						<button
+							onclick={() => scrollRecs('left')}
+							disabled={!canScrollRecsLeft}
+							class="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+							aria-label="Scroll left"
+						>
+							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+							</svg>
+						</button>
+						<button
+							onclick={() => scrollRecs('right')}
+							disabled={!canScrollRecsRight}
+							class="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+							aria-label="Scroll right"
+						>
+							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+							</svg>
+						</button>
+					</div>
+				{/if}
+			</div>
 			{#if recommendations.length > 0}
-				<div class="flex gap-4 overflow-x-auto pb-2 scrollbar-thin">
+				<div
+					bind:this={recsScrollContainer}
+					onscroll={updateRecsScrollState}
+					class="flex gap-4 overflow-x-auto pb-2 scrollbar-thin"
+				>
 					{#each recommendations as rec}
 						<a href="/discover/show/{rec.id}" class="flex-shrink-0 w-32 group">
 							<div class="relative aspect-[2/3] rounded-lg overflow-hidden bg-bg-card">
@@ -917,32 +958,11 @@
 	</div>
 
 	<!-- Trailer Modal -->
-	{#if showTrailerModal && getOfficialTrailer()}
-		{@const trailer = getOfficialTrailer()}
-		<div class="fixed inset-0 z-50 flex items-center justify-center">
-			<button
-				class="absolute inset-0 bg-black/90"
-				onclick={() => showTrailerModal = false}
-				aria-label="Close"
-			></button>
-			<div class="relative w-full max-w-4xl mx-4 aspect-video">
-				<iframe
-					src="https://www.youtube.com/embed/{trailer.key}?autoplay=1"
-					title={trailer.name}
-					class="w-full h-full rounded-lg"
-					frameborder="0"
-					allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-					allowfullscreen
-				></iframe>
-				<button
-					onclick={() => showTrailerModal = false}
-					class="absolute -top-12 right-0 text-white hover:text-text-secondary"
-				>
-					✕ Close
-				</button>
-			</div>
-		</div>
-	{/if}
+	<TrailerModal
+		bind:open={showTrailerModal}
+		trailersJson={show?.trailers}
+		title={show?.title}
+	/>
 
 	<!-- Person Modal -->
 	<PersonModal

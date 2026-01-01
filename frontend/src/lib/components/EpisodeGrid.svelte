@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { formatRuntime } from '$lib/utils';
 
 	interface Episode {
 		id: number;
@@ -19,11 +20,6 @@
 	}
 
 	let { episodes, watchedEpisodes, progressMap = new Map(), onToggleWatched, togglingEpisode = null }: Props = $props();
-
-	function formatRuntime(minutes?: number): string {
-		if (!minutes) return '';
-		return `${minutes}m`;
-	}
 
 	function handlePlay(episodeId: number) {
 		goto(`/watch/episode/${episodeId}`);

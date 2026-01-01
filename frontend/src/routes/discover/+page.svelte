@@ -78,6 +78,10 @@
 			movieGenres = movieGenresRes.genres;
 			tvGenres = tvGenresRes.genres;
 
+			// Select heroes for each tab (top 10 with backdrops)
+			movieHeroes = trendingMovies.filter(m => m.backdropPath).slice(0, 10);
+			showHeroes = trendingShows.filter(s => s.backdropPath).slice(0, 10);
+
 			// Load content for priority genres
 			await loadGenreContent();
 		} catch (e) {
@@ -170,6 +174,46 @@
 		return `https://image.tmdb.org/t/p/w300${path}`;
 	}
 
+	function getBackdropUrl(path: string | undefined): string {
+		if (!path) return '';
+		return `https://image.tmdb.org/t/p/w1280${path}`;
+	}
+
+	// Hero carousel items (multiple per tab)
+	let movieHeroes: DiscoverItem[] = $state([]);
+	let showHeroes: DiscoverItem[] = $state([]);
+	let movieHeroIndex = $state(0);
+	let showHeroIndex = $state(0);
+
+	// Current hero based on active tab
+	let currentHeroes = $derived(activeTab === 'movies' ? movieHeroes : showHeroes);
+	let currentHeroIndex = $derived(activeTab === 'movies' ? movieHeroIndex : showHeroIndex);
+	let currentHero = $derived(currentHeroes[currentHeroIndex] || null);
+
+	function nextHero() {
+		if (activeTab === 'movies') {
+			movieHeroIndex = (movieHeroIndex + 1) % movieHeroes.length;
+		} else {
+			showHeroIndex = (showHeroIndex + 1) % showHeroes.length;
+		}
+	}
+
+	function prevHero() {
+		if (activeTab === 'movies') {
+			movieHeroIndex = (movieHeroIndex - 1 + movieHeroes.length) % movieHeroes.length;
+		} else {
+			showHeroIndex = (showHeroIndex - 1 + showHeroes.length) % showHeroes.length;
+		}
+	}
+
+	function goToHero(index: number) {
+		if (activeTab === 'movies') {
+			movieHeroIndex = index;
+		} else {
+			showHeroIndex = index;
+		}
+	}
+
 	function getDetailUrl(item: DiscoverItem): string {
 		if (item.inLibrary) {
 			return item.type === 'movie' ? `/movies/${item.libraryId}` : `/tv/${item.libraryId}`;
@@ -182,57 +226,177 @@
 	<title>Discover - Outpost</title>
 </svelte:head>
 
-<div class="space-y-8">
-	<!-- Header with tabs -->
-	<div class="flex flex-col gap-4">
-		<h1 class="text-3xl font-bold text-text-primary">Discover</h1>
-		<p class="text-text-secondary">Find new movies and shows to add to your library</p>
-
-		<!-- Tab bar -->
-		<div class="flex gap-2">
-			<button
-				onclick={() => activeTab = 'movies'}
-				class="px-4 py-2 text-sm font-medium transition-all rounded-xl
-					{activeTab === 'movies'
-						? 'liquid-glass text-white'
-						: 'text-white/50 hover:text-white hover:bg-white/5'}"
-			>
-				Movies
-			</button>
-			<button
-				onclick={() => activeTab = 'shows'}
-				class="px-4 py-2 text-sm font-medium transition-all rounded-xl
-					{activeTab === 'shows'
-						? 'liquid-glass text-white'
-						: 'text-white/50 hover:text-white hover:bg-white/5'}"
-			>
-				TV Shows
-			</button>
-		</div>
-	</div>
-
-	{#if error}
-		<div class="bg-white/5 border border-white/10 text-text-secondary px-4 py-3 rounded-xl flex items-center justify-between">
-			<span>{error}</span>
-			<button class="text-text-muted hover:text-text-secondary" onclick={() => (error = null)} title="Dismiss">
-				<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-				</svg>
-			</button>
-		</div>
-	{/if}
-
+<div class="space-y-8 -mt-22 -mx-6">
 	{#if loading}
-		<div class="flex items-center justify-center h-64">
+		<div class="flex items-center justify-center h-96">
 			<div class="flex items-center gap-3">
-				<div class="w-6 h-6 border-2 border-white-400 border-t-transparent rounded-full animate-spin"></div>
+				<div class="w-6 h-6 border-2 border-white/50 border-t-transparent rounded-full animate-spin"></div>
 				<p class="text-text-secondary">Loading discover content...</p>
 			</div>
 		</div>
 	{:else}
-		<!-- Movies Tab -->
-		{#if activeTab === 'movies'}
-			<div class="space-y-8">
+		<!-- Hero Carousel Section - changes based on active tab -->
+		{#if currentHero}
+			<section class="relative h-[45vh] min-h-[380px] overflow-hidden">
+				<!-- Backdrop image with fade transition -->
+				{#key currentHero.id}
+					<img
+						src={getBackdropUrl(currentHero.backdropPath)}
+						alt={currentHero.title || currentHero.name}
+						class="absolute inset-0 w-full h-full object-cover animate-fade-in pointer-events-none"
+						style="object-position: center 25%;"
+						draggable="false"
+					/>
+				{/key}
+
+				<!-- Gradient overlays (matching home page) -->
+				<div class="absolute inset-0 bg-gradient-to-r from-bg-primary via-bg-primary/80 to-transparent pointer-events-none"></div>
+				<div class="absolute inset-0 bg-gradient-to-t from-bg-primary via-transparent to-bg-primary/30 pointer-events-none"></div>
+
+				<!-- Content -->
+				<div class="relative h-full flex items-end pb-12 px-6">
+					<div class="max-w-2xl">
+						{#key currentHero.id}
+							<div class="animate-fade-in">
+								<div class="flex items-center gap-2 mb-4">
+									<span class="px-3 py-1.5 text-xs font-medium rounded-lg bg-white/10 border border-white/20 text-white">
+										Trending
+									</span>
+									<span class="px-3 py-1.5 text-xs font-medium rounded-lg bg-white/10 border border-white/20 text-white">
+										{activeTab === 'movies' ? 'Movie' : 'TV Series'}
+									</span>
+								</div>
+								<h1 class="text-4xl md:text-5xl font-bold text-white mb-3">{currentHero.title || currentHero.name}</h1>
+								<p class="text-text-secondary text-lg mb-2">
+									{currentHero.releaseDate?.substring(0, 4) || ''}
+									{#if currentHero.voteAverage}
+										<span class="mx-2">•</span>
+										<span class="text-white">{currentHero.voteAverage.toFixed(1)}</span>
+									{/if}
+								</p>
+								{#if currentHero.overview}
+									<p class="text-text-secondary line-clamp-2 mb-6 max-w-xl">{currentHero.overview}</p>
+								{/if}
+							</div>
+						{/key}
+						<!-- Circular action buttons (matching home page) -->
+						<div class="flex items-center gap-2">
+							<!-- Details -->
+							<a
+								href={activeTab === 'movies' ? `/discover/movie/${currentHero.id}` : `/discover/show/${currentHero.id}`}
+								class="w-11 h-11 rounded-full bg-white/10 border border-white/20 text-white flex items-center justify-center hover:bg-white/20 transition-all"
+								title="View Details"
+							>
+								<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+								</svg>
+							</a>
+							<!-- Request -->
+							{#if currentHero.inLibrary}
+								<a
+									href={activeTab === 'movies' ? `/movies/${currentHero.libraryId}` : `/tv/${currentHero.libraryId}`}
+									class="w-11 h-11 rounded-full bg-green-600 border border-green-500 text-white flex items-center justify-center hover:bg-green-500 transition-all"
+									title="In Library"
+								>
+									<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+									</svg>
+								</a>
+							{:else if currentHero.requested || currentHero.requestStatus}
+								<button
+									class="w-11 h-11 rounded-full bg-yellow-600 border border-yellow-500 text-white flex items-center justify-center transition-all cursor-default"
+									title="Request Pending"
+									disabled
+								>
+									<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+									</svg>
+								</button>
+							{:else}
+								<button
+									onclick={(e) => handleRequest(e, currentHero)}
+									class="w-11 h-11 rounded-full bg-white/10 border border-white/20 text-white flex items-center justify-center hover:bg-white/20 transition-all"
+									title="Request"
+								>
+									<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+									</svg>
+								</button>
+							{/if}
+						</div>
+					</div>
+
+					<!-- Carousel navigation - center bottom with arrows -->
+					<div class="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-3">
+						<button
+							onclick={prevHero}
+							class="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors border border-white/20"
+							aria-label="Previous"
+						>
+							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+							</svg>
+						</button>
+						<div class="flex items-center gap-2">
+							{#each currentHeroes as _, i}
+								<button
+									onclick={() => goToHero(i)}
+									class="w-2 h-2 rounded-full transition-all {i === currentHeroIndex ? 'bg-white w-6' : 'bg-white/30 hover:bg-white/50'}"
+									aria-label="Go to slide {i + 1}"
+								></button>
+							{/each}
+						</div>
+						<button
+							onclick={nextHero}
+							class="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors border border-white/20"
+							aria-label="Next"
+						>
+							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+							</svg>
+						</button>
+					</div>
+				</div>
+			</section>
+		{/if}
+
+		<!-- Content sections -->
+		<div class="space-y-8 px-6 pb-8">
+			{#if error}
+				<div class="bg-white/5 border border-white/10 text-text-secondary px-4 py-3 rounded-xl flex items-center justify-between">
+					<span>{error}</span>
+					<button class="text-text-muted hover:text-text-secondary" onclick={() => (error = null)} title="Dismiss">
+						<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+						</svg>
+					</button>
+				</div>
+			{/if}
+
+			<!-- Tab bar -->
+			<div class="inline-flex gap-1 p-1.5 rounded-xl bg-black/40 backdrop-blur-md border border-white/10">
+				<button
+					onclick={() => activeTab = 'movies'}
+					class="px-4 py-2 text-sm font-medium transition-all rounded-lg
+						{activeTab === 'movies'
+							? 'bg-white/15 text-white'
+							: 'text-white/60 hover:text-white hover:bg-white/5'}"
+				>
+					Movies
+				</button>
+				<button
+					onclick={() => activeTab = 'shows'}
+					class="px-4 py-2 text-sm font-medium transition-all rounded-lg
+						{activeTab === 'shows'
+							? 'bg-white/15 text-white'
+							: 'text-white/60 hover:text-white hover:bg-white/5'}"
+				>
+					TV Shows
+				</button>
+			</div>
+
+			<!-- Movies Tab Content -->
+			{#if activeTab === 'movies'}
 				<!-- Trending Movies -->
 				{#if trendingMovies.length > 0}
 					<MediaRow title="Trending Movies">
@@ -339,12 +503,10 @@
 						</MediaRow>
 					{/if}
 				{/each}
-			</div>
-		{/if}
+			{/if}
 
-		<!-- Shows Tab -->
-		{#if activeTab === 'shows'}
-			<div class="space-y-8">
+			<!-- Shows Tab Content -->
+			{#if activeTab === 'shows'}
 				<!-- Trending Shows -->
 				{#if trendingShows.length > 0}
 					<MediaRow title="Trending TV Shows">
@@ -430,7 +592,7 @@
 						</MediaRow>
 					{/if}
 				{/each}
-			</div>
-		{/if}
+			{/if}
+		</div>
 	{/if}
 </div>

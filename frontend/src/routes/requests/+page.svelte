@@ -99,7 +99,6 @@
 		}
 	});
 
-	const selectClass = "liquid-select px-4 py-2";
 </script>
 
 <svelte:head>
@@ -108,21 +107,18 @@
 
 <div class="space-y-6">
 	<div class="flex items-center justify-between">
-		<div>
-			<h1 class="text-3xl font-bold text-text-primary">Requests</h1>
-			<p class="text-text-secondary mt-1">
-				{user?.role === 'admin' ? 'Manage content requests' : 'Your content requests'}
-			</p>
-		</div>
+		<h1 class="text-2xl font-bold text-text-primary">Requests</h1>
 
 		{#if user?.role === 'admin'}
-			<select bind:value={statusFilter} class={selectClass}>
-				<option value="">All Requests</option>
-				<option value="requested">Pending</option>
-				<option value="approved">Approved</option>
-				<option value="denied">Denied</option>
-				<option value="available">Available</option>
-			</select>
+			<div class="inline-flex items-center gap-2 p-1.5 rounded-xl bg-black/40 backdrop-blur-md border border-white/10">
+				<select bind:value={statusFilter} class="bg-transparent px-3 py-1.5 text-sm text-white/80 focus:outline-none cursor-pointer">
+					<option value="" class="bg-zinc-900">All Requests</option>
+					<option value="requested" class="bg-zinc-900">Pending</option>
+					<option value="approved" class="bg-zinc-900">Approved</option>
+					<option value="denied" class="bg-zinc-900">Denied</option>
+					<option value="available" class="bg-zinc-900">Available</option>
+				</select>
+			</div>
 		{/if}
 	</div>
 

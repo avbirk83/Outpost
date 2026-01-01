@@ -1,6 +1,6 @@
 <script lang="ts">
 	interface Props {
-		type: 'movie' | 'series' | 'episode' | 'anime' | 'music' | 'book' | string;
+		type: 'movie' | 'series' | 'episode' | 'anime' | string;
 	}
 
 	let { type }: Props = $props();
@@ -10,16 +10,14 @@
 			case 'movie': return 'MOVIE';
 			case 'series':
 			case 'show':
-			case 'tv': return 'SERIES';
-			case 'episode': return 'EPISODE';
+			case 'tv':
+			case 'episode': return 'SERIES';
 			case 'anime': return 'ANIME';
-			case 'music': return 'MUSIC';
-			case 'book': return 'BOOK';
 			default: return t.toUpperCase();
 		}
 	}
 </script>
 
-<div class="liquid-badge-sm !bg-black/90 text-white">
+<div class="liquid-badge-sm">
 	{getLabel(type)}
 </div>

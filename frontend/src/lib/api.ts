@@ -1265,6 +1265,23 @@ export async function getDiscoverShowDetail(id: number): Promise<DiscoverShowDet
 	return response.json();
 }
 
+// Trailer types and functions
+export interface TrailerInfo {
+	key: string;
+	name: string;
+	type: string;
+	site?: string;
+	official?: boolean;
+}
+
+export async function getTrailers(tmdbId: number, mediaType: 'movie' | 'tv'): Promise<TrailerInfo[]> {
+	const response = await fetch(`${API_BASE}/trailers/${mediaType}/${tmdbId}`);
+	if (!response.ok) {
+		throw new Error('Failed to fetch trailers');
+	}
+	return response.json();
+}
+
 // Movie recommendations (raw TMDB format)
 export interface TMDBMovieResult {
 	id: number;
