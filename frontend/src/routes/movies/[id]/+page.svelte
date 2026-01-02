@@ -3,18 +3,25 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import {
-		getMovie, refreshMovieMetadata, getImageUrl, getTmdbImageUrl, createWantedItem,
+		getMovie, refreshMovieMetadata, getImageUrl, getTmdbImageUrl,
 		getQualityProfiles, getWatchStatus, markAsWatched, markAsUnwatched,
 		getMediaInfo, getMovieSuggestions, addToWatchlist, removeFromWatchlist, isInWatchlist,
 		type Movie, type QualityProfile, type MediaInfo, type TMDBMovieResult
 	} from '$lib/api';
 	import { auth } from '$lib/stores/auth';
-	import { toast } from '$lib/stores/toast';
-	import { formatRuntime, getOfficialTrailer } from '$lib/utils';
+	import {
+		formatRuntime, getOfficialTrailer, parseGenres, parseCast, parseCrew,
+		formatMoneyFull, getLanguageName, getCountryName, getCountryFlag,
+		formatResolution, formatAudioChannels, getStatusColor
+	} from '$lib/utils';
 	import Dropdown from '$lib/components/Dropdown.svelte';
 	import PersonModal from '$lib/components/PersonModal.svelte';
 	import TrailerModal from '$lib/components/TrailerModal.svelte';
 	import IconButton from '$lib/components/IconButton.svelte';
+	import ScrollableRow from '$lib/components/ScrollableRow.svelte';
+	import PersonCard from '$lib/components/PersonCard.svelte';
+	import RatingsRow from '$lib/components/RatingsRow.svelte';
+	import ExternalLinks from '$lib/components/ExternalLinks.svelte';
 
 	let movie: Movie | null = $state(null);
 	let loading = $state(true);
@@ -33,49 +40,11 @@
 	let showTrailerModal = $state(false);
 	let selectedVideo = $state(0);
 	let recommendations: TMDBMovieResult[] = $state([]);
-	let castScrollContainer: HTMLElement;
-	let canScrollLeft = $state(false);
-	let canScrollRight = $state(true);
-	let crewScrollContainer: HTMLElement;
-	let canScrollCrewLeft = $state(false);
-	let canScrollCrewRight = $state(true);
 	let recsScrollContainer: HTMLElement;
 	let canScrollRecsLeft = $state(false);
 	let canScrollRecsRight = $state(true);
 	let selectedPersonId = $state<number | null>(null);
 	let selectedPersonName = $state<string>('');
-
-	function updateCastScrollState() {
-		if (!castScrollContainer) return;
-		canScrollLeft = castScrollContainer.scrollLeft > 0;
-		canScrollRight = castScrollContainer.scrollLeft < castScrollContainer.scrollWidth - castScrollContainer.clientWidth - 10;
-	}
-
-	function scrollCast(direction: 'left' | 'right') {
-		if (!castScrollContainer) return;
-		const scrollAmount = 300;
-		castScrollContainer.scrollBy({
-			left: direction === 'left' ? -scrollAmount : scrollAmount,
-			behavior: 'smooth'
-		});
-		setTimeout(updateCastScrollState, 350);
-	}
-
-	function updateCrewScrollState() {
-		if (!crewScrollContainer) return;
-		canScrollCrewLeft = crewScrollContainer.scrollLeft > 0;
-		canScrollCrewRight = crewScrollContainer.scrollLeft < crewScrollContainer.scrollWidth - crewScrollContainer.clientWidth - 10;
-	}
-
-	function scrollCrew(direction: 'left' | 'right') {
-		if (!crewScrollContainer) return;
-		const scrollAmount = 300;
-		crewScrollContainer.scrollBy({
-			left: direction === 'left' ? -scrollAmount : scrollAmount,
-			behavior: 'smooth'
-		});
-		setTimeout(updateCrewScrollState, 350);
-	}
 
 	function updateRecsScrollState() {
 		if (!recsScrollContainer) return;
@@ -203,98 +172,8 @@
 		}
 	}
 
-	function parseGenres(g?: string): string[] {
-		if (!g) return [];
-		try { return JSON.parse(g); } catch { return []; }
-	}
-
-	function parseCast(c?: string): Array<{ name: string; character: string; profile_path?: string }> {
-		if (!c) return [];
-		try { return JSON.parse(c); } catch { return []; }
-	}
-
-	function parseCrew(c?: string): Array<{ name: string; job: string; department: string; profile_path?: string }> {
-		if (!c) return [];
-		try { return JSON.parse(c); } catch { return []; }
-	}
-
-	function formatMoneyDisplay(amount?: number): string {
-		if (!amount || amount === 0) return '-';
-		return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(amount);
-	}
-
-	function getLanguageName(code?: string): string {
-		if (!code || code === 'und') return 'Unknown';
-		try {
-			const displayNames = new Intl.DisplayNames(['en'], { type: 'language' });
-			return displayNames.of(code) || code;
-		} catch {
-			return code;
-		}
-	}
-
-	function formatResolution(width?: number, height?: number): string {
-		if (!width && !height) return '';
-		const w = width || 0;
-		const h = height || 0;
-		// Check both width and height to handle widescreen content
-		if (w >= 3840 || h >= 2160) return '4K';
-		if (w >= 1920 || h >= 1080) return '1080p';
-		if (w >= 1280 || h >= 720) return '720p';
-		if (h > 0) return `${h}p`;
-		return '';
-	}
-
-	function formatAudioChannels(channels?: number): string {
-		if (!channels) return '';
-		if (channels >= 8) return '7.1';
-		if (channels >= 6) return '5.1';
-		if (channels === 2) return 'Stereo';
-		return `${channels}ch`;
-	}
-
-	function formatFileSize(bytes?: number): string {
-		if (!bytes) return '';
-		if (bytes >= 1_000_000_000) return `${(bytes / 1_000_000_000).toFixed(1)} GB`;
-		if (bytes >= 1_000_000) return `${(bytes / 1_000_000).toFixed(0)} MB`;
-		return `${bytes} bytes`;
-	}
-
-	function getCountryFlag(code?: string): string {
-		if (!code || code.length !== 2) return '';
-		// Convert 2-letter country code to flag emoji
-		return code.toUpperCase().split('').map(c => String.fromCodePoint(127397 + c.charCodeAt(0))).join('');
-	}
-
-	function getCountryName(code?: string): string {
-		if (!code) return '';
-		try {
-			const displayNames = new Intl.DisplayNames(['en'], { type: 'region' });
-			return displayNames.of(code.toUpperCase()) || code;
-		} catch {
-			return code;
-		}
-	}
-
-	function getStatusColor(status?: string): string {
-		switch (status?.toLowerCase()) {
-			case 'released':
-				return 'text-green-400';
-			case 'in production':
-			case 'post production':
-				return 'text-yellow-400';
-			case 'planned':
-			case 'rumored':
-				return 'text-text-muted';
-			default:
-				return 'text-green-400';
-		}
-	}
-
 	// Get tags from genres
-	function getTags(): string[] {
-		return parseGenres(movie?.genres);
-	}
+	const tags = $derived(parseGenres(movie?.genres));
 </script>
 
 <svelte:head>
@@ -363,22 +242,11 @@
 							</div>
 						</div>
 						<!-- Ratings Row -->
-						<div class="p-3 flex justify-around items-center border-t border-white/10">
-							{#if movie.rating}
-								<a href="https://www.themoviedb.org/movie/{movie.tmdbId}" target="_blank" class="flex items-center gap-1.5 hover:opacity-80 transition-opacity" title="TMDB Rating">
-									<img src="/icons/tmdb.svg" alt="TMDB" class="w-6 h-6 rounded" />
-									<span class="text-base font-bold text-white">{movie.rating.toFixed(1)}</span>
-								</a>
-							{/if}
-							<div class="flex items-center gap-1.5 opacity-40" title="Rotten Tomatoes (coming soon)">
-								<img src="/icons/rottentomatoes.svg" alt="Rotten Tomatoes" class="w-6 h-6" />
-								<span class="text-base font-bold">--</span>
-							</div>
-							<div class="flex items-center gap-1.5 opacity-40" title="Metacritic (coming soon)">
-								<img src="/icons/metacritic.svg" alt="Metacritic" class="w-6 h-6 rounded" />
-								<span class="text-base font-bold">--</span>
-							</div>
-						</div>
+						<RatingsRow
+							tmdbId={movie.tmdbId}
+							tmdbRating={movie.rating}
+							mediaType="movie"
+						/>
 					</div>
 				</div>
 
@@ -398,16 +266,16 @@
 						{#if movie.runtime}
 							<span>{formatRuntime(movie.runtime)}</span>
 						{/if}
-						{#if getTags().length > 0}
+						{#if tags.length > 0}
 							<span>•</span>
-							<span>{getTags().join(', ')}</span>
+							<span>{tags.join(', ')}</span>
 						{/if}
 					</div>
 
 					<!-- Tags (clickable pills) -->
-					{#if getTags().length > 0}
+					{#if tags.length > 0}
 						<div class="flex flex-wrap gap-2 mb-4">
-							{#each getTags() as tag}
+							{#each tags as tag}
 								<a href="/discover/movie?genre={encodeURIComponent(tag)}" class="liquid-tag text-sm">
 									{tag}
 								</a>
@@ -574,7 +442,7 @@
 						{#if movie.budget}
 							<div class="flex justify-between">
 								<span class="text-text-muted">Budget</span>
-								<span>{formatMoneyDisplay(movie.budget)}</span>
+								<span>{formatMoneyFull(movie.budget)}</span>
 							</div>
 						{/if}
 
@@ -582,7 +450,7 @@
 						{#if movie.revenue}
 							<div class="flex justify-between">
 								<span class="text-text-muted">Revenue</span>
-								<span class="{movie.revenue > (movie.budget || 0) ? 'text-green-400' : 'text-red-400'}">{formatMoneyDisplay(movie.revenue)}</span>
+								<span class="{movie.revenue > (movie.budget || 0) ? 'text-green-400' : 'text-red-400'}">{formatMoneyFull(movie.revenue)}</span>
 							</div>
 						{/if}
 
@@ -637,28 +505,11 @@
 						<div class="border-t border-white/10 my-2"></div>
 
 						<!-- External Links -->
-						<div class="flex justify-center gap-3">
-							{#if movie.tmdbId}
-								<a href="https://www.themoviedb.org/movie/{movie.tmdbId}" target="_blank"
-								   class="w-9 h-9 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors overflow-hidden" title="View on TMDB">
-									<img src="/icons/tmdb.svg" alt="TMDB" class="w-7 h-7" />
-								</a>
-							{/if}
-							{#if movie.imdbId}
-								<a href="https://www.imdb.com/title/{movie.imdbId}" target="_blank"
-								   class="w-9 h-9 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors overflow-hidden" title="View on IMDb">
-									<img src="/icons/imdb.svg" alt="IMDb" class="w-7 h-7" />
-								</a>
-							{/if}
-							<a href="https://trakt.tv/search/imdb/{movie.imdbId || ''}" target="_blank"
-							   class="w-9 h-9 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors overflow-hidden" title="View on Trakt">
-								<img src="/icons/trakt.svg" alt="Trakt" class="w-7 h-7" />
-							</a>
-							<a href="https://letterboxd.com/tmdb/{movie.tmdbId}" target="_blank"
-							   class="w-9 h-9 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors overflow-hidden" title="View on Letterboxd">
-								<img src="/icons/letterboxd.svg" alt="Letterboxd" class="w-7 h-7" />
-							</a>
-						</div>
+						<ExternalLinks
+							tmdbId={movie.tmdbId}
+							imdbId={movie.imdbId}
+							mediaType="movie"
+						/>
 					</div>
 				</div>
 			</div>
@@ -738,122 +589,32 @@
 		<!-- ============================================
 		     4. CAST & CREW
 		     ============================================ -->
-		<!-- Cast - full width -->
+		<!-- Cast -->
 		{#if parseCast(movie.cast).length > 0}
-			<section class="px-6">
-				<div class="flex items-center justify-between mb-3">
-					<h2 class="text-lg font-semibold text-text-primary">Cast</h2>
-					<div class="flex gap-1">
-						<button
-							onclick={() => scrollCast('left')}
-							disabled={!canScrollLeft}
-							class="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-							aria-label="Scroll left"
-						>
-							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
-							</svg>
-						</button>
-						<button
-							onclick={() => scrollCast('right')}
-							disabled={!canScrollRight}
-							class="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-							aria-label="Scroll right"
-						>
-							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
-							</svg>
-						</button>
-					</div>
-				</div>
-				<div
-					bind:this={castScrollContainer}
-					onscroll={updateCastScrollState}
-					class="flex gap-5 overflow-x-auto pt-1 pl-1 pb-2 -ml-1 scrollbar-thin"
-				>
-					{#each parseCast(movie.cast) as actor}
-						<button
-							onclick={() => handlePersonClick(actor)}
-							class="flex-shrink-0 w-28 text-center cursor-pointer group"
-						>
-							<div class="w-28 h-28 rounded-full bg-bg-elevated overflow-hidden mx-auto ring-2 ring-white/10 group-hover:ring-white/30 transition-all">
-								{#if actor.profile_path}
-									<img
-										src={getTmdbImageUrl(actor.profile_path, 'w185')}
-										alt={actor.name}
-										class="w-full h-full object-cover"
-									/>
-								{:else}
-									<div class="w-full h-full flex items-center justify-center text-3xl text-text-muted bg-gradient-to-br from-bg-card to-bg-elevated">
-										{actor.name.charAt(0)}
-									</div>
-								{/if}
-							</div>
-							<p class="mt-2 text-sm font-medium text-text-primary truncate group-hover:text-white transition-colors">{actor.name}</p>
-							<p class="text-xs text-text-muted truncate">{actor.character}</p>
-						</button>
-					{/each}
-				</div>
-			</section>
+			<ScrollableRow title="Cast">
+				{#each parseCast(movie.cast) as actor}
+					<PersonCard
+						name={actor.name}
+						role={actor.character}
+						profilePath={actor.profile_path}
+						onclick={() => handlePersonClick(actor)}
+					/>
+				{/each}
+			</ScrollableRow>
 		{/if}
 
-		<!-- Crew - full width -->
+		<!-- Crew -->
 		{#if parseCrew(movie.crew).length > 0}
-			<section class="px-6">
-				<div class="flex items-center justify-between mb-3">
-					<h2 class="text-lg font-semibold text-text-primary">Crew</h2>
-					<div class="flex gap-1">
-						<button
-							onclick={() => scrollCrew('left')}
-							disabled={!canScrollCrewLeft}
-							class="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-							aria-label="Scroll left"
-						>
-							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
-							</svg>
-						</button>
-						<button
-							onclick={() => scrollCrew('right')}
-							disabled={!canScrollCrewRight}
-							class="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-							aria-label="Scroll right"
-						>
-							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
-							</svg>
-						</button>
-					</div>
-				</div>
-				<div
-					bind:this={crewScrollContainer}
-					onscroll={updateCrewScrollState}
-					class="flex gap-5 overflow-x-auto pt-1 pl-1 pb-2 -ml-1 scrollbar-thin"
-				>
-					{#each parseCrew(movie.crew) as member}
-						<button
-							onclick={() => handlePersonClick(member)}
-							class="flex-shrink-0 w-28 text-center cursor-pointer group"
-						>
-							<div class="w-28 h-28 rounded-full bg-bg-elevated overflow-hidden mx-auto ring-2 ring-white/10 group-hover:ring-white/30 transition-all">
-								{#if member.profile_path}
-									<img
-										src={getTmdbImageUrl(member.profile_path, 'w185')}
-										alt={member.name}
-										class="w-full h-full object-cover"
-									/>
-								{:else}
-									<div class="w-full h-full flex items-center justify-center text-3xl text-text-muted bg-gradient-to-br from-bg-card to-bg-elevated">
-										{member.name.charAt(0)}
-									</div>
-								{/if}
-							</div>
-							<p class="mt-2 text-sm font-medium text-text-primary truncate group-hover:text-white transition-colors">{member.name}</p>
-							<p class="text-xs text-text-muted truncate">{member.job}</p>
-						</button>
-					{/each}
-				</div>
-			</section>
+			<ScrollableRow title="Crew">
+				{#each parseCrew(movie.crew) as member}
+					<PersonCard
+						name={member.name}
+						role={member.job}
+						profilePath={member.profile_path}
+						onclick={() => handlePersonClick(member)}
+					/>
+				{/each}
+			</ScrollableRow>
 		{/if}
 
 		<!-- ============================================
@@ -919,7 +680,7 @@
 				</div>
 			{:else}
 				<div class="flex gap-2">
-					{#each getTags().slice(0, 3) as genre}
+					{#each tags.slice(0, 3) as genre}
 						<a href="/discover/movie?genre={encodeURIComponent(genre)}" class="liquid-btn-sm">
 							Browse {genre} →
 						</a>
