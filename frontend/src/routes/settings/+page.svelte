@@ -1541,102 +1541,77 @@
 		</div>
 
 		{#if tasks && tasks.length > 0}
-			<div class="space-y-3">
-				{#each tasks as task (task.id)}
-					<div class="p-4 bg-bg-elevated/50 rounded-xl border border-white/5 hover:border-white/10 transition-colors">
-						<div class="flex items-center justify-between">
-							<div class="flex items-center gap-4">
-								<!-- Status indicator -->
-								<div class="w-10 h-10 rounded-lg {task.isRunning ? 'bg-blue-500/20' : task.enabled ? 'bg-green-500/20' : 'bg-gray-500/20'} flex items-center justify-center">
-									{#if task.isRunning}
-										<div class="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
-									{:else if task.enabled}
-										<svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-										</svg>
-									{:else}
-										<svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-										</svg>
-									{/if}
-								</div>
-
-								<!-- Task info -->
-								<div>
-									<div class="flex items-center gap-2">
-										<h3 class="font-medium text-text-primary">{task.name}</h3>
-										{#if task.lastStatus === 'failed'}
-											<span class="px-2 py-0.5 text-xs rounded-full bg-red-500/20 text-red-400">Failed</span>
-										{:else if task.lastStatus === 'success'}
-											<span class="px-2 py-0.5 text-xs rounded-full bg-green-500/20 text-green-400">Success</span>
+			<div class="overflow-x-auto">
+				<table class="w-full text-sm">
+					<thead>
+						<tr class="text-xs text-text-muted uppercase tracking-wide border-b border-white/10">
+							<th class="text-left py-3 px-2 font-medium">Task</th>
+							<th class="text-center py-3 px-2 font-medium w-20">Last Run</th>
+							<th class="text-center py-3 px-2 font-medium w-20">Duration</th>
+							<th class="text-center py-3 px-2 font-medium w-20">Next Run</th>
+							<th class="text-center py-3 px-2 font-medium w-24">Interval</th>
+							<th class="text-center py-3 px-2 font-medium w-16">Enabled</th>
+							<th class="text-center py-3 px-2 font-medium w-20">Action</th>
+						</tr>
+					</thead>
+					<tbody class="divide-y divide-white/5">
+						{#each tasks as task (task.id)}
+							<tr class="hover:bg-white/5 transition-colors">
+								<td class="py-3 px-2">
+									<div class="flex items-center gap-3">
+										<div class="w-8 h-8 rounded-lg flex-shrink-0 {task.isRunning ? 'bg-blue-500/20' : task.enabled ? 'bg-green-500/20' : 'bg-gray-500/20'} flex items-center justify-center">
+											{#if task.isRunning}
+												<div class="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
+											{:else if task.enabled}
+												<svg class="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>
+											{:else}
+												<svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+											{/if}
+										</div>
+										<div>
+											<div class="font-medium text-text-primary">{task.name}</div>
+											{#if task.lastStatus === 'failed'}
+												<span class="text-xs text-red-400">Failed</span>
+											{/if}
+										</div>
+									</div>
+								</td>
+								<td class="py-3 px-2 text-center text-text-secondary text-xs">{formatTimeAgo(task.lastRun)}</td>
+								<td class="py-3 px-2 text-center text-text-secondary text-xs">{formatDuration(task.lastDurationMs)}</td>
+								<td class="py-3 px-2 text-center text-text-secondary text-xs">{formatNextRun(task.nextRun)}</td>
+								<td class="py-3 px-2 text-center">
+									<select class="liquid-select px-2 py-1 text-xs w-full" value={task.intervalMinutes} onchange={(e) => handleUpdateTask(task, task.enabled, parseInt((e.target as HTMLSelectElement).value))}>
+										<option value="5">5 min</option>
+										<option value="15">15 min</option>
+										<option value="30">30 min</option>
+										<option value="60">1 hour</option>
+										<option value="120">2 hours</option>
+										<option value="360">6 hours</option>
+										<option value="720">12 hours</option>
+										<option value="1440">24 hours</option>
+									</select>
+								</td>
+								<td class="py-3 px-2 text-center">
+									<button class="relative w-10 h-5 rounded-full transition-colors mx-auto block {task.enabled ? 'bg-green-600' : 'bg-gray-600'}" onclick={() => handleUpdateTask(task, !task.enabled, task.intervalMinutes)}>
+										<span class="absolute left-0.5 top-0.5 w-4 h-4 bg-white rounded-full transition-transform duration-200 {task.enabled ? 'translate-x-5' : ''}"></span>
+									</button>
+								</td>
+								<td class="py-3 px-2 text-center">
+									<button class="liquid-btn-sm !px-3 !py-1 text-xs min-w-[60px]" disabled={task.isRunning || triggeringTask[task.id]} onclick={() => handleTriggerTask(task.id)}>
+										{#if task.isRunning || triggeringTask[task.id]}
+											<span class="w-3 h-3 border-2 border-white/50 border-t-white rounded-full animate-spin inline-block"></span>
+										{:else}
+											Run
 										{/if}
-									</div>
-									<p class="text-sm text-text-muted">{task.description}</p>
-								</div>
-							</div>
-
-							<!-- Task actions -->
-							<div class="flex items-center gap-4">
-								<!-- Stats -->
-								<div class="hidden sm:flex items-center gap-6 text-sm text-text-secondary">
-									<div>
-										<span class="text-text-muted">Last run:</span> {formatTimeAgo(task.lastRun)}
-									</div>
-									<div>
-										<span class="text-text-muted">Duration:</span> {formatDuration(task.lastDurationMs)}
-									</div>
-									<div>
-										<span class="text-text-muted">Next:</span> {formatNextRun(task.nextRun)}
-									</div>
-								</div>
-
-								<!-- Interval select -->
-								<select
-									class="liquid-select px-3 py-1.5 text-sm w-24"
-									value={task.intervalMinutes}
-									onchange={(e) => handleUpdateTask(task, task.enabled, parseInt((e.target as HTMLSelectElement).value))}
-								>
-									<option value="1">1 min</option>
-									<option value="5">5 min</option>
-									<option value="15">15 min</option>
-									<option value="30">30 min</option>
-									<option value="60">1 hour</option>
-									<option value="120">2 hours</option>
-									<option value="360">6 hours</option>
-									<option value="720">12 hours</option>
-									<option value="1440">24 hours</option>
-								</select>
-
-								<!-- Toggle enabled -->
-								<button
-									class="relative w-12 h-6 rounded-full transition-colors {task.enabled ? 'bg-green-600' : 'bg-gray-600'}"
-									onclick={() => handleUpdateTask(task, !task.enabled, task.intervalMinutes)}
-								>
-									<span class="absolute left-1 top-1 w-4 h-4 bg-white rounded-full transition-transform {task.enabled ? 'translate-x-6' : ''}"></span>
-								</button>
-
-								<!-- Run now button -->
-								<button
-									class="liquid-btn-sm !px-4"
-									disabled={task.isRunning || triggeringTask[task.id]}
-									onclick={() => handleTriggerTask(task.id)}
-								>
-									{#if triggeringTask[task.id]}
-										<span class="inline-block w-3 h-3 border border-white border-t-transparent rounded-full animate-spin mr-1"></span>
-									{/if}
-									Run Now
-								</button>
-							</div>
-						</div>
-
-						<!-- Last error if failed -->
-						{#if task.lastStatus === 'failed' && task.lastError}
-							<div class="mt-3 p-3 bg-red-500/10 rounded-lg border border-red-500/20">
-								<p class="text-sm text-red-400">{task.lastError}</p>
-							</div>
-						{/if}
-					</div>
-				{/each}
+									</button>
+								</td>
+							</tr>
+							{#if task.lastStatus === 'failed' && task.lastError}
+								<tr><td colspan="7" class="px-2 pb-3"><div class="p-2 bg-red-500/10 rounded border border-red-500/20 text-xs text-red-400">{task.lastError}</div></td></tr>
+							{/if}
+						{/each}
+					</tbody>
+				</table>
 			</div>
 		{:else}
 			<div class="flex items-center gap-3 py-4">
