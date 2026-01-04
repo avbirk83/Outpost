@@ -356,6 +356,109 @@ type ImportHistory struct {
 	CreatedAt  time.Time `json:"createdAt"`
 }
 
+// Grab history tracks all release grabs
+type GrabHistory struct {
+	ID               int64      `json:"id"`
+	MediaID          int64      `json:"mediaId"`
+	MediaType        string     `json:"mediaType"`
+	ReleaseTitle     string     `json:"releaseTitle"`
+	IndexerID        *int64     `json:"indexerId"`
+	IndexerName      *string    `json:"indexerName"`
+	QualityResolution *string   `json:"qualityResolution"`
+	QualitySource    *string    `json:"qualitySource"`
+	QualityCodec     *string    `json:"qualityCodec"`
+	QualityAudio     *string    `json:"qualityAudio"`
+	QualityHDR       *string    `json:"qualityHdr"`
+	ReleaseGroup     *string    `json:"releaseGroup"`
+	Size             int64      `json:"size"`
+	DownloadClientID *int64     `json:"downloadClientId"`
+	DownloadID       *string    `json:"downloadId"`
+	Status           string     `json:"status"` // grabbed, imported, failed
+	ErrorMessage     *string    `json:"errorMessage"`
+	GrabbedAt        time.Time  `json:"grabbedAt"`
+	ImportedAt       *time.Time `json:"importedAt"`
+}
+
+// Blocklist tracks releases that should not be grabbed again
+type BlocklistEntry struct {
+	ID           int64      `json:"id"`
+	MediaID      *int64     `json:"mediaId"`
+	MediaType    *string    `json:"mediaType"`
+	ReleaseTitle string     `json:"releaseTitle"`
+	ReleaseGroup *string    `json:"releaseGroup"`
+	IndexerID    *int64     `json:"indexerId"`
+	Reason       string     `json:"reason"`
+	ErrorMessage *string    `json:"errorMessage"`
+	ExpiresAt    *time.Time `json:"expiresAt"`
+	CreatedAt    time.Time  `json:"createdAt"`
+}
+
+// BlockedGroup tracks blocked release groups
+type BlockedGroup struct {
+	ID           int64     `json:"id"`
+	Name         string    `json:"name"`
+	Reason       *string   `json:"reason"`
+	AutoBlocked  bool      `json:"autoBlocked"`
+	FailureCount int       `json:"failureCount"`
+	CreatedAt    time.Time `json:"createdAt"`
+}
+
+// TrustedGroup tracks trusted release groups
+type TrustedGroup struct {
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	Category  string    `json:"category"` // movies, tv, anime
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+// ReleaseFilter for must/must not contain filters
+type ReleaseFilter struct {
+	ID         int64     `json:"id"`
+	PresetID   int64     `json:"presetId"`
+	FilterType string    `json:"filterType"` // must_contain, must_not_contain
+	Value      string    `json:"value"`
+	IsRegex    bool      `json:"isRegex"`
+	CreatedAt  time.Time `json:"createdAt"`
+}
+
+// DelayProfile for waiting for better quality
+type DelayProfile struct {
+	ID                int64   `json:"id"`
+	Name              string  `json:"name"`
+	Enabled           bool    `json:"enabled"`
+	DelayMinutes      int     `json:"delayMinutes"`
+	BypassIfResolution *string `json:"bypassIfResolution"`
+	BypassIfSource    *string `json:"bypassIfSource"`
+	BypassIfScoreAbove *int   `json:"bypassIfScoreAbove"`
+	LibraryID         *int64  `json:"libraryId"`
+	CreatedAt         time.Time `json:"createdAt"`
+}
+
+// PendingGrab for releases waiting for delay
+type PendingGrab struct {
+	ID           int64     `json:"id"`
+	MediaID      int64     `json:"mediaId"`
+	MediaType    string    `json:"mediaType"`
+	ReleaseTitle string    `json:"releaseTitle"`
+	ReleaseData  *string   `json:"releaseData"` // JSON encoded release info
+	Score        int       `json:"score"`
+	IndexerID    *int64    `json:"indexerId"`
+	AvailableAt  time.Time `json:"availableAt"`
+	CreatedAt    time.Time `json:"createdAt"`
+}
+
+// Exclusion represents an excluded media item or indexer
+type Exclusion struct {
+	ID            int64     `json:"id"`
+	ExclusionType string    `json:"exclusionType"` // "movie", "show", "indexer"
+	MediaID       *int64    `json:"mediaId,omitempty"`
+	MediaType     *string   `json:"mediaType,omitempty"`
+	IndexerID     *int64    `json:"indexerId,omitempty"`
+	LibraryID     *int64    `json:"libraryId,omitempty"`
+	Reason        *string   `json:"reason,omitempty"`
+	CreatedAt     time.Time `json:"createdAt"`
+}
+
 func New(dbPath string) (*Database, error) {
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -732,6 +835,109 @@ func (d *Database) migrate() error {
 		error TEXT,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
+
+	-- Release filters (must/must not contain)
+	CREATE TABLE IF NOT EXISTS release_filters (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		preset_id INTEGER REFERENCES quality_presets(id) ON DELETE CASCADE,
+		filter_type TEXT NOT NULL,
+		value TEXT NOT NULL,
+		is_regex INTEGER DEFAULT 0,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	-- Exclusions (media and indexer)
+	CREATE TABLE IF NOT EXISTS exclusions (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		exclusion_type TEXT NOT NULL,
+		media_id INTEGER,
+		media_type TEXT,
+		indexer_id INTEGER,
+		library_id INTEGER,
+		reason TEXT,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	-- Grab history
+	CREATE TABLE IF NOT EXISTS grab_history (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		media_id INTEGER NOT NULL,
+		media_type TEXT NOT NULL,
+		release_title TEXT NOT NULL,
+		indexer_id INTEGER,
+		indexer_name TEXT,
+		quality_resolution TEXT,
+		quality_source TEXT,
+		quality_codec TEXT,
+		quality_audio TEXT,
+		quality_hdr TEXT,
+		release_group TEXT,
+		size INTEGER,
+		download_client_id INTEGER,
+		download_id TEXT,
+		status TEXT NOT NULL DEFAULT 'grabbed',
+		error_message TEXT,
+		grabbed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		imported_at DATETIME
+	);
+
+	-- Blocklist
+	CREATE TABLE IF NOT EXISTS blocklist (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		media_id INTEGER,
+		media_type TEXT,
+		release_title TEXT NOT NULL,
+		release_group TEXT,
+		indexer_id INTEGER,
+		reason TEXT NOT NULL,
+		error_message TEXT,
+		expires_at DATETIME,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	-- Delay profiles
+	CREATE TABLE IF NOT EXISTS delay_profiles (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL,
+		enabled INTEGER DEFAULT 1,
+		delay_minutes INTEGER DEFAULT 0,
+		bypass_if_resolution TEXT,
+		bypass_if_source TEXT,
+		bypass_if_score_above INTEGER,
+		library_id INTEGER,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	-- Pending grabs (waiting for delay)
+	CREATE TABLE IF NOT EXISTS pending_grabs (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		media_id INTEGER NOT NULL,
+		media_type TEXT NOT NULL,
+		release_title TEXT NOT NULL,
+		release_data TEXT,
+		score INTEGER,
+		indexer_id INTEGER,
+		available_at DATETIME NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	-- Blocked groups (user-configurable)
+	CREATE TABLE IF NOT EXISTS blocked_groups (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL UNIQUE,
+		reason TEXT,
+		auto_blocked INTEGER DEFAULT 0,
+		failure_count INTEGER DEFAULT 0,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	-- Trusted groups (user-configurable)
+	CREATE TABLE IF NOT EXISTS trusted_groups (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL UNIQUE,
+		category TEXT DEFAULT 'movies',
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
 	`
 	_, err := d.db.Exec(schema)
 	if err != nil {
@@ -761,6 +967,19 @@ func (d *Database) migrate() error {
 		"ALTER TABLE movies ADD COLUMN last_watched_at TEXT",
 		"ALTER TABLE movies ADD COLUMN play_count INTEGER DEFAULT 0",
 		"ALTER TABLE shows ADD COLUMN added_at DATETIME DEFAULT CURRENT_TIMESTAMP",
+		// Quality preset migrations
+		"ALTER TABLE quality_presets ADD COLUMN min_resolution TEXT DEFAULT '720p'",
+		"ALTER TABLE quality_presets ADD COLUMN cutoff_resolution TEXT",
+		"ALTER TABLE quality_presets ADD COLUMN cutoff_source TEXT",
+		"ALTER TABLE quality_presets ADD COLUMN cutoff_met_behavior TEXT DEFAULT 'stop'",
+		"ALTER TABLE quality_presets ADD COLUMN sources TEXT",
+		// Download tracking migrations
+		"ALTER TABLE downloads ADD COLUMN retry_count INTEGER DEFAULT 0",
+		"ALTER TABLE downloads ADD COLUMN last_error TEXT",
+		"ALTER TABLE downloads ADD COLUMN failed_at DATETIME",
+		"ALTER TABLE downloads ADD COLUMN stalled_notified INTEGER DEFAULT 0",
+		// Library preset assignment
+		"ALTER TABLE libraries ADD COLUMN quality_preset_id INTEGER",
 	}
 	for _, m := range migrations {
 		// Ignore errors (column may already exist)
@@ -3203,4 +3422,544 @@ func (d *Database) GetTotalBooksSize() (int64, error) {
 	var total int64
 	err := d.db.QueryRow("SELECT COALESCE(SUM(size), 0) FROM books").Scan(&total)
 	return total, err
+}
+
+// =====================
+// Blocklist Operations
+// =====================
+
+func (d *Database) AddToBlocklist(entry *BlocklistEntry) error {
+	result, err := d.db.Exec(`
+		INSERT INTO blocklist (media_id, media_type, release_title, release_group, indexer_id, reason, error_message, expires_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, entry.MediaID, entry.MediaType, entry.ReleaseTitle, entry.ReleaseGroup,
+		entry.IndexerID, entry.Reason, entry.ErrorMessage, entry.ExpiresAt)
+	if err != nil {
+		return err
+	}
+	entry.ID, _ = result.LastInsertId()
+	return nil
+}
+
+func (d *Database) GetBlocklist() ([]BlocklistEntry, error) {
+	rows, err := d.db.Query(`
+		SELECT id, media_id, media_type, release_title, release_group, indexer_id, reason, error_message, expires_at, created_at
+		FROM blocklist
+		ORDER BY created_at DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var entries []BlocklistEntry
+	for rows.Next() {
+		var e BlocklistEntry
+		if err := rows.Scan(&e.ID, &e.MediaID, &e.MediaType, &e.ReleaseTitle, &e.ReleaseGroup,
+			&e.IndexerID, &e.Reason, &e.ErrorMessage, &e.ExpiresAt, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		entries = append(entries, e)
+	}
+	return entries, nil
+}
+
+func (d *Database) IsReleaseBlocklisted(releaseTitle string) (bool, error) {
+	var count int
+	err := d.db.QueryRow(`
+		SELECT COUNT(*) FROM blocklist
+		WHERE release_title = ? AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
+	`, releaseTitle).Scan(&count)
+	return count > 0, err
+}
+
+func (d *Database) RemoveFromBlocklist(id int64) error {
+	_, err := d.db.Exec("DELETE FROM blocklist WHERE id = ?", id)
+	return err
+}
+
+func (d *Database) ClearExpiredBlocklist() error {
+	_, err := d.db.Exec("DELETE FROM blocklist WHERE expires_at IS NOT NULL AND expires_at <= CURRENT_TIMESTAMP")
+	return err
+}
+
+// =====================
+// Grab History Operations
+// =====================
+
+func (d *Database) AddGrabHistory(h *GrabHistory) error {
+	result, err := d.db.Exec(`
+		INSERT INTO grab_history (media_id, media_type, release_title, indexer_id, indexer_name,
+			quality_resolution, quality_source, quality_codec, quality_audio, quality_hdr,
+			release_group, size, download_client_id, download_id, status, error_message)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, h.MediaID, h.MediaType, h.ReleaseTitle, h.IndexerID, h.IndexerName,
+		h.QualityResolution, h.QualitySource, h.QualityCodec, h.QualityAudio, h.QualityHDR,
+		h.ReleaseGroup, h.Size, h.DownloadClientID, h.DownloadID, h.Status, h.ErrorMessage)
+	if err != nil {
+		return err
+	}
+	h.ID, _ = result.LastInsertId()
+	return nil
+}
+
+func (d *Database) GetGrabHistory(limit int) ([]GrabHistory, error) {
+	rows, err := d.db.Query(`
+		SELECT id, media_id, media_type, release_title, indexer_id, indexer_name,
+			quality_resolution, quality_source, quality_codec, quality_audio, quality_hdr,
+			release_group, size, download_client_id, download_id, status, error_message, grabbed_at, imported_at
+		FROM grab_history
+		ORDER BY grabbed_at DESC
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var history []GrabHistory
+	for rows.Next() {
+		var h GrabHistory
+		if err := rows.Scan(&h.ID, &h.MediaID, &h.MediaType, &h.ReleaseTitle, &h.IndexerID, &h.IndexerName,
+			&h.QualityResolution, &h.QualitySource, &h.QualityCodec, &h.QualityAudio, &h.QualityHDR,
+			&h.ReleaseGroup, &h.Size, &h.DownloadClientID, &h.DownloadID, &h.Status, &h.ErrorMessage,
+			&h.GrabbedAt, &h.ImportedAt); err != nil {
+			return nil, err
+		}
+		history = append(history, h)
+	}
+	return history, nil
+}
+
+func (d *Database) GetGrabHistoryForMedia(mediaID int64, mediaType string) ([]GrabHistory, error) {
+	rows, err := d.db.Query(`
+		SELECT id, media_id, media_type, release_title, indexer_id, indexer_name,
+			quality_resolution, quality_source, quality_codec, quality_audio, quality_hdr,
+			release_group, size, download_client_id, download_id, status, error_message, grabbed_at, imported_at
+		FROM grab_history
+		WHERE media_id = ? AND media_type = ?
+		ORDER BY grabbed_at DESC
+	`, mediaID, mediaType)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var history []GrabHistory
+	for rows.Next() {
+		var h GrabHistory
+		if err := rows.Scan(&h.ID, &h.MediaID, &h.MediaType, &h.ReleaseTitle, &h.IndexerID, &h.IndexerName,
+			&h.QualityResolution, &h.QualitySource, &h.QualityCodec, &h.QualityAudio, &h.QualityHDR,
+			&h.ReleaseGroup, &h.Size, &h.DownloadClientID, &h.DownloadID, &h.Status, &h.ErrorMessage,
+			&h.GrabbedAt, &h.ImportedAt); err != nil {
+			return nil, err
+		}
+		history = append(history, h)
+	}
+	return history, nil
+}
+
+func (d *Database) UpdateGrabHistoryStatus(id int64, status string, errorMsg *string) error {
+	if status == "imported" {
+		_, err := d.db.Exec(`
+			UPDATE grab_history SET status = ?, error_message = ?, imported_at = CURRENT_TIMESTAMP
+			WHERE id = ?
+		`, status, errorMsg, id)
+		return err
+	}
+	_, err := d.db.Exec("UPDATE grab_history SET status = ?, error_message = ? WHERE id = ?", status, errorMsg, id)
+	return err
+}
+
+// =====================
+// Blocked Groups Operations
+// =====================
+
+func (d *Database) GetBlockedGroups() ([]BlockedGroup, error) {
+	rows, err := d.db.Query(`
+		SELECT id, name, reason, auto_blocked, failure_count, created_at
+		FROM blocked_groups
+		ORDER BY name
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var groups []BlockedGroup
+	for rows.Next() {
+		var g BlockedGroup
+		if err := rows.Scan(&g.ID, &g.Name, &g.Reason, &g.AutoBlocked, &g.FailureCount, &g.CreatedAt); err != nil {
+			return nil, err
+		}
+		groups = append(groups, g)
+	}
+	return groups, nil
+}
+
+func (d *Database) AddBlockedGroup(name, reason string, autoBlocked bool) error {
+	_, err := d.db.Exec(`
+		INSERT INTO blocked_groups (name, reason, auto_blocked, failure_count)
+		VALUES (?, ?, ?, 0)
+		ON CONFLICT(name) DO UPDATE SET reason = excluded.reason, auto_blocked = excluded.auto_blocked
+	`, name, reason, autoBlocked)
+	return err
+}
+
+func (d *Database) IncrementGroupFailures(name string) error {
+	_, err := d.db.Exec(`
+		INSERT INTO blocked_groups (name, auto_blocked, failure_count)
+		VALUES (?, 1, 1)
+		ON CONFLICT(name) DO UPDATE SET failure_count = failure_count + 1
+	`, name)
+	return err
+}
+
+func (d *Database) RemoveBlockedGroup(id int64) error {
+	_, err := d.db.Exec("DELETE FROM blocked_groups WHERE id = ?", id)
+	return err
+}
+
+func (d *Database) IsGroupBlocked(name string) (bool, error) {
+	var count int
+	err := d.db.QueryRow("SELECT COUNT(*) FROM blocked_groups WHERE name = ?", name).Scan(&count)
+	return count > 0, err
+}
+
+// =====================
+// Trusted Groups Operations
+// =====================
+
+func (d *Database) GetTrustedGroups() ([]TrustedGroup, error) {
+	rows, err := d.db.Query(`
+		SELECT id, name, category, created_at
+		FROM trusted_groups
+		ORDER BY category, name
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var groups []TrustedGroup
+	for rows.Next() {
+		var g TrustedGroup
+		if err := rows.Scan(&g.ID, &g.Name, &g.Category, &g.CreatedAt); err != nil {
+			return nil, err
+		}
+		groups = append(groups, g)
+	}
+	return groups, nil
+}
+
+func (d *Database) AddTrustedGroup(name, category string) error {
+	_, err := d.db.Exec(`
+		INSERT INTO trusted_groups (name, category) VALUES (?, ?)
+		ON CONFLICT(name) DO UPDATE SET category = excluded.category
+	`, name, category)
+	return err
+}
+
+func (d *Database) RemoveTrustedGroup(id int64) error {
+	_, err := d.db.Exec("DELETE FROM trusted_groups WHERE id = ?", id)
+	return err
+}
+
+// =====================
+// Release Filters Operations
+// =====================
+
+func (d *Database) GetReleaseFilters(presetID int64) ([]ReleaseFilter, error) {
+	rows, err := d.db.Query(`
+		SELECT id, preset_id, filter_type, value, is_regex, created_at
+		FROM release_filters
+		WHERE preset_id = ?
+		ORDER BY filter_type, value
+	`, presetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var filters []ReleaseFilter
+	for rows.Next() {
+		var f ReleaseFilter
+		if err := rows.Scan(&f.ID, &f.PresetID, &f.FilterType, &f.Value, &f.IsRegex, &f.CreatedAt); err != nil {
+			return nil, err
+		}
+		filters = append(filters, f)
+	}
+	return filters, nil
+}
+
+func (d *Database) AddReleaseFilter(f *ReleaseFilter) error {
+	result, err := d.db.Exec(`
+		INSERT INTO release_filters (preset_id, filter_type, value, is_regex)
+		VALUES (?, ?, ?, ?)
+	`, f.PresetID, f.FilterType, f.Value, f.IsRegex)
+	if err != nil {
+		return err
+	}
+	f.ID, _ = result.LastInsertId()
+	return nil
+}
+
+func (d *Database) RemoveReleaseFilter(id int64) error {
+	_, err := d.db.Exec("DELETE FROM release_filters WHERE id = ?", id)
+	return err
+}
+
+// =====================
+// Delay Profiles Operations
+// =====================
+
+func (d *Database) GetDelayProfiles() ([]DelayProfile, error) {
+	rows, err := d.db.Query(`
+		SELECT id, name, enabled, delay_minutes, bypass_if_resolution, bypass_if_source, bypass_if_score_above, library_id, created_at
+		FROM delay_profiles
+		ORDER BY name
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var profiles []DelayProfile
+	for rows.Next() {
+		var p DelayProfile
+		if err := rows.Scan(&p.ID, &p.Name, &p.Enabled, &p.DelayMinutes, &p.BypassIfResolution,
+			&p.BypassIfSource, &p.BypassIfScoreAbove, &p.LibraryID, &p.CreatedAt); err != nil {
+			return nil, err
+		}
+		profiles = append(profiles, p)
+	}
+	return profiles, nil
+}
+
+func (d *Database) CreateDelayProfile(p *DelayProfile) error {
+	result, err := d.db.Exec(`
+		INSERT INTO delay_profiles (name, enabled, delay_minutes, bypass_if_resolution, bypass_if_source, bypass_if_score_above, library_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, p.Name, p.Enabled, p.DelayMinutes, p.BypassIfResolution, p.BypassIfSource, p.BypassIfScoreAbove, p.LibraryID)
+	if err != nil {
+		return err
+	}
+	p.ID, _ = result.LastInsertId()
+	return nil
+}
+
+func (d *Database) UpdateDelayProfile(p *DelayProfile) error {
+	_, err := d.db.Exec(`
+		UPDATE delay_profiles SET name = ?, enabled = ?, delay_minutes = ?,
+		bypass_if_resolution = ?, bypass_if_source = ?, bypass_if_score_above = ?, library_id = ?
+		WHERE id = ?
+	`, p.Name, p.Enabled, p.DelayMinutes, p.BypassIfResolution, p.BypassIfSource, p.BypassIfScoreAbove, p.LibraryID, p.ID)
+	return err
+}
+
+func (d *Database) DeleteDelayProfile(id int64) error {
+	_, err := d.db.Exec("DELETE FROM delay_profiles WHERE id = ?", id)
+	return err
+}
+
+// =====================
+// Pending Grabs Operations
+// =====================
+
+func (d *Database) AddPendingGrab(pg *PendingGrab) error {
+	result, err := d.db.Exec(`
+		INSERT INTO pending_grabs (media_id, media_type, release_title, release_data, score, indexer_id, available_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, pg.MediaID, pg.MediaType, pg.ReleaseTitle, pg.ReleaseData, pg.Score, pg.IndexerID, pg.AvailableAt)
+	if err != nil {
+		return err
+	}
+	pg.ID, _ = result.LastInsertId()
+	return nil
+}
+
+func (d *Database) GetPendingGrabs() ([]PendingGrab, error) {
+	rows, err := d.db.Query(`
+		SELECT id, media_id, media_type, release_title, release_data, score, indexer_id, available_at, created_at
+		FROM pending_grabs
+		ORDER BY available_at
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var pending []PendingGrab
+	for rows.Next() {
+		var pg PendingGrab
+		if err := rows.Scan(&pg.ID, &pg.MediaID, &pg.MediaType, &pg.ReleaseTitle, &pg.ReleaseData,
+			&pg.Score, &pg.IndexerID, &pg.AvailableAt, &pg.CreatedAt); err != nil {
+			return nil, err
+		}
+		pending = append(pending, pg)
+	}
+	return pending, nil
+}
+
+func (d *Database) GetReadyPendingGrabs() ([]PendingGrab, error) {
+	rows, err := d.db.Query(`
+		SELECT id, media_id, media_type, release_title, release_data, score, indexer_id, available_at, created_at
+		FROM pending_grabs
+		WHERE available_at <= CURRENT_TIMESTAMP
+		ORDER BY available_at
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var pending []PendingGrab
+	for rows.Next() {
+		var pg PendingGrab
+		if err := rows.Scan(&pg.ID, &pg.MediaID, &pg.MediaType, &pg.ReleaseTitle, &pg.ReleaseData,
+			&pg.Score, &pg.IndexerID, &pg.AvailableAt, &pg.CreatedAt); err != nil {
+			return nil, err
+		}
+		pending = append(pending, pg)
+	}
+	return pending, nil
+}
+
+func (d *Database) RemovePendingGrab(id int64) error {
+	_, err := d.db.Exec("DELETE FROM pending_grabs WHERE id = ?", id)
+	return err
+}
+
+func (d *Database) RemovePendingGrabsForMedia(mediaID int64, mediaType string) error {
+	_, err := d.db.Exec("DELETE FROM pending_grabs WHERE media_id = ? AND media_type = ?", mediaID, mediaType)
+	return err
+}
+
+// Exclusion CRUD methods
+
+func (d *Database) GetExclusions() ([]Exclusion, error) {
+	rows, err := d.db.Query(`
+		SELECT id, exclusion_type, media_id, media_type, indexer_id, library_id, reason, created_at
+		FROM exclusions ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var exclusions []Exclusion
+	for rows.Next() {
+		var e Exclusion
+		if err := rows.Scan(&e.ID, &e.ExclusionType, &e.MediaID, &e.MediaType,
+			&e.IndexerID, &e.LibraryID, &e.Reason, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		exclusions = append(exclusions, e)
+	}
+	return exclusions, nil
+}
+
+func (d *Database) GetExclusionsByType(exclusionType string) ([]Exclusion, error) {
+	rows, err := d.db.Query(`
+		SELECT id, exclusion_type, media_id, media_type, indexer_id, library_id, reason, created_at
+		FROM exclusions WHERE exclusion_type = ? ORDER BY created_at DESC`, exclusionType)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var exclusions []Exclusion
+	for rows.Next() {
+		var e Exclusion
+		if err := rows.Scan(&e.ID, &e.ExclusionType, &e.MediaID, &e.MediaType,
+			&e.IndexerID, &e.LibraryID, &e.Reason, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		exclusions = append(exclusions, e)
+	}
+	return exclusions, nil
+}
+
+func (d *Database) AddExclusion(e *Exclusion) error {
+	result, err := d.db.Exec(`
+		INSERT INTO exclusions (exclusion_type, media_id, media_type, indexer_id, library_id, reason)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		e.ExclusionType, e.MediaID, e.MediaType, e.IndexerID, e.LibraryID, e.Reason)
+	if err != nil {
+		return err
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return err
+	}
+	e.ID = id
+	return nil
+}
+
+func (d *Database) RemoveExclusion(id int64) error {
+	_, err := d.db.Exec("DELETE FROM exclusions WHERE id = ?", id)
+	return err
+}
+
+func (d *Database) IsMediaExcluded(mediaID int64, mediaType string) (bool, error) {
+	var count int
+	err := d.db.QueryRow(`
+		SELECT COUNT(*) FROM exclusions
+		WHERE media_id = ? AND media_type = ?`, mediaID, mediaType).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+func (d *Database) IsIndexerExcludedForLibrary(indexerID, libraryID int64) (bool, error) {
+	var count int
+	err := d.db.QueryRow(`
+		SELECT COUNT(*) FROM exclusions
+		WHERE exclusion_type = 'indexer' AND indexer_id = ? AND library_id = ?`,
+		indexerID, libraryID).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// Media quality override methods
+
+func (d *Database) GetMediaQualityOverride(mediaID int64, mediaType string) (*MediaQualityOverride, error) {
+	var override MediaQualityOverride
+	err := d.db.QueryRow(`
+		SELECT id, media_id, media_type, preset_id, monitored, created_at
+		FROM media_quality_override
+		WHERE media_id = ? AND media_type = ?`, mediaID, mediaType).Scan(
+		&override.ID, &override.MediaID, &override.MediaType,
+		&override.PresetID, &override.Monitored, &override.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &override, nil
+}
+
+func (d *Database) SetMediaQualityOverride(override *MediaQualityOverride) error {
+	result, err := d.db.Exec(`
+		INSERT OR REPLACE INTO media_quality_override (media_id, media_type, preset_id, monitored)
+		VALUES (?, ?, ?, ?)`,
+		override.MediaID, override.MediaType, override.PresetID, override.Monitored)
+	if err != nil {
+		return err
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return err
+	}
+	override.ID = id
+	return nil
+}
+
+func (d *Database) DeleteMediaQualityOverride(mediaID int64, mediaType string) error {
+	_, err := d.db.Exec("DELETE FROM media_quality_override WHERE media_id = ? AND media_type = ?",
+		mediaID, mediaType)
+	return err
 }

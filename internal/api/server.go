@@ -216,6 +216,35 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/watchlist", s.requireAuth(s.handleWatchlist))
 	s.mux.HandleFunc("/api/watchlist/", s.requireAuth(s.handleWatchlistItem))
 
+	// Blocklist routes (admin only)
+	s.mux.HandleFunc("/api/blocklist", s.requireAdmin(s.handleBlocklist))
+	s.mux.HandleFunc("/api/blocklist/", s.requireAdmin(s.handleBlocklistItem))
+
+	// Grab history routes (admin only)
+	s.mux.HandleFunc("/api/grab-history", s.requireAdmin(s.handleGrabHistory))
+
+	// Blocked groups routes (admin only)
+	s.mux.HandleFunc("/api/blocked-groups", s.requireAdmin(s.handleBlockedGroups))
+	s.mux.HandleFunc("/api/blocked-groups/", s.requireAdmin(s.handleBlockedGroup))
+
+	// Release filters routes (admin only)
+	s.mux.HandleFunc("/api/release-filters", s.requireAdmin(s.handleReleaseFilters))
+	s.mux.HandleFunc("/api/release-filters/", s.requireAdmin(s.handleReleaseFilter))
+
+	// Delay profiles routes (admin only)
+	s.mux.HandleFunc("/api/delay-profiles", s.requireAdmin(s.handleDelayProfiles))
+	s.mux.HandleFunc("/api/delay-profiles/", s.requireAdmin(s.handleDelayProfile))
+
+	// Exclusions routes (admin only)
+	s.mux.HandleFunc("/api/exclusions", s.requireAdmin(s.handleExclusions))
+	s.mux.HandleFunc("/api/exclusions/", s.requireAdmin(s.handleExclusion))
+
+	// Movie quality status routes (admin only)
+	s.mux.HandleFunc("/api/movies/quality/", s.requireAdmin(s.handleMovieQuality))
+
+	// Show quality status routes (admin only)
+	s.mux.HandleFunc("/api/shows/quality/", s.requireAdmin(s.handleShowQuality))
+
 	// Image cache (public for posters)
 	s.mux.HandleFunc("/images/", s.handleImages)
 
@@ -5784,4 +5813,471 @@ func (s *Server) handleStorageStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(response)
+}
+
+// Blocklist handlers
+
+func (s *Server) handleBlocklist(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	switch r.Method {
+	case http.MethodGet:
+		entries, err := s.db.GetBlocklist()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(entries)
+
+	case http.MethodPost:
+		var entry database.BlocklistEntry
+		if err := json.NewDecoder(r.Body).Decode(&entry); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		if err := s.db.AddToBlocklist(&entry); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(entry)
+
+	case http.MethodDelete:
+		// Clear all or expired
+		if r.URL.Query().Get("expired") == "true" {
+			if err := s.db.ClearExpiredBlocklist(); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleBlocklistItem(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	idStr := strings.TrimPrefix(r.URL.Path, "/api/blocklist/")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid ID", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodDelete:
+		if err := s.db.RemoveFromBlocklist(id); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// Grab history handler
+
+func (s *Server) handleGrabHistory(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	limit := 100
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+
+	history, err := s.db.GetGrabHistory(limit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(history)
+}
+
+// Blocked groups handlers
+
+func (s *Server) handleBlockedGroups(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	switch r.Method {
+	case http.MethodGet:
+		groups, err := s.db.GetBlockedGroups()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(groups)
+
+	case http.MethodPost:
+		var req struct {
+			Name   string `json:"name"`
+			Reason string `json:"reason"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		if err := s.db.AddBlockedGroup(req.Name, req.Reason, false); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleBlockedGroup(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	idStr := strings.TrimPrefix(r.URL.Path, "/api/blocked-groups/")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid ID", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodDelete:
+		if err := s.db.RemoveBlockedGroup(id); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// Release filters handlers
+
+func (s *Server) handleReleaseFilters(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	presetIDStr := r.URL.Query().Get("preset_id")
+	if presetIDStr == "" {
+		http.Error(w, "preset_id is required", http.StatusBadRequest)
+		return
+	}
+	presetID, err := strconv.ParseInt(presetIDStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid preset_id", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		filters, err := s.db.GetReleaseFilters(presetID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(filters)
+
+	case http.MethodPost:
+		var filter database.ReleaseFilter
+		if err := json.NewDecoder(r.Body).Decode(&filter); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		filter.PresetID = presetID
+		if err := s.db.AddReleaseFilter(&filter); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(filter)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleReleaseFilter(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	idStr := strings.TrimPrefix(r.URL.Path, "/api/release-filters/")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid ID", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodDelete:
+		if err := s.db.RemoveReleaseFilter(id); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// Delay profiles handlers
+
+func (s *Server) handleDelayProfiles(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	switch r.Method {
+	case http.MethodGet:
+		profiles, err := s.db.GetDelayProfiles()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(profiles)
+
+	case http.MethodPost:
+		var profile database.DelayProfile
+		if err := json.NewDecoder(r.Body).Decode(&profile); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		if err := s.db.CreateDelayProfile(&profile); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(profile)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleDelayProfile(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	idStr := strings.TrimPrefix(r.URL.Path, "/api/delay-profiles/")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid ID", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodPut:
+		var profile database.DelayProfile
+		if err := json.NewDecoder(r.Body).Decode(&profile); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		profile.ID = id
+		if err := s.db.UpdateDelayProfile(&profile); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(profile)
+
+	case http.MethodDelete:
+		if err := s.db.DeleteDelayProfile(id); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// Exclusions handlers
+
+func (s *Server) handleExclusions(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	switch r.Method {
+	case http.MethodGet:
+		exclusionType := r.URL.Query().Get("type")
+		var exclusions []database.Exclusion
+		var err error
+		if exclusionType != "" {
+			exclusions, err = s.db.GetExclusionsByType(exclusionType)
+		} else {
+			exclusions, err = s.db.GetExclusions()
+		}
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(exclusions)
+
+	case http.MethodPost:
+		var exclusion database.Exclusion
+		if err := json.NewDecoder(r.Body).Decode(&exclusion); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		if err := s.db.AddExclusion(&exclusion); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(exclusion)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleExclusion(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	idStr := strings.TrimPrefix(r.URL.Path, "/api/exclusions/")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid ID", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodDelete:
+		if err := s.db.RemoveExclusion(id); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// Movie quality status handlers
+
+func (s *Server) handleMovieQuality(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	idStr := strings.TrimPrefix(r.URL.Path, "/api/movies/quality/")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid movie ID", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		// Get quality status
+		status, err := s.db.GetMediaQualityStatus(id, "movie")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		// Get quality override
+		override, err := s.db.GetMediaQualityOverride(id, "movie")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		response := struct {
+			Status   *database.MediaQualityStatus   `json:"status"`
+			Override *database.MediaQualityOverride `json:"override"`
+		}{
+			Status:   status,
+			Override: override,
+		}
+		json.NewEncoder(w).Encode(response)
+
+	case http.MethodPut:
+		var override database.MediaQualityOverride
+		if err := json.NewDecoder(r.Body).Decode(&override); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		override.MediaID = id
+		override.MediaType = "movie"
+		if err := s.db.SetMediaQualityOverride(&override); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(override)
+
+	case http.MethodDelete:
+		if err := s.db.DeleteMediaQualityOverride(id, "movie"); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// Show quality status handlers
+
+func (s *Server) handleShowQuality(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	idStr := strings.TrimPrefix(r.URL.Path, "/api/shows/quality/")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid show ID", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		// Get quality status
+		status, err := s.db.GetMediaQualityStatus(id, "show")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		// Get quality override
+		override, err := s.db.GetMediaQualityOverride(id, "show")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		response := struct {
+			Status   *database.MediaQualityStatus   `json:"status"`
+			Override *database.MediaQualityOverride `json:"override"`
+		}{
+			Status:   status,
+			Override: override,
+		}
+		json.NewEncoder(w).Encode(response)
+
+	case http.MethodPut:
+		var override database.MediaQualityOverride
+		if err := json.NewDecoder(r.Body).Decode(&override); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		override.MediaID = id
+		override.MediaType = "show"
+		if err := s.db.SetMediaQualityOverride(&override); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(override)
+
+	case http.MethodDelete:
+		if err := s.db.DeleteMediaQualityOverride(id, "show"); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
 }
