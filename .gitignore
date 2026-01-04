@@ -36,5 +36,6 @@ frontend/build/
 # Docker volumes
 docker-data/
 
-# Downloaded logos
-logos/
+# Downloaded logos (except github banner)
+logos/*
+!logos/github-banner.png
