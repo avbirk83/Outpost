@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logos/github-banner.png" alt="Outpost" width="600">
+  <img src="logos/outpost-banner-transparent.png" alt="Outpost" width="500">
 </p>
 
 <p align="center">
