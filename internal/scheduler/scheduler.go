@@ -31,16 +31,72 @@ type Scheduler struct {
 	// Configurable intervals (in minutes)
 	searchInterval int
 	rssInterval    int
+
+	// Task tracking
+	taskRunning map[string]bool
+	taskMu      sync.RWMutex
 }
 
 func New(db *database.Database, indexers *indexer.Manager, downloads *downloadclient.Manager) *Scheduler {
-	return &Scheduler{
+	s := &Scheduler{
 		db:             db,
 		indexers:       indexers,
 		downloads:      downloads,
 		stopChan:       make(chan struct{}),
 		searchInterval: 60, // Default: search every 60 minutes
 		rssInterval:    15, // Default: check RSS every 15 minutes
+		taskRunning:    make(map[string]bool),
+	}
+	s.initDefaultTasks()
+	return s
+}
+
+// initDefaultTasks creates default task entries in the database
+func (s *Scheduler) initDefaultTasks() {
+	defaultTasks := []database.ScheduledTask{
+		{
+			Name:            "Search Monitored",
+			Description:     "Search indexers for monitored movies and shows",
+			TaskType:        "search",
+			Enabled:         true,
+			IntervalMinutes: 60,
+		},
+		{
+			Name:            "RSS Sync",
+			Description:     "Check RSS feeds for new releases",
+			TaskType:        "rss",
+			Enabled:         true,
+			IntervalMinutes: 15,
+		},
+		{
+			Name:            "Import Downloads",
+			Description:     "Check download clients and import completed items",
+			TaskType:        "import",
+			Enabled:         true,
+			IntervalMinutes: 1,
+		},
+		{
+			Name:            "Cleanup",
+			Description:     "Clean up old history, logs, and temporary files",
+			TaskType:        "cleanup",
+			Enabled:         true,
+			IntervalMinutes: 1440, // 24 hours
+		},
+		{
+			Name:            "Refresh Metadata",
+			Description:     "Refresh metadata for items missing info",
+			TaskType:        "metadata_refresh",
+			Enabled:         true,
+			IntervalMinutes: 360, // 6 hours
+		},
+	}
+
+	for _, task := range defaultTasks {
+		if err := s.db.UpsertTask(&task); err != nil {
+			log.Printf("Failed to create task %s: %v", task.Name, err)
+		} else {
+			log.Printf("Created task: %s (ID: %d)", task.Name, task.ID)
+		}
 	}
 }
 
@@ -111,6 +167,178 @@ func (s *Scheduler) loadIntervals() {
 	}
 }
 
+// GetStatus returns all tasks with their current running status
+func (s *Scheduler) GetStatus() []database.ScheduledTask {
+	tasks, _ := s.db.GetAllTasks()
+
+	s.taskMu.RLock()
+	defer s.taskMu.RUnlock()
+
+	for i := range tasks {
+		if running, ok := s.taskRunning[tasks[i].Name]; ok {
+			tasks[i].IsRunning = running
+		}
+	}
+
+	return tasks
+}
+
+// TriggerTask manually triggers a task by ID
+func (s *Scheduler) TriggerTask(taskID int64) error {
+	task, err := s.db.GetTask(taskID)
+	if err != nil {
+		return err
+	}
+
+	go s.executeTask(task)
+	return nil
+}
+
+// UpdateTask updates task settings and restarts if needed
+func (s *Scheduler) UpdateTask(taskID int64, enabled bool, intervalMinutes int) error {
+	task, err := s.db.GetTask(taskID)
+	if err != nil {
+		return err
+	}
+
+	task.Enabled = enabled
+	task.IntervalMinutes = intervalMinutes
+
+	return s.db.UpdateTask(task)
+}
+
+// executeTask runs a task and records the result
+func (s *Scheduler) executeTask(task *database.ScheduledTask) {
+	// Check if already running
+	s.taskMu.Lock()
+	if s.taskRunning[task.Name] {
+		s.taskMu.Unlock()
+		return
+	}
+	s.taskRunning[task.Name] = true
+	s.taskMu.Unlock()
+
+	defer func() {
+		s.taskMu.Lock()
+		s.taskRunning[task.Name] = false
+		s.taskMu.Unlock()
+	}()
+
+	startedAt := time.Now()
+	var itemsProcessed, itemsFound int
+	var taskError error
+
+	// Execute based on task type
+	switch task.TaskType {
+	case "search":
+		itemsProcessed, itemsFound = s.runSearchTask()
+	case "rss":
+		itemsProcessed, itemsFound = s.runRSSTask()
+	case "import":
+		itemsProcessed = s.runImportTask()
+	case "cleanup":
+		itemsProcessed = s.runCleanupTask()
+	case "metadata_refresh":
+		itemsProcessed = s.runMetadataRefreshTask()
+	}
+
+	finishedAt := time.Now()
+	durationMs := finishedAt.Sub(startedAt).Milliseconds()
+
+	status := "success"
+	var errorMsg *string
+	if taskError != nil {
+		status = "failed"
+		errStr := taskError.Error()
+		errorMsg = &errStr
+	}
+
+	// Record run in history
+	s.db.RecordTaskRun(task.ID, startedAt, finishedAt, status, itemsProcessed, itemsFound, errorMsg, nil)
+
+	// Update task stats
+	s.db.UpdateTaskStats(task.ID, status, durationMs, errorMsg)
+}
+
+// runSearchTask executes the search monitored items task
+func (s *Scheduler) runSearchTask() (processed, found int) {
+	// Check if auto-search is enabled
+	autoSearch, _ := s.db.GetSetting("scheduler_auto_search")
+	if autoSearch != "true" {
+		return 0, 0
+	}
+
+	items, err := s.db.GetMonitoredItems()
+	if err != nil {
+		return 0, 0
+	}
+
+	for _, item := range items {
+		if item.LastSearched != nil {
+			hoursSinceLast := time.Since(*item.LastSearched).Hours()
+			if hoursSinceLast < float64(s.searchInterval)/60.0 {
+				continue
+			}
+		}
+
+		s.searchAndGrab(&item)
+		processed++
+		time.Sleep(5 * time.Second)
+	}
+
+	return processed, found
+}
+
+// runRSSTask executes the RSS sync task
+func (s *Scheduler) runRSSTask() (processed, found int) {
+	rssEnabled, _ := s.db.GetSetting("scheduler_rss_enabled")
+	if rssEnabled != "true" {
+		return 0, 0
+	}
+
+	indexers, err := s.db.GetEnabledIndexers()
+	if err != nil {
+		return 0, 0
+	}
+
+	for _, idx := range indexers {
+		results, err := s.indexers.FetchRSS(idx.ID)
+		if err != nil {
+			continue
+		}
+		processed++
+		found += len(results)
+	}
+
+	return processed, found
+}
+
+// runImportTask checks for completed downloads
+func (s *Scheduler) runImportTask() int {
+	// This would check download clients for completed items
+	// For now, just return 0 as actual import is done elsewhere
+	return 0
+}
+
+// runCleanupTask cleans up old data
+func (s *Scheduler) runCleanupTask() int {
+	processed := 0
+
+	// Cleanup task history older than 30 days
+	if err := s.db.CleanupTaskHistory(30); err == nil {
+		processed++
+	}
+
+	return processed
+}
+
+// runMetadataRefreshTask refreshes missing metadata
+func (s *Scheduler) runMetadataRefreshTask() int {
+	// This would refresh metadata for items missing info
+	// Actual implementation depends on TMDB client availability
+	return 0
+}
+
 func (s *Scheduler) runSearchJob() {
 	defer s.wg.Done()
 
@@ -118,14 +346,14 @@ func (s *Scheduler) runSearchJob() {
 	defer ticker.Stop()
 
 	// Run immediately on start
-	s.searchMonitoredItems()
+	s.executeTaskByName("Search Monitored")
 
 	for {
 		select {
 		case <-s.stopChan:
 			return
 		case <-ticker.C:
-			s.searchMonitoredItems()
+			s.executeTaskByName("Search Monitored")
 		}
 	}
 }
@@ -137,16 +365,29 @@ func (s *Scheduler) runRSSJob() {
 	defer ticker.Stop()
 
 	// Run immediately on start
-	s.checkRSSFeeds()
+	s.executeTaskByName("RSS Sync")
 
 	for {
 		select {
 		case <-s.stopChan:
 			return
 		case <-ticker.C:
-			s.checkRSSFeeds()
+			s.executeTaskByName("RSS Sync")
 		}
 	}
+}
+
+// executeTaskByName runs a task by name
+func (s *Scheduler) executeTaskByName(name string) {
+	task, err := s.db.GetTaskByName(name)
+	if err != nil {
+		log.Printf("Scheduler: task not found: %s", name)
+		return
+	}
+	if !task.Enabled {
+		return
+	}
+	s.executeTask(task)
 }
 
 func (s *Scheduler) searchMonitoredItems() {

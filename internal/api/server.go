@@ -38,12 +38,20 @@ type Server struct {
 	auth          *auth.Service
 	downloads     *downloadclient.Manager
 	indexers      *indexer.Manager
+	scheduler     Scheduler
 	mux           *http.ServeMux
 	subtitleCache map[string][]byte
 	subtitleMu    sync.RWMutex
 }
 
-func NewServer(cfg *config.Config, db *database.Database, scan *scanner.Scanner, meta *metadata.Service, authSvc *auth.Service, downloads *downloadclient.Manager, indexers *indexer.Manager) *Server {
+// Scheduler interface for task management
+type Scheduler interface {
+	GetStatus() []database.ScheduledTask
+	TriggerTask(taskID int64) error
+	UpdateTask(taskID int64, enabled bool, intervalMinutes int) error
+}
+
+func NewServer(cfg *config.Config, db *database.Database, scan *scanner.Scanner, meta *metadata.Service, authSvc *auth.Service, downloads *downloadclient.Manager, indexers *indexer.Manager, sched Scheduler) *Server {
 	s := &Server{
 		config:        cfg,
 		db:            db,
@@ -52,6 +60,7 @@ func NewServer(cfg *config.Config, db *database.Database, scan *scanner.Scanner,
 		auth:          authSvc,
 		downloads:     downloads,
 		indexers:      indexers,
+		scheduler:     sched,
 		mux:           http.NewServeMux(),
 		subtitleCache: make(map[string][]byte),
 	}
@@ -245,6 +254,11 @@ func (s *Server) setupRoutes() {
 
 	// Show quality status routes (admin only)
 	s.mux.HandleFunc("/api/shows/quality/", s.requireAdmin(s.handleShowQuality))
+
+	// Task/Scheduler routes (admin only)
+	s.mux.HandleFunc("/api/tasks", s.requireAdmin(s.handleTasks))
+	s.mux.HandleFunc("/api/tasks/history", s.requireAdmin(s.handleTaskHistory))
+	s.mux.HandleFunc("/api/tasks/", s.requireAdmin(s.handleTask))
 
 	// Image cache (public for posters)
 	s.mux.HandleFunc("/images/", s.handleImages)
@@ -6299,6 +6313,111 @@ func (s *Server) handleShowQuality(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// ==================== Task/Scheduler Handlers ====================
+
+// handleTasks returns all scheduled tasks
+func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	tasks := s.scheduler.GetStatus()
+	json.NewEncoder(w).Encode(tasks)
+}
+
+// handleTaskHistory returns recent task execution history
+func (s *Server) handleTaskHistory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	limit := 50
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	history, err := s.db.GetAllTaskHistory(limit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(history)
+}
+
+// handleTask handles individual task operations
+func (s *Server) handleTask(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/tasks/")
+	w.Header().Set("Content-Type", "application/json")
+
+	// Check for /trigger suffix
+	if strings.HasSuffix(path, "/trigger") {
+		idStr := strings.TrimSuffix(path, "/trigger")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil {
+			http.Error(w, "Invalid task ID", http.StatusBadRequest)
+			return
+		}
+
+		if r.Method == http.MethodPost {
+			if err := s.scheduler.TriggerTask(id); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]string{"status": "triggered"})
+			return
+		}
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	id, err := strconv.ParseInt(path, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid task ID", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		task, err := s.db.GetTask(id)
+		if err != nil {
+			http.Error(w, "Task not found", http.StatusNotFound)
+			return
+		}
+		history, _ := s.db.GetTaskHistory(id, 10)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"task":    task,
+			"history": history,
+		})
+
+	case http.MethodPut:
+		var req struct {
+			Enabled         bool `json:"enabled"`
+			IntervalMinutes int  `json:"intervalMinutes"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		if err := s.scheduler.UpdateTask(id, req.Enabled, req.IntervalMinutes); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		task, _ := s.db.GetTask(id)
+		json.NewEncoder(w).Encode(task)
 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

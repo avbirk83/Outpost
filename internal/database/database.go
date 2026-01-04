@@ -459,6 +459,39 @@ type Exclusion struct {
 	CreatedAt     time.Time `json:"createdAt"`
 }
 
+// ScheduledTask represents a background task
+type ScheduledTask struct {
+	ID              int64      `json:"id"`
+	Name            string     `json:"name"`
+	Description     string     `json:"description"`
+	TaskType        string     `json:"taskType"`
+	Enabled         bool       `json:"enabled"`
+	IntervalMinutes int        `json:"intervalMinutes"`
+	LastRun         *time.Time `json:"lastRun"`
+	NextRun         *time.Time `json:"nextRun"`
+	LastDurationMs  *int64     `json:"lastDurationMs"`
+	LastStatus      string     `json:"lastStatus"`
+	LastError       *string    `json:"lastError"`
+	RunCount        int        `json:"runCount"`
+	FailCount       int        `json:"failCount"`
+	IsRunning       bool       `json:"isRunning"` // Computed at runtime
+}
+
+// TaskHistory represents a task execution record
+type TaskHistory struct {
+	ID             int64      `json:"id"`
+	TaskID         int64      `json:"taskId"`
+	TaskName       string     `json:"taskName,omitempty"` // Populated from join
+	StartedAt      time.Time  `json:"startedAt"`
+	FinishedAt     *time.Time `json:"finishedAt"`
+	DurationMs     *int64     `json:"durationMs"`
+	Status         string     `json:"status"`
+	ItemsProcessed int        `json:"itemsProcessed"`
+	ItemsFound     int        `json:"itemsFound"`
+	Error          *string    `json:"error"`
+	Details        *string    `json:"details"`
+}
+
 func New(dbPath string) (*Database, error) {
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -938,6 +971,41 @@ func (d *Database) migrate() error {
 		category TEXT DEFAULT 'movies',
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
+
+	-- Scheduled tasks definition
+	CREATE TABLE IF NOT EXISTS scheduled_tasks (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL UNIQUE,
+		description TEXT,
+		task_type TEXT NOT NULL,
+		enabled INTEGER DEFAULT 1,
+		interval_minutes INTEGER NOT NULL,
+		last_run DATETIME,
+		next_run DATETIME,
+		last_duration_ms INTEGER,
+		last_status TEXT,
+		last_error TEXT,
+		run_count INTEGER DEFAULT 0,
+		fail_count INTEGER DEFAULT 0,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	-- Task execution history
+	CREATE TABLE IF NOT EXISTS task_history (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		task_id INTEGER NOT NULL,
+		started_at DATETIME NOT NULL,
+		finished_at DATETIME,
+		duration_ms INTEGER,
+		status TEXT NOT NULL,
+		items_processed INTEGER DEFAULT 0,
+		items_found INTEGER DEFAULT 0,
+		error TEXT,
+		details TEXT,
+		FOREIGN KEY (task_id) REFERENCES scheduled_tasks(id) ON DELETE CASCADE
+	);
+	CREATE INDEX IF NOT EXISTS idx_task_history_task_id ON task_history(task_id);
+	CREATE INDEX IF NOT EXISTS idx_task_history_started_at ON task_history(started_at);
 	`
 	_, err := d.db.Exec(schema)
 	if err != nil {
@@ -3961,5 +4029,190 @@ func (d *Database) SetMediaQualityOverride(override *MediaQualityOverride) error
 func (d *Database) DeleteMediaQualityOverride(mediaID int64, mediaType string) error {
 	_, err := d.db.Exec("DELETE FROM media_quality_override WHERE media_id = ? AND media_type = ?",
 		mediaID, mediaType)
+	return err
+}
+
+// ==================== Scheduled Tasks ====================
+
+// GetAllTasks returns all scheduled tasks
+func (d *Database) GetAllTasks() ([]ScheduledTask, error) {
+	rows, err := d.db.Query(`
+		SELECT id, name, COALESCE(description, ''), task_type, enabled, interval_minutes,
+		       last_run, next_run, last_duration_ms, COALESCE(last_status, ''), last_error,
+		       run_count, fail_count
+		FROM scheduled_tasks ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tasks []ScheduledTask
+	for rows.Next() {
+		var t ScheduledTask
+		err := rows.Scan(&t.ID, &t.Name, &t.Description, &t.TaskType, &t.Enabled,
+			&t.IntervalMinutes, &t.LastRun, &t.NextRun, &t.LastDurationMs,
+			&t.LastStatus, &t.LastError, &t.RunCount, &t.FailCount)
+		if err != nil {
+			return nil, err
+		}
+		tasks = append(tasks, t)
+	}
+	return tasks, nil
+}
+
+// GetTask returns a single task by ID
+func (d *Database) GetTask(id int64) (*ScheduledTask, error) {
+	var t ScheduledTask
+	err := d.db.QueryRow(`
+		SELECT id, name, COALESCE(description, ''), task_type, enabled, interval_minutes,
+		       last_run, next_run, last_duration_ms, COALESCE(last_status, ''), last_error,
+		       run_count, fail_count
+		FROM scheduled_tasks WHERE id = ?`, id).Scan(
+		&t.ID, &t.Name, &t.Description, &t.TaskType, &t.Enabled,
+		&t.IntervalMinutes, &t.LastRun, &t.NextRun, &t.LastDurationMs,
+		&t.LastStatus, &t.LastError, &t.RunCount, &t.FailCount)
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+// GetTaskByName returns a task by name
+func (d *Database) GetTaskByName(name string) (*ScheduledTask, error) {
+	var t ScheduledTask
+	err := d.db.QueryRow(`
+		SELECT id, name, COALESCE(description, ''), task_type, enabled, interval_minutes,
+		       last_run, next_run, last_duration_ms, COALESCE(last_status, ''), last_error,
+		       run_count, fail_count
+		FROM scheduled_tasks WHERE name = ?`, name).Scan(
+		&t.ID, &t.Name, &t.Description, &t.TaskType, &t.Enabled,
+		&t.IntervalMinutes, &t.LastRun, &t.NextRun, &t.LastDurationMs,
+		&t.LastStatus, &t.LastError, &t.RunCount, &t.FailCount)
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+// UpsertTask creates or updates a task
+func (d *Database) UpsertTask(task *ScheduledTask) error {
+	result, err := d.db.Exec(`
+		INSERT INTO scheduled_tasks (name, description, task_type, enabled, interval_minutes, next_run)
+		VALUES (?, ?, ?, ?, ?, datetime('now', '+' || ? || ' minutes'))
+		ON CONFLICT(name) DO UPDATE SET
+			description = excluded.description,
+			task_type = excluded.task_type
+		WHERE scheduled_tasks.name = excluded.name`,
+		task.Name, task.Description, task.TaskType, task.Enabled, task.IntervalMinutes, task.IntervalMinutes)
+	if err != nil {
+		return err
+	}
+	id, _ := result.LastInsertId()
+	if id > 0 {
+		task.ID = id
+	}
+	return nil
+}
+
+// UpdateTask updates task settings
+func (d *Database) UpdateTask(task *ScheduledTask) error {
+	_, err := d.db.Exec(`
+		UPDATE scheduled_tasks SET
+			enabled = ?,
+			interval_minutes = ?,
+			next_run = CASE WHEN enabled = 1 THEN datetime('now', '+' || ? || ' minutes') ELSE next_run END
+		WHERE id = ?`,
+		task.Enabled, task.IntervalMinutes, task.IntervalMinutes, task.ID)
+	return err
+}
+
+// UpdateTaskStats updates task run statistics
+func (d *Database) UpdateTaskStats(taskID int64, status string, durationMs int64, errorMsg *string) error {
+	failIncrement := 0
+	if status == "failed" {
+		failIncrement = 1
+	}
+	_, err := d.db.Exec(`
+		UPDATE scheduled_tasks SET
+			last_run = datetime('now'),
+			next_run = datetime('now', '+' || interval_minutes || ' minutes'),
+			last_duration_ms = ?,
+			last_status = ?,
+			last_error = ?,
+			run_count = run_count + 1,
+			fail_count = fail_count + ?
+		WHERE id = ?`,
+		durationMs, status, errorMsg, failIncrement, taskID)
+	return err
+}
+
+// RecordTaskRun records a task execution in history
+func (d *Database) RecordTaskRun(taskID int64, startedAt, finishedAt time.Time, status string, itemsProcessed, itemsFound int, errorMsg *string, details *string) error {
+	durationMs := finishedAt.Sub(startedAt).Milliseconds()
+	_, err := d.db.Exec(`
+		INSERT INTO task_history (task_id, started_at, finished_at, duration_ms, status, items_processed, items_found, error, details)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		taskID, startedAt, finishedAt, durationMs, status, itemsProcessed, itemsFound, errorMsg, details)
+	return err
+}
+
+// GetTaskHistory returns recent history for a specific task
+func (d *Database) GetTaskHistory(taskID int64, limit int) ([]TaskHistory, error) {
+	rows, err := d.db.Query(`
+		SELECT h.id, h.task_id, t.name, h.started_at, h.finished_at, h.duration_ms,
+		       h.status, h.items_processed, h.items_found, h.error, h.details
+		FROM task_history h
+		JOIN scheduled_tasks t ON h.task_id = t.id
+		WHERE h.task_id = ?
+		ORDER BY h.started_at DESC LIMIT ?`, taskID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var history []TaskHistory
+	for rows.Next() {
+		var h TaskHistory
+		err := rows.Scan(&h.ID, &h.TaskID, &h.TaskName, &h.StartedAt, &h.FinishedAt,
+			&h.DurationMs, &h.Status, &h.ItemsProcessed, &h.ItemsFound, &h.Error, &h.Details)
+		if err != nil {
+			return nil, err
+		}
+		history = append(history, h)
+	}
+	return history, nil
+}
+
+// GetAllTaskHistory returns recent history across all tasks
+func (d *Database) GetAllTaskHistory(limit int) ([]TaskHistory, error) {
+	rows, err := d.db.Query(`
+		SELECT h.id, h.task_id, t.name, h.started_at, h.finished_at, h.duration_ms,
+		       h.status, h.items_processed, h.items_found, h.error, h.details
+		FROM task_history h
+		JOIN scheduled_tasks t ON h.task_id = t.id
+		ORDER BY h.started_at DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var history []TaskHistory
+	for rows.Next() {
+		var h TaskHistory
+		err := rows.Scan(&h.ID, &h.TaskID, &h.TaskName, &h.StartedAt, &h.FinishedAt,
+			&h.DurationMs, &h.Status, &h.ItemsProcessed, &h.ItemsFound, &h.Error, &h.Details)
+		if err != nil {
+			return nil, err
+		}
+		history = append(history, h)
+	}
+	return history, nil
+}
+
+// CleanupTaskHistory removes old task history entries
+func (d *Database) CleanupTaskHistory(daysToKeep int) error {
+	_, err := d.db.Exec(`
+		DELETE FROM task_history
+		WHERE started_at < datetime('now', '-' || ? || ' days')`, daysToKeep)
 	return err
 }

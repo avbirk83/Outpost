@@ -27,12 +27,16 @@
 		deleteQualityPreset,
 		setDefaultQualityPreset,
 		getStorageStatus,
+		getTasks,
+		updateTask,
+		triggerTask,
 		type Library,
 		type DownloadClient,
 		type Indexer,
 		type QualityPreset,
 		type ScanProgress,
-		type StorageStatus
+		type StorageStatus,
+		type ScheduledTask
 	} from '$lib/api';
 
 	let libraries: Library[] = $state([]);
@@ -40,6 +44,9 @@
 	let indexers: Indexer[] = $state([]);
 	let qualityPresets: QualityPreset[] = $state([]);
 	let storageStatus: StorageStatus | null = $state(null);
+	let tasks: ScheduledTask[] = $state([]);
+	let taskRefreshInterval: ReturnType<typeof setInterval> | null = null;
+	let triggeringTask: Record<number, boolean> = $state({});
 	let loading = $state(true);
 	let error: string | null = $state(null);
 	let showAddForm = $state(false);
@@ -119,15 +126,21 @@
 	];
 
 	onMount(async () => {
-		await Promise.all([loadLibraries(), loadSettings(), loadDownloadClients(), loadIndexers(), loadQualityPresets(), loadStorageStatus()]);
+		await Promise.all([loadLibraries(), loadSettings(), loadDownloadClients(), loadIndexers(), loadQualityPresets(), loadStorageStatus(), loadTasks()]);
 		// Check if a scan is already running
 		checkScanProgress();
+		// Start task refresh interval
+		taskRefreshInterval = setInterval(loadTasks, 5000);
 	});
 
 	onDestroy(() => {
 		if (progressInterval) {
 			clearInterval(progressInterval);
 			progressInterval = null;
+		}
+		if (taskRefreshInterval) {
+			clearInterval(taskRefreshInterval);
+			taskRefreshInterval = null;
 		}
 	});
 
@@ -608,6 +621,71 @@
 		if (freeGb < thresholdGb) return 'bg-red-500';
 		if (usedPercent > 80) return 'bg-yellow-500';
 		return 'bg-green-500';
+	}
+
+	// Task management functions
+	async function loadTasks() {
+		try {
+			tasks = await getTasks();
+		} catch (e) {
+			console.error('Failed to load tasks:', e);
+		}
+	}
+
+	async function handleTriggerTask(taskId: number) {
+		triggeringTask[taskId] = true;
+		try {
+			await triggerTask(taskId);
+			await loadTasks();
+		} catch (e) {
+			console.error('Failed to trigger task:', e);
+		} finally {
+			triggeringTask[taskId] = false;
+		}
+	}
+
+	async function handleUpdateTask(task: ScheduledTask, enabled: boolean, intervalMinutes: number) {
+		try {
+			await updateTask(task.id, enabled, intervalMinutes);
+			await loadTasks();
+		} catch (e) {
+			console.error('Failed to update task:', e);
+		}
+	}
+
+	function formatDuration(ms: number | null): string {
+		if (ms === null) return '-';
+		if (ms < 1000) return `${ms}ms`;
+		if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+		return `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`;
+	}
+
+	function formatTimeAgo(dateStr: string | null): string {
+		if (!dateStr) return 'Never';
+		const date = new Date(dateStr);
+		const now = new Date();
+		const diff = now.getTime() - date.getTime();
+		const mins = Math.floor(diff / 60000);
+		if (mins < 1) return 'Just now';
+		if (mins < 60) return `${mins}m ago`;
+		const hours = Math.floor(mins / 60);
+		if (hours < 24) return `${hours}h ago`;
+		const days = Math.floor(hours / 24);
+		return `${days}d ago`;
+	}
+
+	function formatNextRun(dateStr: string | null): string {
+		if (!dateStr) return '-';
+		const date = new Date(dateStr);
+		const now = new Date();
+		const diff = date.getTime() - now.getTime();
+		if (diff < 0) return 'Overdue';
+		const mins = Math.floor(diff / 60000);
+		if (mins < 1) return 'Soon';
+		if (mins < 60) return `in ${mins}m`;
+		const hours = Math.floor(mins / 60);
+		if (hours < 24) return `in ${hours}h`;
+		return `in ${Math.floor(hours / 24)}d`;
 	}
 
 	// Input class for consistency
@@ -1447,6 +1525,126 @@
 	<!-- AUTOMATION TAB -->
 	<!-- ============================================ -->
 	{#if currentTab === 'automation'}
+
+	<!-- Scheduled Tasks -->
+	<section class="glass-card p-6 space-y-4">
+		<div class="flex items-center gap-3">
+			<div class="w-10 h-10 rounded-xl bg-blue-600/20 flex items-center justify-center">
+				<svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+				</svg>
+			</div>
+			<div>
+				<h2 class="text-lg font-semibold text-text-primary">Scheduled Tasks</h2>
+				<p class="text-sm text-text-secondary">Background jobs and automation</p>
+			</div>
+		</div>
+
+		{#if tasks && tasks.length > 0}
+			<div class="space-y-3">
+				{#each tasks as task (task.id)}
+					<div class="p-4 bg-bg-elevated/50 rounded-xl border border-white/5 hover:border-white/10 transition-colors">
+						<div class="flex items-center justify-between">
+							<div class="flex items-center gap-4">
+								<!-- Status indicator -->
+								<div class="w-10 h-10 rounded-lg {task.isRunning ? 'bg-blue-500/20' : task.enabled ? 'bg-green-500/20' : 'bg-gray-500/20'} flex items-center justify-center">
+									{#if task.isRunning}
+										<div class="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
+									{:else if task.enabled}
+										<svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+										</svg>
+									{:else}
+										<svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+										</svg>
+									{/if}
+								</div>
+
+								<!-- Task info -->
+								<div>
+									<div class="flex items-center gap-2">
+										<h3 class="font-medium text-text-primary">{task.name}</h3>
+										{#if task.lastStatus === 'failed'}
+											<span class="px-2 py-0.5 text-xs rounded-full bg-red-500/20 text-red-400">Failed</span>
+										{:else if task.lastStatus === 'success'}
+											<span class="px-2 py-0.5 text-xs rounded-full bg-green-500/20 text-green-400">Success</span>
+										{/if}
+									</div>
+									<p class="text-sm text-text-muted">{task.description}</p>
+								</div>
+							</div>
+
+							<!-- Task actions -->
+							<div class="flex items-center gap-4">
+								<!-- Stats -->
+								<div class="hidden sm:flex items-center gap-6 text-sm text-text-secondary">
+									<div>
+										<span class="text-text-muted">Last run:</span> {formatTimeAgo(task.lastRun)}
+									</div>
+									<div>
+										<span class="text-text-muted">Duration:</span> {formatDuration(task.lastDurationMs)}
+									</div>
+									<div>
+										<span class="text-text-muted">Next:</span> {formatNextRun(task.nextRun)}
+									</div>
+								</div>
+
+								<!-- Interval select -->
+								<select
+									class="liquid-select px-3 py-1.5 text-sm w-24"
+									value={task.intervalMinutes}
+									onchange={(e) => handleUpdateTask(task, task.enabled, parseInt((e.target as HTMLSelectElement).value))}
+								>
+									<option value="1">1 min</option>
+									<option value="5">5 min</option>
+									<option value="15">15 min</option>
+									<option value="30">30 min</option>
+									<option value="60">1 hour</option>
+									<option value="120">2 hours</option>
+									<option value="360">6 hours</option>
+									<option value="720">12 hours</option>
+									<option value="1440">24 hours</option>
+								</select>
+
+								<!-- Toggle enabled -->
+								<button
+									class="relative w-12 h-6 rounded-full transition-colors {task.enabled ? 'bg-green-600' : 'bg-gray-600'}"
+									onclick={() => handleUpdateTask(task, !task.enabled, task.intervalMinutes)}
+								>
+									<span class="absolute left-1 top-1 w-4 h-4 bg-white rounded-full transition-transform {task.enabled ? 'translate-x-6' : ''}"></span>
+								</button>
+
+								<!-- Run now button -->
+								<button
+									class="liquid-btn-sm !px-4"
+									disabled={task.isRunning || triggeringTask[task.id]}
+									onclick={() => handleTriggerTask(task.id)}
+								>
+									{#if triggeringTask[task.id]}
+										<span class="inline-block w-3 h-3 border border-white border-t-transparent rounded-full animate-spin mr-1"></span>
+									{/if}
+									Run Now
+								</button>
+							</div>
+						</div>
+
+						<!-- Last error if failed -->
+						{#if task.lastStatus === 'failed' && task.lastError}
+							<div class="mt-3 p-3 bg-red-500/10 rounded-lg border border-red-500/20">
+								<p class="text-sm text-red-400">{task.lastError}</p>
+							</div>
+						{/if}
+					</div>
+				{/each}
+			</div>
+		{:else}
+			<div class="flex items-center gap-3 py-4">
+				<div class="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
+				<span class="text-text-secondary">Loading tasks...</span>
+			</div>
+		{/if}
+	</section>
 
 	<!-- Storage Management -->
 	<section class="glass-card p-6 space-y-4">

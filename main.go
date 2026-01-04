@@ -59,8 +59,8 @@ func main() {
 	// Initialize scheduler
 	sched := scheduler.New(db, indexers, downloads)
 
-	// Initialize server
-	server := api.NewServer(cfg, db, scan, meta, authSvc, downloads, indexers)
+	// Initialize server with scheduler
+	server := api.NewServer(cfg, db, scan, meta, authSvc, downloads, indexers, sched)
 
 	// Start scheduler
 	sched.Start()
