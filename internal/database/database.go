@@ -498,6 +498,17 @@ func New(dbPath string) (*Database, error) {
 		return nil, err
 	}
 
+	// Enable WAL mode for better concurrency
+	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		db.Close()
+		return nil, err
+	}
+	// Set busy timeout to 5 seconds
+	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
+		db.Close()
+		return nil, err
+	}
+
 	d := &Database{db: db}
 	if err := d.migrate(); err != nil {
 		return nil, err
@@ -4049,11 +4060,26 @@ func (d *Database) GetAllTasks() ([]ScheduledTask, error) {
 	var tasks []ScheduledTask
 	for rows.Next() {
 		var t ScheduledTask
+		var lastRun, nextRun sql.NullString
+		var lastDurationMs sql.NullInt64
 		err := rows.Scan(&t.ID, &t.Name, &t.Description, &t.TaskType, &t.Enabled,
-			&t.IntervalMinutes, &t.LastRun, &t.NextRun, &t.LastDurationMs,
+			&t.IntervalMinutes, &lastRun, &nextRun, &lastDurationMs,
 			&t.LastStatus, &t.LastError, &t.RunCount, &t.FailCount)
 		if err != nil {
 			return nil, err
+		}
+		if lastRun.Valid {
+			if parsed, err := time.Parse("2006-01-02 15:04:05", lastRun.String); err == nil {
+				t.LastRun = &parsed
+			}
+		}
+		if nextRun.Valid {
+			if parsed, err := time.Parse("2006-01-02 15:04:05", nextRun.String); err == nil {
+				t.NextRun = &parsed
+			}
+		}
+		if lastDurationMs.Valid {
+			t.LastDurationMs = &lastDurationMs.Int64
 		}
 		tasks = append(tasks, t)
 	}
@@ -4063,16 +4089,31 @@ func (d *Database) GetAllTasks() ([]ScheduledTask, error) {
 // GetTask returns a single task by ID
 func (d *Database) GetTask(id int64) (*ScheduledTask, error) {
 	var t ScheduledTask
+	var lastRun, nextRun sql.NullString
+	var lastDurationMs sql.NullInt64
 	err := d.db.QueryRow(`
 		SELECT id, name, COALESCE(description, ''), task_type, enabled, interval_minutes,
 		       last_run, next_run, last_duration_ms, COALESCE(last_status, ''), last_error,
 		       run_count, fail_count
 		FROM scheduled_tasks WHERE id = ?`, id).Scan(
 		&t.ID, &t.Name, &t.Description, &t.TaskType, &t.Enabled,
-		&t.IntervalMinutes, &t.LastRun, &t.NextRun, &t.LastDurationMs,
+		&t.IntervalMinutes, &lastRun, &nextRun, &lastDurationMs,
 		&t.LastStatus, &t.LastError, &t.RunCount, &t.FailCount)
 	if err != nil {
 		return nil, err
+	}
+	if lastRun.Valid {
+		if parsed, err := time.Parse("2006-01-02 15:04:05", lastRun.String); err == nil {
+			t.LastRun = &parsed
+		}
+	}
+	if nextRun.Valid {
+		if parsed, err := time.Parse("2006-01-02 15:04:05", nextRun.String); err == nil {
+			t.NextRun = &parsed
+		}
+	}
+	if lastDurationMs.Valid {
+		t.LastDurationMs = &lastDurationMs.Int64
 	}
 	return &t, nil
 }
@@ -4080,16 +4121,31 @@ func (d *Database) GetTask(id int64) (*ScheduledTask, error) {
 // GetTaskByName returns a task by name
 func (d *Database) GetTaskByName(name string) (*ScheduledTask, error) {
 	var t ScheduledTask
+	var lastRun, nextRun sql.NullString
+	var lastDurationMs sql.NullInt64
 	err := d.db.QueryRow(`
 		SELECT id, name, COALESCE(description, ''), task_type, enabled, interval_minutes,
 		       last_run, next_run, last_duration_ms, COALESCE(last_status, ''), last_error,
 		       run_count, fail_count
 		FROM scheduled_tasks WHERE name = ?`, name).Scan(
 		&t.ID, &t.Name, &t.Description, &t.TaskType, &t.Enabled,
-		&t.IntervalMinutes, &t.LastRun, &t.NextRun, &t.LastDurationMs,
+		&t.IntervalMinutes, &lastRun, &nextRun, &lastDurationMs,
 		&t.LastStatus, &t.LastError, &t.RunCount, &t.FailCount)
 	if err != nil {
 		return nil, err
+	}
+	if lastRun.Valid {
+		if parsed, err := time.Parse("2006-01-02 15:04:05", lastRun.String); err == nil {
+			t.LastRun = &parsed
+		}
+	}
+	if nextRun.Valid {
+		if parsed, err := time.Parse("2006-01-02 15:04:05", nextRun.String); err == nil {
+			t.NextRun = &parsed
+		}
+	}
+	if lastDurationMs.Valid {
+		t.LastDurationMs = &lastDurationMs.Int64
 	}
 	return &t, nil
 }

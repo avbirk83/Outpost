@@ -307,17 +307,20 @@ func (s *Server) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := s.getSessionToken(r)
 		if token == "" {
+			log.Printf("Auth failed: no token for %s %s", r.Method, r.URL.Path)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
 
 		user, err := s.auth.ValidateSession(token)
 		if err != nil {
+			log.Printf("Auth failed: invalid token for %s %s: %v", r.Method, r.URL.Path, err)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
 
 		if user.Role != "admin" {
+			log.Printf("Auth failed: not admin for %s %s (user: %s)", r.Method, r.URL.Path, user.Username)
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}

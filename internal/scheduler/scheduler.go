@@ -228,6 +228,8 @@ func (s *Scheduler) executeTask(task *database.ScheduledTask) {
 	var itemsProcessed, itemsFound int
 	var taskError error
 
+	log.Printf("Task started: %s (ID: %d, Type: %s)", task.Name, task.ID, task.TaskType)
+
 	// Execute based on task type
 	switch task.TaskType {
 	case "search":
@@ -244,6 +246,8 @@ func (s *Scheduler) executeTask(task *database.ScheduledTask) {
 
 	finishedAt := time.Now()
 	durationMs := finishedAt.Sub(startedAt).Milliseconds()
+
+	log.Printf("Task completed: %s - processed: %d, found: %d, duration: %dms", task.Name, itemsProcessed, itemsFound, durationMs)
 
 	status := "success"
 	var errorMsg *string
