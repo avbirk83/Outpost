@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>A unified self-hosted media server for movies, TV shows, music, and books.</strong>
+  <strong>A unified self-hosted media server for movies and TV shows.</strong>
 </p>
 
 <p align="center">
@@ -90,7 +90,7 @@ After starting Outpost, add your media libraries through Settings:
 
 1. Go to **Settings** → **Libraries**
 2. Click **Add Library**
-3. Select type (Movies, TV, Music, Books)
+3. Select type (Movies or TV)
 4. Enter the path to your media folder
 5. Save and scan
 
