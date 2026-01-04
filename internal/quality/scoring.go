@@ -3,6 +3,8 @@ package quality
 import (
 	"encoding/json"
 	"strings"
+
+	"github.com/outpost/outpost/internal/parser"
 )
 
 // BaseQualityScores maps quality tiers to their base scores
@@ -42,12 +44,13 @@ type FormatScore struct {
 
 // ScoredRelease contains a parsed release with its scores
 type ScoredRelease struct {
-	*ParsedRelease
-	BaseScore        int                    `json:"baseScore"`
-	CustomFormatHits []CustomFormatHit      `json:"customFormatHits"`
-	TotalScore       int                    `json:"totalScore"`
-	Rejected         bool                   `json:"rejected"`
-	RejectionReason  string                 `json:"rejectionReason,omitempty"`
+	*parser.ParsedRelease
+	Quality          string            `json:"quality"`
+	BaseScore        int               `json:"baseScore"`
+	CustomFormatHits []CustomFormatHit `json:"customFormatHits"`
+	TotalScore       int               `json:"totalScore"`
+	Rejected         bool              `json:"rejected"`
+	RejectionReason  string            `json:"rejectionReason,omitempty"`
 }
 
 // CustomFormatHit represents a matched custom format
@@ -76,16 +79,18 @@ type CustomFormatDef struct {
 }
 
 // ScoreRelease scores a release against a profile
-func ScoreRelease(release *ParsedRelease, profile *Profile, customFormats []CustomFormatDef) *ScoredRelease {
+func ScoreRelease(release *parser.ParsedRelease, profile *Profile, customFormats []CustomFormatDef) *ScoredRelease {
+	quality := ComputeQualityTier(release)
 	scored := &ScoredRelease{
 		ParsedRelease:    release,
+		Quality:          quality,
 		CustomFormatHits: []CustomFormatHit{},
 	}
 
 	// Check if quality is enabled
 	qualityEnabled := false
 	for _, q := range profile.Qualities {
-		if q == release.Quality {
+		if q == quality {
 			qualityEnabled = true
 			break
 		}
@@ -98,7 +103,7 @@ func ScoreRelease(release *ParsedRelease, profile *Profile, customFormats []Cust
 	}
 
 	// Get base score for quality
-	scored.BaseScore = BaseQualityScores[release.Quality]
+	scored.BaseScore = BaseQualityScores[quality]
 
 	// Apply custom format scores
 	for _, format := range customFormats {
@@ -125,7 +130,7 @@ func ScoreRelease(release *ParsedRelease, profile *Profile, customFormats []Cust
 }
 
 // matchesCustomFormat checks if a release matches all conditions of a custom format
-func matchesCustomFormat(release *ParsedRelease, conditions []Condition) bool {
+func matchesCustomFormat(release *parser.ParsedRelease, conditions []Condition) bool {
 	if len(conditions) == 0 {
 		return false
 	}
@@ -144,7 +149,7 @@ func matchesCustomFormat(release *ParsedRelease, conditions []Condition) bool {
 	return true
 }
 
-func conditionMatches(release *ParsedRelease, cond Condition) bool {
+func conditionMatches(release *parser.ParsedRelease, cond Condition) bool {
 	value := strings.ToLower(cond.Value)
 
 	switch cond.Type {
@@ -158,18 +163,13 @@ func conditionMatches(release *ParsedRelease, cond Condition) bool {
 		return strings.ToLower(release.Codec) == value
 
 	case "audioCodec":
-		return strings.ToLower(release.AudioCodec) == value
+		return strings.ToLower(release.AudioFormat) == value
 
 	case "audioFeature":
-		return strings.ToLower(release.AudioFeature) == value
+		return strings.ToLower(release.AudioChannels) == value
 
 	case "hdr":
-		for _, h := range release.HDR {
-			if strings.ToLower(h) == value {
-				return true
-			}
-		}
-		return false
+		return strings.ToLower(release.HDR) == value
 
 	case "releaseGroup":
 		return strings.EqualFold(release.ReleaseGroup, cond.Value)
@@ -182,13 +182,13 @@ func conditionMatches(release *ParsedRelease, cond Condition) bool {
 		return strings.ToLower(release.Edition) == value
 
 	case "proper":
-		return release.Proper
+		return release.IsProper
 
 	case "repack":
-		return release.Repack
+		return release.IsRepack
 
 	case "quality":
-		return strings.EqualFold(release.Quality, cond.Value)
+		return strings.EqualFold(ComputeQualityTier(release), cond.Value)
 	}
 
 	return false
@@ -355,5 +355,68 @@ func AllQualities() []string {
 		"HDTV-720p",
 		"DVD",
 		"SDTV",
+	}
+}
+
+// ComputeQualityTier computes the quality tier string from a parsed release
+func ComputeQualityTier(release *parser.ParsedRelease) string {
+	res := release.Resolution
+	source := release.Source
+
+	if res == "" {
+		res = "unknown"
+	}
+	if source == "" {
+		source = "unknown"
+	}
+
+	// Map to quality tiers based on resolution and source
+	switch {
+	case res == "2160p" && source == "remux":
+		return "Remux-2160p"
+	case res == "2160p" && source == "bluray":
+		return "Bluray-2160p"
+	case res == "2160p" && source == "webdl":
+		return "WEBDL-2160p"
+	case res == "2160p" && source == "webrip":
+		return "WEBRip-2160p"
+	case res == "2160p" && source == "hdtv":
+		return "HDTV-2160p"
+	case res == "2160p":
+		return "WEBDL-2160p" // Default 4K
+
+	case res == "1080p" && source == "remux":
+		return "Remux-1080p"
+	case res == "1080p" && source == "bluray":
+		return "Bluray-1080p"
+	case res == "1080p" && source == "webdl":
+		return "WEBDL-1080p"
+	case res == "1080p" && source == "webrip":
+		return "WEBRip-1080p"
+	case res == "1080p" && source == "hdtv":
+		return "HDTV-1080p"
+	case res == "1080p":
+		return "WEBDL-1080p" // Default 1080p
+
+	case res == "720p" && source == "bluray":
+		return "Bluray-720p"
+	case res == "720p" && source == "webdl":
+		return "WEBDL-720p"
+	case res == "720p" && source == "webrip":
+		return "WEBRip-720p"
+	case res == "720p" && source == "hdtv":
+		return "HDTV-720p"
+	case res == "720p":
+		return "WEBDL-720p" // Default 720p
+
+	case source == "dvd":
+		return "DVD"
+	case source == "sdtv":
+		return "SDTV"
+	case res == "480p":
+		return "SDTV"
+
+	default:
+		return "Unknown"
 	}
 }

@@ -20,6 +20,7 @@ import (
 	"github.com/outpost/outpost/internal/downloadclient"
 	"github.com/outpost/outpost/internal/indexer"
 	"github.com/outpost/outpost/internal/metadata"
+	"github.com/outpost/outpost/internal/parser"
 	"github.com/outpost/outpost/internal/quality"
 	"github.com/outpost/outpost/internal/scanner"
 	"github.com/outpost/outpost/internal/storage"
@@ -2490,20 +2491,27 @@ func (s *Server) handleSearchScored(w http.ResponseWriter, r *http.Request) {
 	// Score each result
 	scoredResults := make([]indexer.ScoredSearchResult, 0, len(results))
 	for _, result := range results {
-		parsed := quality.ParseReleaseName(result.Title)
+		parsed := parser.Parse(result.Title)
+		qualityTier := quality.ComputeQualityTier(parsed)
+
+		// Convert HDR string to slice (indexer uses []string)
+		var hdrSlice []string
+		if parsed.HDR != "" {
+			hdrSlice = []string{parsed.HDR}
+		}
 
 		scored := indexer.ScoredSearchResult{
 			SearchResult: result,
-			Quality:      parsed.Quality,
+			Quality:      qualityTier,
 			Resolution:   parsed.Resolution,
 			Source:       parsed.Source,
 			Codec:        parsed.Codec,
-			AudioCodec:   parsed.AudioCodec,
-			AudioFeature: parsed.AudioFeature,
-			HDR:          parsed.HDR,
+			AudioCodec:   parsed.AudioFormat,
+			AudioFeature: parsed.AudioChannels,
+			HDR:          hdrSlice,
 			ReleaseGroup: parsed.ReleaseGroup,
-			Proper:       parsed.Proper,
-			Repack:       parsed.Repack,
+			Proper:       parsed.IsProper,
+			Repack:       parsed.IsRepack,
 		}
 
 		// Apply scoring if profile is available
@@ -2523,7 +2531,7 @@ func (s *Server) handleSearchScored(w http.ResponseWriter, r *http.Request) {
 			}
 		} else {
 			// No profile, just use base score for quality tier
-			scored.BaseScore = quality.BaseQualityScores[parsed.Quality]
+			scored.BaseScore = quality.BaseQualityScores[qualityTier]
 			scored.TotalScore = scored.BaseScore
 		}
 
@@ -2864,8 +2872,16 @@ func (s *Server) handleParseRelease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	parsed := quality.ParseReleaseName(req.Name)
-	json.NewEncoder(w).Encode(parsed)
+	parsed := parser.Parse(req.Name)
+	// Include computed quality tier in response
+	response := struct {
+		*parser.ParsedRelease
+		Quality string `json:"quality"`
+	}{
+		ParsedRelease: parsed,
+		Quality:       quality.ComputeQualityTier(parsed),
+	}
+	json.NewEncoder(w).Encode(response)
 }
 
 // Wanted/Monitoring handlers
@@ -3081,20 +3097,27 @@ func (s *Server) handleWantedSearch(w http.ResponseWriter, r *http.Request) {
 	// Score results
 	scoredResults := make([]indexer.ScoredSearchResult, 0, len(results))
 	for _, result := range results {
-		parsed := quality.ParseReleaseName(result.Title)
+		parsed := parser.Parse(result.Title)
+		qualityTier := quality.ComputeQualityTier(parsed)
+
+		// Convert HDR string to slice (indexer uses []string)
+		var hdrSlice []string
+		if parsed.HDR != "" {
+			hdrSlice = []string{parsed.HDR}
+		}
 
 		scored := indexer.ScoredSearchResult{
 			SearchResult: result,
-			Quality:      parsed.Quality,
+			Quality:      qualityTier,
 			Resolution:   parsed.Resolution,
 			Source:       parsed.Source,
 			Codec:        parsed.Codec,
-			AudioCodec:   parsed.AudioCodec,
-			AudioFeature: parsed.AudioFeature,
-			HDR:          parsed.HDR,
+			AudioCodec:   parsed.AudioFormat,
+			AudioFeature: parsed.AudioChannels,
+			HDR:          hdrSlice,
 			ReleaseGroup: parsed.ReleaseGroup,
-			Proper:       parsed.Proper,
-			Repack:       parsed.Repack,
+			Proper:       parsed.IsProper,
+			Repack:       parsed.IsRepack,
 		}
 
 		if profile != nil {
@@ -3111,7 +3134,7 @@ func (s *Server) handleWantedSearch(w http.ResponseWriter, r *http.Request) {
 				})
 			}
 		} else {
-			scored.BaseScore = quality.BaseQualityScores[parsed.Quality]
+			scored.BaseScore = quality.BaseQualityScores[qualityTier]
 			scored.TotalScore = scored.BaseScore
 		}
 

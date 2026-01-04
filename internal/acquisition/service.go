@@ -7,12 +7,14 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/outpost/outpost/internal/database"
 	"github.com/outpost/outpost/internal/downloadclient"
+	"github.com/outpost/outpost/internal/indexer"
 	"github.com/outpost/outpost/internal/parser"
 	"github.com/outpost/outpost/internal/quality"
 )
@@ -21,6 +23,7 @@ import (
 type Service struct {
 	db        *database.Database
 	downloads *downloadclient.Manager
+	indexers  *indexer.Manager
 
 	pollInterval       time.Duration
 	stalledThreshold   time.Duration
@@ -55,7 +58,7 @@ func DefaultConfig() *Config {
 }
 
 // NewService creates a new acquisition service
-func NewService(db *database.Database, downloads *downloadclient.Manager, cfg *Config) *Service {
+func NewService(db *database.Database, downloads *downloadclient.Manager, indexers *indexer.Manager, cfg *Config) *Service {
 	if cfg == nil {
 		cfg = DefaultConfig()
 	}
@@ -63,6 +66,7 @@ func NewService(db *database.Database, downloads *downloadclient.Manager, cfg *C
 	return &Service{
 		db:                db,
 		downloads:         downloads,
+		indexers:          indexers,
 		pollInterval:      cfg.PollInterval,
 		stalledThreshold:  cfg.StalledThreshold,
 		autoBlockAfter:    cfg.AutoBlockAfter,
@@ -430,11 +434,148 @@ func (s *Service) deleteFromClient(download *database.Download) {
 	}
 }
 
-// searchAlternative_ searches for an alternative release
+// searchAlternative_ searches for an alternative release after a download failure
 func (s *Service) searchAlternative_(mediaID int64, mediaType string) {
 	log.Printf("Searching for alternative release for %s %d", mediaType, mediaID)
-	// This would integrate with the indexer search
-	// For now, just log the intent
+
+	if s.indexers == nil {
+		log.Printf("Acquisition: no indexers configured")
+		return
+	}
+
+	// Get the wanted item info
+	wantedType := mediaType
+	if mediaType == "episode" {
+		wantedType = "show"
+	}
+	wanted, err := s.db.GetWantedByTmdb(wantedType, mediaID)
+	if err != nil || wanted == nil {
+		log.Printf("Acquisition: failed to get wanted item for TMDB %d: %v", mediaID, err)
+		return
+	}
+
+	// Build search params
+	searchType := "movie"
+	if wantedType == "show" {
+		searchType = "tvsearch"
+	}
+
+	params := indexer.SearchParams{
+		Query: wanted.Title,
+		Type:  searchType,
+		Limit: 50,
+	}
+
+	if wanted.TmdbID > 0 {
+		params.TmdbID = strconv.FormatInt(wanted.TmdbID, 10)
+	}
+
+	// Search indexers
+	results, err := s.indexers.Search(params)
+	if err != nil {
+		log.Printf("Acquisition: search failed for %s: %v", wanted.Title, err)
+		return
+	}
+
+	if len(results) == 0 {
+		log.Printf("Acquisition: no results for %s", wanted.Title)
+		return
+	}
+
+	// Score results and filter out blocklisted
+	var bestResult *indexer.ScoredSearchResult
+	var bestScore int
+
+	for _, result := range results {
+		// Check blocklist
+		blocked, _ := s.db.IsReleaseBlocklisted(result.Title)
+		if blocked {
+			log.Printf("Acquisition: skipping blocklisted release: %s", result.Title)
+			continue
+		}
+
+		// Parse and score
+		parsed := parser.Parse(result.Title)
+		qualityTier := quality.ComputeQualityTier(parsed)
+		baseScore := quality.BaseQualityScores[qualityTier]
+
+		if baseScore > bestScore {
+			bestScore = baseScore
+			// Convert HDR string to slice (indexer uses []string)
+			var hdrSlice []string
+			if parsed.HDR != "" {
+				hdrSlice = []string{parsed.HDR}
+			}
+			scored := &indexer.ScoredSearchResult{
+				SearchResult: result,
+				Quality:      qualityTier,
+				Resolution:   parsed.Resolution,
+				Source:       parsed.Source,
+				Codec:        parsed.Codec,
+				AudioCodec:   parsed.AudioFormat,
+				AudioFeature: parsed.AudioChannels,
+				HDR:          hdrSlice,
+				ReleaseGroup: parsed.ReleaseGroup,
+				Proper:       parsed.IsProper,
+				Repack:       parsed.IsRepack,
+				BaseScore:    baseScore,
+				TotalScore:   baseScore,
+			}
+			bestResult = scored
+		}
+	}
+
+	if bestResult == nil {
+		log.Printf("Acquisition: no acceptable alternative found for %s", wanted.Title)
+		return
+	}
+
+	// Grab the best result
+	err = s.grabRelease(bestResult)
+	if err != nil {
+		log.Printf("Acquisition: failed to grab alternative for %s: %v", wanted.Title, err)
+		return
+	}
+
+	log.Printf("Acquisition: grabbed alternative release: %s (score: %d)", bestResult.Title, bestResult.TotalScore)
+}
+
+// grabRelease sends a release to the download client
+func (s *Service) grabRelease(result *indexer.ScoredSearchResult) error {
+	var downloadURL string
+	if result.MagnetLink != "" {
+		downloadURL = result.MagnetLink
+	} else {
+		downloadURL = result.Link
+	}
+
+	isTorrent := result.IndexerType == "torznab" || result.MagnetLink != ""
+
+	clients, err := s.db.GetEnabledDownloadClients()
+	if err != nil {
+		return err
+	}
+
+	var targetClient *database.DownloadClient
+	for _, client := range clients {
+		if isTorrent && (client.Type == "qbittorrent" || client.Type == "transmission") {
+			targetClient = &client
+			break
+		}
+		if !isTorrent && (client.Type == "sabnzbd" || client.Type == "nzbget") {
+			targetClient = &client
+			break
+		}
+	}
+
+	if targetClient == nil {
+		return fmt.Errorf("no suitable download client for release")
+	}
+
+	if isTorrent {
+		return s.downloads.AddTorrent(targetClient.ID, downloadURL, result.Category)
+	}
+	return s.downloads.AddNZB(targetClient.ID, downloadURL, result.Category)
 }
 
 // checkStalledDownloads checks for downloads with no progress

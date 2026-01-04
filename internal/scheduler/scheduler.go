@@ -1,15 +1,21 @@
 package scheduler
 
 import (
+	"encoding/json"
+	"fmt"
 	"log"
+	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/outpost/outpost/internal/database"
 	"github.com/outpost/outpost/internal/downloadclient"
 	"github.com/outpost/outpost/internal/indexer"
+	"github.com/outpost/outpost/internal/parser"
 	"github.com/outpost/outpost/internal/quality"
+	"github.com/outpost/outpost/internal/storage"
 )
 
 type Scheduler struct {
@@ -179,6 +185,18 @@ func (s *Scheduler) searchMonitoredItems() {
 }
 
 func (s *Scheduler) searchAndGrab(item *database.WantedItem) {
+	// Check if downloads should be paused due to low storage
+	if s.shouldPauseDownloads() {
+		return
+	}
+
+	// Check if this media is excluded
+	excluded, _ := s.db.IsMediaExcluded(item.TmdbID, item.Type)
+	if excluded {
+		log.Printf("Scheduler: skipping excluded media: %s", item.Title)
+		return
+	}
+
 	searchType := "movie"
 	if item.Type == "show" {
 		searchType = "tvsearch"
@@ -218,18 +236,74 @@ func (s *Scheduler) searchAndGrab(item *database.WantedItem) {
 		return
 	}
 
-	// Find best non-rejected result
+	// Get library ID for indexer exclusion check
+	var libraryID int64
+	libraries, _ := s.db.GetLibraries()
+	libType := "movies"
+	if item.Type == "show" {
+		libType = "tv"
+	}
+	for _, lib := range libraries {
+		if lib.Type == libType {
+			libraryID = lib.ID
+			break
+		}
+	}
+
+	// Find best non-rejected, non-blocklisted result
+	// Results are sorted by score descending, so pick first acceptable one
 	var bestResult *indexer.ScoredSearchResult
 	for i := range scoredResults {
-		if !scoredResults[i].Rejected && scoredResults[i].TotalScore > 0 {
-			if bestResult == nil || scoredResults[i].TotalScore > bestResult.TotalScore {
-				bestResult = &scoredResults[i]
+		if scoredResults[i].Rejected || scoredResults[i].TotalScore <= 0 {
+			continue
+		}
+
+		// Check blocklist
+		blocked, _ := s.db.IsReleaseBlocklisted(scoredResults[i].Title)
+		if blocked {
+			log.Printf("Scheduler: release blocklisted, trying next: %s", scoredResults[i].Title)
+			continue
+		}
+
+		// Check if indexer is excluded for this library
+		if libraryID > 0 {
+			excluded, _ := s.db.IsIndexerExcludedForLibrary(scoredResults[i].IndexerID, libraryID)
+			if excluded {
+				log.Printf("Scheduler: indexer excluded for library, trying next: %s", scoredResults[i].Title)
+				continue
 			}
 		}
+
+		// Check release filters
+		if !s.passesReleaseFilters(scoredResults[i].Title, item.QualityProfileID) {
+			continue
+		}
+
+		bestResult = &scoredResults[i]
+		break
 	}
 
 	if bestResult == nil {
 		log.Printf("Scheduler: no acceptable releases for %s", item.Title)
+		return
+	}
+
+	// Check if delay profile applies
+	shouldDelay, availableAt := s.shouldDelayGrab(bestResult, libraryID)
+	if shouldDelay {
+		// Add to pending grabs instead of grabbing immediately
+		releaseData := fmt.Sprintf(`{"indexerId":%d,"link":"%s","magnetLink":"%s","category":"%s"}`,
+			bestResult.IndexerID, bestResult.Link, bestResult.MagnetLink, bestResult.Category)
+		s.db.AddPendingGrab(&database.PendingGrab{
+			MediaID:      item.TmdbID,
+			MediaType:    item.Type,
+			ReleaseTitle: bestResult.Title,
+			ReleaseData:  &releaseData,
+			Score:        bestResult.TotalScore,
+			IndexerID:    &bestResult.IndexerID,
+			AvailableAt:  availableAt,
+		})
+		log.Printf("Scheduler: delayed grab until %s: %s for %s", availableAt.Format(time.RFC3339), bestResult.Title, item.Title)
 		return
 	}
 
@@ -279,20 +353,27 @@ func (s *Scheduler) scoreResults(results []indexer.SearchResult, profileID int64
 
 	scoredResults := make([]indexer.ScoredSearchResult, 0, len(results))
 	for _, result := range results {
-		parsed := quality.ParseReleaseName(result.Title)
+		parsed := parser.Parse(result.Title)
+		qualityTier := quality.ComputeQualityTier(parsed)
+
+		// Convert HDR string to slice (indexer uses []string)
+		var hdrSlice []string
+		if parsed.HDR != "" {
+			hdrSlice = []string{parsed.HDR}
+		}
 
 		scored := indexer.ScoredSearchResult{
 			SearchResult: result,
-			Quality:      parsed.Quality,
+			Quality:      qualityTier,
 			Resolution:   parsed.Resolution,
 			Source:       parsed.Source,
 			Codec:        parsed.Codec,
-			AudioCodec:   parsed.AudioCodec,
-			AudioFeature: parsed.AudioFeature,
-			HDR:          parsed.HDR,
+			AudioCodec:   parsed.AudioFormat,
+			AudioFeature: parsed.AudioChannels,
+			HDR:          hdrSlice,
 			ReleaseGroup: parsed.ReleaseGroup,
-			Proper:       parsed.Proper,
-			Repack:       parsed.Repack,
+			Proper:       parsed.IsProper,
+			Repack:       parsed.IsRepack,
 		}
 
 		if profile != nil {
@@ -309,7 +390,7 @@ func (s *Scheduler) scoreResults(results []indexer.SearchResult, profileID int64
 				})
 			}
 		} else {
-			scored.BaseScore = quality.BaseQualityScores[parsed.Quality]
+			scored.BaseScore = quality.BaseQualityScores[qualityTier]
 			scored.TotalScore = scored.BaseScore
 		}
 
@@ -363,6 +444,135 @@ func (s *Scheduler) grabRelease(result *indexer.ScoredSearchResult) error {
 		return s.downloads.AddTorrent(targetClient.ID, downloadURL, result.Category)
 	}
 	return s.downloads.AddNZB(targetClient.ID, downloadURL, result.Category)
+}
+
+// passesReleaseFilters checks if a release passes the configured filters for a quality profile
+func (s *Scheduler) passesReleaseFilters(releaseName string, presetID int64) bool {
+	filters, err := s.db.GetReleaseFilters(presetID)
+	if err != nil || len(filters) == 0 {
+		return true // No filters means all releases pass
+	}
+
+	releaseNameLower := strings.ToLower(releaseName)
+
+	for _, filter := range filters {
+		var matches bool
+		valueLower := strings.ToLower(filter.Value)
+
+		if filter.IsRegex {
+			// Use regex matching
+			re, err := regexp.Compile("(?i)" + filter.Value)
+			if err != nil {
+				log.Printf("Scheduler: invalid release filter regex: %s", filter.Value)
+				continue
+			}
+			matches = re.MatchString(releaseName)
+		} else {
+			// Simple string contains matching
+			matches = strings.Contains(releaseNameLower, valueLower)
+		}
+
+		switch filter.FilterType {
+		case "must_contain":
+			if !matches {
+				log.Printf("Scheduler: release rejected (must_contain: %s): %s", filter.Value, releaseName)
+				return false
+			}
+		case "must_not_contain":
+			if matches {
+				log.Printf("Scheduler: release rejected (must_not_contain: %s): %s", filter.Value, releaseName)
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
+// shouldDelayGrab checks if a release should be delayed based on delay profiles
+func (s *Scheduler) shouldDelayGrab(result *indexer.ScoredSearchResult, libraryID int64) (bool, time.Time) {
+	profiles, err := s.db.GetDelayProfiles()
+	if err != nil || len(profiles) == 0 {
+		return false, time.Time{}
+	}
+
+	for _, profile := range profiles {
+		if !profile.Enabled {
+			continue
+		}
+
+		// Check if profile applies to this library
+		if profile.LibraryID != nil && *profile.LibraryID != libraryID && libraryID > 0 {
+			continue
+		}
+
+		// Check bypass conditions
+		if profile.BypassIfResolution != nil && *profile.BypassIfResolution != "" {
+			if strings.EqualFold(result.Resolution, *profile.BypassIfResolution) {
+				continue // Bypass delay for this resolution
+			}
+		}
+
+		if profile.BypassIfSource != nil && *profile.BypassIfSource != "" {
+			if strings.EqualFold(result.Source, *profile.BypassIfSource) {
+				continue // Bypass delay for this source
+			}
+		}
+
+		if profile.BypassIfScoreAbove != nil && result.TotalScore > *profile.BypassIfScoreAbove {
+			continue // Bypass delay for high scores
+		}
+
+		// Apply delay
+		availableAt := time.Now().Add(time.Duration(profile.DelayMinutes) * time.Minute)
+		log.Printf("Scheduler: delaying grab for %d minutes: %s", profile.DelayMinutes, result.Title)
+		return true, availableAt
+	}
+
+	return false, time.Time{}
+}
+
+// shouldPauseDownloads checks if downloads should be paused due to low storage
+func (s *Scheduler) shouldPauseDownloads() bool {
+	settings, err := s.db.GetAllSettings()
+	if err != nil {
+		return false
+	}
+
+	pauseEnabled := settings["storage_pause_enabled"] == "true"
+	if !pauseEnabled {
+		return false
+	}
+
+	// Get threshold from settings
+	thresholdGB := int64(100)
+	if val, ok := settings["storage_threshold_gb"]; ok {
+		var parsed int64
+		if err := json.Unmarshal([]byte(val), &parsed); err == nil {
+			thresholdGB = parsed
+		}
+	}
+
+	// Check storage on all libraries
+	libraries, err := s.db.GetLibraries()
+	if err != nil {
+		return false
+	}
+
+	for _, lib := range libraries {
+		usage, err := storage.GetDiskUsage(lib.Path)
+		if err != nil {
+			continue
+		}
+
+		freeGB := int64(usage.Free / (1024 * 1024 * 1024))
+		if freeGB < thresholdGB {
+			log.Printf("Scheduler: pausing downloads - low disk space on %s: %d GB free (threshold: %d GB)", lib.Path, freeGB, thresholdGB)
+			return true
+		}
+	}
+
+	return false
 }
 
 func (s *Scheduler) checkRSSFeeds() {

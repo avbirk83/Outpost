@@ -49,7 +49,7 @@ func (m *Manager) ProcessImport(download *database.Download, sourcePath string) 
 	mainFile := m.selectMainFile(files)
 
 	// Parse the release name
-	parsed := parser.ParseReleaseName(filepath.Base(mainFile))
+	parsed := parser.Parse(filepath.Base(mainFile))
 
 	// Try to match to library item
 	if download.MediaID != nil && download.MediaType != nil {
