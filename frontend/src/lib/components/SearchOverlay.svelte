@@ -96,10 +96,10 @@
 			try {
 				// Search local library AND TMDB discover in parallel
 				const [moviesRes, showsRes, tmdbMoviesRes, tmdbShowsRes] = await Promise.all([
-					fetch(`/api/movies?search=${encodeURIComponent(query)}&limit=5`),
-					fetch(`/api/shows?search=${encodeURIComponent(query)}&limit=5`),
-					fetch(`/api/discover/search/movie?query=${encodeURIComponent(query)}`),
-					fetch(`/api/discover/search/tv?query=${encodeURIComponent(query)}`),
+					fetch(`/api/movies?search=${encodeURIComponent(query)}&limit=5`, { credentials: 'include' }),
+					fetch(`/api/shows?search=${encodeURIComponent(query)}&limit=5`, { credentials: 'include' }),
+					fetch(`/api/discover/search/movie?query=${encodeURIComponent(query)}`, { credentials: 'include' }),
+					fetch(`/api/discover/search/tv?query=${encodeURIComponent(query)}`, { credentials: 'include' }),
 				]);
 
 				const movies = moviesRes.ok ? await moviesRes.json() : [];

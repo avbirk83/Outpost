@@ -5,15 +5,12 @@
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { auth } from '$lib/stores/auth';
-	import Sidebar from '$lib/components/Sidebar.svelte';
-	import TopBar from '$lib/components/TopBar.svelte';
-	import SearchOverlay from '$lib/components/SearchOverlay.svelte';
+	import Topbar from '$lib/components/layout/Topbar.svelte';
 	import Toast from '$lib/components/Toast.svelte';
 
 	let { children } = $props();
 	let user = $state<{ id: number; username: string; role: string } | null>(null);
 	let initialized = $state(false);
-	let searchOpen = $state(false);
 
 	// Subscribe to auth store
 	auth.subscribe((value) => {
@@ -23,30 +20,11 @@
 	onMount(async () => {
 		await auth.init();
 		initialized = true;
-
-		// Global keyboard shortcut for search
-		function handleKeydown(e: KeyboardEvent) {
-			if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
-				e.preventDefault();
-				searchOpen = true;
-			}
-		}
-
-		window.addEventListener('keydown', handleKeydown);
-		return () => window.removeEventListener('keydown', handleKeydown);
 	});
 
 	async function handleLogout() {
 		await auth.logout();
 		goto('/login');
-	}
-
-	function openSearch() {
-		searchOpen = true;
-	}
-
-	function closeSearch() {
-		searchOpen = false;
 	}
 
 	// Check if current page is login page
@@ -85,26 +63,17 @@
 	{:else}
 		<!-- Standard app layout -->
 		<div class="min-h-screen bg-[#0a0a0a] text-text-primary overflow-x-hidden">
-			<!-- Sidebar -->
-			<Sidebar isAdmin={user.role === 'admin'} />
-
-			<!-- TopBar -->
-			<TopBar
+			<!-- Topbar -->
+			<Topbar
 				username={user.username}
 				isAdmin={user.role === 'admin'}
 				onLogout={handleLogout}
-				onSearchClick={openSearch}
 			/>
 
 			<!-- Main content area -->
-			<main class="pl-16 pt-16">
-				<div class="p-6">
-					{@render children()}
-				</div>
+			<main class="pt-16">
+				{@render children()}
 			</main>
-
-			<!-- Search overlay -->
-			<SearchOverlay open={searchOpen} onClose={closeSearch} />
 		</div>
 	{/if}
 

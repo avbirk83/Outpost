@@ -9,7 +9,8 @@
 		type Movie,
 		type Show
 	} from '$lib/api';
-	import PosterCard from '$lib/components/PosterCard.svelte';
+	import MediaCard from '$lib/components/media/MediaCard.svelte';
+	import Select from '$lib/components/ui/Select.svelte';
 
 	// Tab state from URL
 	type TabType = 'movies' | 'tv';
@@ -238,6 +239,17 @@
 		return sortedEntries;
 	});
 
+	// Reactively sync tab from URL (handles back/forward navigation)
+	$effect(() => {
+		const urlTab = $page.url.searchParams.get('tab') as TabType | null;
+		if (urlTab && ['movies', 'tv'].includes(urlTab)) {
+			if (activeTab !== urlTab) {
+				activeTab = urlTab;
+				loadTabData(urlTab);
+			}
+		}
+	});
+
 	// Read tab from URL on mount
 	onMount(() => {
 		const urlTab = $page.url.searchParams.get('tab') as TabType | null;
@@ -255,12 +267,13 @@
 		}
 	});
 
-	// Update URL when tab changes
+	// Update URL when tab changes (don't use replaceState so back button works)
 	function setTab(tab: TabType) {
+		if (activeTab === tab) return;
 		activeTab = tab;
 		const url = new URL(window.location.href);
 		url.searchParams.set('tab', tab);
-		goto(url.pathname + url.search, { replaceState: true, keepFocus: true });
+		goto(url.pathname + url.search, { keepFocus: true });
 		loadTabData(tab);
 	}
 
@@ -308,6 +321,15 @@
 			}
 		}
 		return Array.from(genres).sort();
+	});
+
+	// Genre options for Select components
+	const movieGenreOptions = $derived(() => {
+		return [{ value: 'all', label: 'All Genres' }, ...allMovieGenres().map(g => ({ value: g, label: g }))];
+	});
+
+	const showGenreOptions = $derived(() => {
+		return [{ value: 'all', label: 'All Genres' }, ...allShowGenres().map(g => ({ value: g, label: g }))];
 	});
 
 	// Filtered/sorted data
@@ -444,7 +466,7 @@
 	<title>Library - Outpost</title>
 </svelte:head>
 
-<div class="space-y-6 -mt-22 -mx-6">
+<div class="space-y-6">
 	<!-- Hero Background - Only for Movies and TV -->
 	{#if (activeTab === 'movies' || activeTab === 'tv') && heroItems().length > 0}
 		{@const hero = currentHero()}
@@ -462,28 +484,58 @@
 				{/key}
 
 				<!-- Gradient overlays -->
-				<div class="absolute inset-0 bg-gradient-to-t from-bg-primary via-bg-primary/60 to-bg-primary/30 pointer-events-none"></div>
+				<div class="absolute inset-0 bg-gradient-to-t from-[#0a0a0a] via-[#0a0a0a]/60 to-[#0a0a0a]/30 pointer-events-none"></div>
 			</section>
 		{/if}
 	{/if}
 
-	<div class="px-6 space-y-6 {(activeTab === 'movies' || activeTab === 'tv') && heroItems().length > 0 ? '-mt-56 relative z-10' : ''}">
-		<!-- Tab bar -->
-		<div class="inline-flex gap-1 p-1.5 rounded-xl bg-black/40 backdrop-blur-md border border-white/10">
+	<div class="px-[60px] space-y-6 {(activeTab === 'movies' || activeTab === 'tv') && heroItems().length > 0 ? '-mt-56 relative z-10' : ''}">
+		<!-- Filter Pills -->
+		<div class="flex flex-wrap gap-2">
+			<!-- Media type pills -->
 			{#each tabs as tab}
 				<button
 					onclick={() => setTab(tab.id)}
-					class="px-4 py-2 text-sm font-medium transition-all rounded-lg
+					class="px-4 py-2.5 text-sm font-medium transition-all rounded-full min-h-[44px] flex items-center
 						{activeTab === tab.id
-							? 'bg-white/15 text-white'
-							: 'text-white/60 hover:text-white hover:bg-white/5'}"
+							? 'bg-text-primary text-black border border-text-primary'
+							: 'bg-glass backdrop-blur-xl border border-border-subtle text-text-secondary hover:bg-glass-hover hover:text-text-primary'}"
 				>
 					{tab.label}
 					{#if loadedTabs.has(tab.id) && tab.count > 0}
-						<span class="ml-1.5 text-xs text-white/40">({tab.count})</span>
+						<span class="ml-1.5 text-xs opacity-60">({tab.count})</span>
 					{/if}
 				</button>
 			{/each}
+
+			<div class="w-px h-8 bg-border-subtle self-center mx-1"></div>
+
+			<!-- Genre quick-filter pills -->
+			{#if activeTab === 'movies'}
+				{#each ['Action', 'Comedy', 'Drama', 'Sci-Fi', 'Horror', 'Thriller'] as genre}
+					<button
+						onclick={() => movieGenreFilter = movieGenreFilter === genre ? 'all' : genre}
+						class="px-4 py-2.5 text-sm font-medium transition-all rounded-full min-h-[44px] flex items-center
+							{movieGenreFilter === genre
+								? 'bg-text-primary text-black border border-text-primary'
+								: 'bg-glass backdrop-blur-xl border border-border-subtle text-text-secondary hover:bg-glass-hover hover:text-text-primary'}"
+					>
+						{genre}
+					</button>
+				{/each}
+			{:else if activeTab === 'tv'}
+				{#each ['Action & Adventure', 'Comedy', 'Drama', 'Crime', 'Sci-Fi & Fantasy', 'Mystery'] as genre}
+					<button
+						onclick={() => showGenreFilter = showGenreFilter === genre ? 'all' : genre}
+						class="px-4 py-2.5 text-sm font-medium transition-all rounded-full min-h-[44px] flex items-center
+							{showGenreFilter === genre
+								? 'bg-text-primary text-black border border-text-primary'
+								: 'bg-glass backdrop-blur-xl border border-border-subtle text-text-secondary hover:bg-glass-hover hover:text-text-primary'}"
+					>
+						{genre}
+					</button>
+				{/each}
+			{/if}
 		</div>
 
 		{#if error}
@@ -500,65 +552,45 @@
 			<div class="space-y-4">
 				<div class="flex flex-wrap items-center gap-3">
 					{#if movieViewMode === 'grid'}
-						<div class="inline-flex items-center gap-2 p-1.5 rounded-xl bg-black/40 backdrop-blur-md border border-white/10">
+						<div class="inline-flex items-center gap-2 p-1.5 rounded-full bg-glass backdrop-blur-xl border border-border-subtle">
 							<div class="relative">
-								<svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
 								</svg>
 								<input
 									type="text"
 									placeholder="Search..."
 									bind:value={movieSearch}
-									class="bg-transparent pl-9 pr-3 py-1.5 w-40 text-sm text-white placeholder-white/40 focus:outline-none"
+									class="bg-transparent pl-9 pr-3 py-1.5 w-40 text-sm text-text-primary placeholder-text-muted focus:outline-none"
 								/>
 							</div>
-							<div class="w-px h-6 bg-white/10"></div>
-							<select
+							<div class="w-px h-6 bg-border-subtle"></div>
+							<Select
 								bind:value={movieSort}
-								class="bg-transparent px-3 py-1.5 text-sm text-white/80 focus:outline-none cursor-pointer"
-							>
-								<option value="added" class="bg-zinc-900">Recently Added</option>
-								<option value="title" class="bg-zinc-900">Title A-Z</option>
-								<option value="year" class="bg-zinc-900">Year</option>
-								<option value="rating" class="bg-zinc-900">Rating</option>
-							</select>
-							<div class="w-px h-6 bg-white/10"></div>
+								options={[
+									{ value: 'added', label: 'Recently Added' },
+									{ value: 'title', label: 'Title A-Z' },
+									{ value: 'year', label: 'Year' },
+									{ value: 'rating', label: 'Rating' }
+								]}
+								class="w-40"
+							/>
+							<div class="w-px h-6 bg-border-subtle"></div>
 							<button
 								onclick={() => movieFiltersExpanded = !movieFiltersExpanded}
-								class="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg transition-colors {hasActiveMovieFilters() || movieFiltersExpanded ? 'bg-white/15 text-white' : 'text-white/60 hover:text-white hover:bg-white/5'}"
+								class="flex items-center gap-2 px-3 py-1.5 text-sm rounded-full transition-colors {hasActiveMovieFilters() || movieFiltersExpanded ? 'bg-glass-hover text-text-primary' : 'text-text-muted hover:text-text-primary hover:bg-glass-hover'}"
 							>
 								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
 								</svg>
 								Filters
 								{#if hasActiveMovieFilters()}
-									<span class="w-1.5 h-1.5 rounded-full bg-white"></span>
+									<span class="w-1.5 h-1.5 rounded-full bg-text-primary"></span>
 								{/if}
 							</button>
 						</div>
 					{/if}
 
-					<!-- View toggle -->
-					<div class="inline-flex gap-1 p-1.5 rounded-xl bg-black/40 backdrop-blur-md border border-white/10 ml-auto">
-						<button
-							onclick={() => movieViewMode = 'grid'}
-							class="p-2 rounded-lg transition-colors {movieViewMode === 'grid' ? 'bg-white/15 text-white' : 'text-white/60 hover:text-white hover:bg-white/5'}"
-							title="Grid view"
-						>
-							<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
-							</svg>
-						</button>
-						<button
-							onclick={() => movieViewMode = 'rows'}
-							class="p-2 rounded-lg transition-colors {movieViewMode === 'rows' ? 'bg-white/15 text-white' : 'text-white/60 hover:text-white hover:bg-white/5'}"
-							title="Rows by genre"
-						>
-							<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
-							</svg>
-						</button>
-					</div>
 				</div>
 
 				<!-- Inline filter panel -->
@@ -567,15 +599,11 @@
 						<!-- Genre -->
 						<div>
 							<label class="text-xs font-medium text-text-secondary uppercase tracking-wide mb-2 block">Genre</label>
-							<select
+							<Select
 								bind:value={movieGenreFilter}
-								class="liquid-select px-3 py-1.5 text-sm"
-							>
-								<option value="all">All Genres</option>
-								{#each allMovieGenres() as genre}
-									<option value={genre}>{genre}</option>
-								{/each}
-							</select>
+								options={movieGenreOptions()}
+								class="w-48"
+							/>
 						</div>
 
 						<!-- Content Rating -->
@@ -674,7 +702,7 @@
 					</div>
 					<h2 class="text-xl font-semibold text-text-primary mb-2">No movies found</h2>
 					<p class="text-text-secondary mb-6">Add a library and scan it in Settings to get started.</p>
-					<a href="/settings" class="liquid-btn inline-flex items-center gap-2">
+					<a href="/settings" class="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-glass border border-border-subtle text-text-primary hover:bg-glass-hover transition-all">
 						Go to Settings
 					</a>
 				</div>
@@ -687,15 +715,18 @@
 						</button>
 					</div>
 				{:else}
-					<div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 2xl:grid-cols-8 gap-4">
+					<div class="grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-3">
 						{#each filteredMovies() as movie}
-							<PosterCard
+							<MediaCard
+								type="poster"
+								fill={true}
 								href="/movies/{movie.id}"
 								title={movie.title}
 								subtitle={movie.year?.toString() || 'Unknown year'}
-								posterUrl={movie.posterPath ? getImageUrl(movie.posterPath) : undefined}
-								rating={movie.rating}
-								mediaType="movie"
+								imagePath={movie.posterPath}
+								isLocal={true}
+								runtime={movie.runtime}
+								contentRating={movie.contentRating}
 								watchState={movie.watchState}
 							/>
 						{/each}
@@ -709,17 +740,17 @@
 							<h2 class="text-xl font-semibold text-text-primary mb-4">{genre} <span class="text-sm text-text-muted font-normal">({genreMovies.length})</span></h2>
 							<div class="flex gap-3 overflow-x-auto pb-4 scrollbar-thin">
 								{#each genreMovies as movie}
-									<div class="flex-shrink-0 w-32 sm:w-36">
-										<PosterCard
-											href="/movies/{movie.id}"
-											title={movie.title}
-											subtitle={movie.year?.toString() || 'Unknown year'}
-											posterUrl={movie.posterPath ? getImageUrl(movie.posterPath) : undefined}
-											rating={movie.rating}
-											mediaType="movie"
-											watchState={movie.watchState}
-										/>
-									</div>
+									<MediaCard
+										type="poster"
+										href="/movies/{movie.id}"
+										title={movie.title}
+										subtitle={movie.year?.toString() || 'Unknown year'}
+										imagePath={movie.posterPath}
+										isLocal={true}
+										runtime={movie.runtime}
+										contentRating={movie.contentRating}
+										watchState={movie.watchState}
+									/>
 								{/each}
 							</div>
 						</section>
@@ -736,65 +767,45 @@
 			<div class="space-y-4">
 				<div class="flex flex-wrap items-center gap-3">
 					{#if showViewMode === 'grid'}
-						<div class="inline-flex items-center gap-2 p-1.5 rounded-xl bg-black/40 backdrop-blur-md border border-white/10">
+						<div class="inline-flex items-center gap-2 p-1.5 rounded-full bg-glass backdrop-blur-xl border border-border-subtle">
 							<div class="relative">
-								<svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
 								</svg>
 								<input
 									type="text"
 									placeholder="Search..."
 									bind:value={showSearch}
-									class="bg-transparent pl-9 pr-3 py-1.5 w-40 text-sm text-white placeholder-white/40 focus:outline-none"
+									class="bg-transparent pl-9 pr-3 py-1.5 w-40 text-sm text-text-primary placeholder-text-muted focus:outline-none"
 								/>
 							</div>
-							<div class="w-px h-6 bg-white/10"></div>
-							<select
+							<div class="w-px h-6 bg-border-subtle"></div>
+							<Select
 								bind:value={showSort}
-								class="bg-transparent px-3 py-1.5 text-sm text-white/80 focus:outline-none cursor-pointer"
-							>
-								<option value="added" class="bg-zinc-900">Recently Added</option>
-								<option value="title" class="bg-zinc-900">Title A-Z</option>
-								<option value="year" class="bg-zinc-900">Year</option>
-								<option value="rating" class="bg-zinc-900">Rating</option>
-							</select>
-							<div class="w-px h-6 bg-white/10"></div>
+								options={[
+									{ value: 'added', label: 'Recently Added' },
+									{ value: 'title', label: 'Title A-Z' },
+									{ value: 'year', label: 'Year' },
+									{ value: 'rating', label: 'Rating' }
+								]}
+								class="w-40"
+							/>
+							<div class="w-px h-6 bg-border-subtle"></div>
 							<button
 								onclick={() => showFiltersExpanded = !showFiltersExpanded}
-								class="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg transition-colors {hasActiveShowFilters() || showFiltersExpanded ? 'bg-white/15 text-white' : 'text-white/60 hover:text-white hover:bg-white/5'}"
+								class="flex items-center gap-2 px-3 py-1.5 text-sm rounded-full transition-colors {hasActiveShowFilters() || showFiltersExpanded ? 'bg-glass-hover text-text-primary' : 'text-text-muted hover:text-text-primary hover:bg-glass-hover'}"
 							>
 								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
 								</svg>
 								Filters
 								{#if hasActiveShowFilters()}
-									<span class="w-1.5 h-1.5 rounded-full bg-white"></span>
+									<span class="w-1.5 h-1.5 rounded-full bg-text-primary"></span>
 								{/if}
 							</button>
 						</div>
 					{/if}
 
-					<!-- View toggle -->
-					<div class="inline-flex gap-1 p-1.5 rounded-xl bg-black/40 backdrop-blur-md border border-white/10 ml-auto">
-						<button
-							onclick={() => showViewMode = 'grid'}
-							class="p-2 rounded-lg transition-colors {showViewMode === 'grid' ? 'bg-white/15 text-white' : 'text-white/60 hover:text-white hover:bg-white/5'}"
-							title="Grid view"
-						>
-							<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
-							</svg>
-						</button>
-						<button
-							onclick={() => showViewMode = 'rows'}
-							class="p-2 rounded-lg transition-colors {showViewMode === 'rows' ? 'bg-white/15 text-white' : 'text-white/60 hover:text-white hover:bg-white/5'}"
-							title="Rows by genre"
-						>
-							<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
-							</svg>
-						</button>
-					</div>
 				</div>
 
 				<!-- Inline filter panel -->
@@ -804,26 +815,23 @@
 						<div class="flex flex-wrap gap-4">
 							<div>
 								<label class="text-xs font-medium text-text-secondary uppercase tracking-wide mb-2 block">Genre</label>
-								<select
+								<Select
 									bind:value={showGenreFilter}
-									class="liquid-select px-3 py-1.5 text-sm"
-								>
-									<option value="all">All Genres</option>
-									{#each allShowGenres() as genre}
-										<option value={genre}>{genre}</option>
-									{/each}
-								</select>
+									options={showGenreOptions()}
+									class="w-48"
+								/>
 							</div>
 							<div>
 								<label class="text-xs font-medium text-text-secondary uppercase tracking-wide mb-2 block">Status</label>
-								<select
+								<Select
 									bind:value={showStatus}
-									class="liquid-select px-3 py-1.5 text-sm"
-								>
-									<option value="all">All Status</option>
-									<option value="continuing">Continuing</option>
-									<option value="ended">Ended</option>
-								</select>
+									options={[
+										{ value: 'all', label: 'All Status' },
+										{ value: 'continuing', label: 'Continuing' },
+										{ value: 'ended', label: 'Ended' }
+									]}
+									class="w-40"
+								/>
 							</div>
 						</div>
 
@@ -897,7 +905,7 @@
 					</div>
 					<h2 class="text-xl font-semibold text-text-primary mb-2">No TV shows found</h2>
 					<p class="text-text-secondary mb-6">Add a library and scan it in Settings to get started.</p>
-					<a href="/settings" class="liquid-btn inline-flex items-center gap-2">
+					<a href="/settings" class="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-glass border border-border-subtle text-text-primary hover:bg-glass-hover transition-all">
 						Go to Settings
 					</a>
 				</div>
@@ -910,18 +918,18 @@
 						</button>
 					</div>
 				{:else}
-					<div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 2xl:grid-cols-8 gap-4">
+					<div class="grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-3">
 						{#each filteredShows() as show}
-							<PosterCard
+							<MediaCard
+								type="poster"
+								fill={true}
 								href="/tv/{show.id}"
 								title={show.title}
-								subtitle={show.network ? `${show.year || ''} - ${show.network}` : (show.year?.toString() || 'Unknown year')}
-								posterUrl={show.posterPath ? getImageUrl(show.posterPath) : undefined}
-								rating={show.rating}
-								mediaType="series"
+								subtitle={show.year?.toString() || 'Unknown year'}
+								imagePath={show.posterPath}
+								isLocal={true}
+								contentRating={show.contentRating}
 								watchState={show.watchState}
-								watchedEpisodes={show.watchedEpisodes}
-								totalEpisodes={show.totalEpisodes}
 							/>
 						{/each}
 					</div>
@@ -934,19 +942,16 @@
 							<h2 class="text-xl font-semibold text-text-primary mb-4">{genre} <span class="text-sm text-text-muted font-normal">({genreShows.length})</span></h2>
 							<div class="flex gap-3 overflow-x-auto pb-4 scrollbar-thin">
 								{#each genreShows as show}
-									<div class="flex-shrink-0 w-32 sm:w-36">
-										<PosterCard
-											href="/tv/{show.id}"
-											title={show.title}
-											subtitle={show.network ? `${show.year || ''} - ${show.network}` : (show.year?.toString() || 'Unknown year')}
-											posterUrl={show.posterPath ? getImageUrl(show.posterPath) : undefined}
-											rating={show.rating}
-											mediaType="series"
-											watchState={show.watchState}
-											watchedEpisodes={show.watchedEpisodes}
-											totalEpisodes={show.totalEpisodes}
-										/>
-									</div>
+									<MediaCard
+										type="poster"
+										href="/tv/{show.id}"
+										title={show.title}
+										subtitle={show.year?.toString() || 'Unknown year'}
+										imagePath={show.posterPath}
+										isLocal={true}
+										contentRating={show.contentRating}
+										watchState={show.watchState}
+									/>
 								{/each}
 							</div>
 						</section>

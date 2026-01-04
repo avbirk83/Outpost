@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/outpost/outpost/internal/auth"
 	"github.com/outpost/outpost/internal/config"
@@ -21,6 +22,7 @@ import (
 	"github.com/outpost/outpost/internal/metadata"
 	"github.com/outpost/outpost/internal/quality"
 	"github.com/outpost/outpost/internal/scanner"
+	"github.com/outpost/outpost/internal/storage"
 )
 
 type contextKey string
@@ -28,26 +30,29 @@ type contextKey string
 const userContextKey contextKey = "user"
 
 type Server struct {
-	config    *config.Config
-	db        *database.Database
-	scanner   *scanner.Scanner
-	metadata  *metadata.Service
-	auth      *auth.Service
-	downloads *downloadclient.Manager
-	indexers  *indexer.Manager
-	mux       *http.ServeMux
+	config        *config.Config
+	db            *database.Database
+	scanner       *scanner.Scanner
+	metadata      *metadata.Service
+	auth          *auth.Service
+	downloads     *downloadclient.Manager
+	indexers      *indexer.Manager
+	mux           *http.ServeMux
+	subtitleCache map[string][]byte
+	subtitleMu    sync.RWMutex
 }
 
 func NewServer(cfg *config.Config, db *database.Database, scan *scanner.Scanner, meta *metadata.Service, authSvc *auth.Service, downloads *downloadclient.Manager, indexers *indexer.Manager) *Server {
 	s := &Server{
-		config:    cfg,
-		db:        db,
-		scanner:   scan,
-		metadata:  meta,
-		auth:      authSvc,
-		downloads: downloads,
-		indexers:  indexers,
-		mux:       http.NewServeMux(),
+		config:        cfg,
+		db:            db,
+		scanner:       scan,
+		metadata:      meta,
+		auth:          authSvc,
+		downloads:     downloads,
+		indexers:      indexers,
+		mux:           http.NewServeMux(),
+		subtitleCache: make(map[string][]byte),
 	}
 	s.setupRoutes()
 	s.loadIndexers()
@@ -91,12 +96,14 @@ func (s *Server) setupRoutes() {
 	// Library routes (admin only)
 	s.mux.HandleFunc("/api/libraries", s.requireAdmin(s.handleLibraries))
 	s.mux.HandleFunc("/api/libraries/", s.requireAdmin(s.handleLibrary))
+	s.mux.HandleFunc("/api/scan/progress", s.requireAuth(s.handleScanProgress))
 
 	// Media routes (authenticated)
 	s.mux.HandleFunc("/api/movies", s.requireAuth(s.handleMovies))
 	s.mux.HandleFunc("/api/movies/", s.requireAuth(s.handleMovie))
 	s.mux.HandleFunc("/api/shows", s.requireAuth(s.handleShows))
 	s.mux.HandleFunc("/api/shows/", s.requireAuth(s.handleShow))
+	s.mux.HandleFunc("/api/episodes/", s.requireAdmin(s.handleEpisode))
 
 	// Music routes (authenticated)
 	s.mux.HandleFunc("/api/artists", s.requireAuth(s.handleArtists))
@@ -137,6 +144,7 @@ func (s *Server) setupRoutes() {
 
 	// Metadata refresh route (admin only)
 	s.mux.HandleFunc("/api/metadata/refresh", s.requireAdmin(s.handleMetadataRefresh))
+	s.mux.HandleFunc("/api/library/clear", s.requireAdmin(s.handleLibraryClear))
 
 	// Download client routes (admin only)
 	s.mux.HandleFunc("/api/download-clients", s.requireAdmin(s.handleDownloadClients))
@@ -157,20 +165,38 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/custom-formats/", s.requireAdmin(s.handleCustomFormat))
 	s.mux.HandleFunc("/api/releases/parse", s.requireAdmin(s.handleParseRelease))
 
+	// Quality preset routes (admin only)
+	s.mux.HandleFunc("/api/quality/presets", s.requireAdmin(s.handleQualityPresets))
+	s.mux.HandleFunc("/api/quality/presets/", s.requireAdmin(s.handleQualityPreset))
+
+	// Download tracking routes (admin only)
+	s.mux.HandleFunc("/api/download-items", s.requireAdmin(s.handleDownloadItems))
+	s.mux.HandleFunc("/api/download-items/", s.requireAdmin(s.handleDownloadItem))
+
+	// Import and naming routes (admin only)
+	s.mux.HandleFunc("/api/imports/history", s.requireAdmin(s.handleImportHistory))
+	s.mux.HandleFunc("/api/settings/naming", s.requireAdmin(s.handleNamingTemplates))
+	s.mux.HandleFunc("/api/storage/status", s.requireAdmin(s.handleStorageStatus))
+
 	// Wanted/Monitoring routes (admin only)
 	s.mux.HandleFunc("/api/wanted", s.requireAdmin(s.handleWantedItems))
 	s.mux.HandleFunc("/api/wanted/", s.requireAdmin(s.handleWantedItem))
 	s.mux.HandleFunc("/api/wanted/search/", s.requireAdmin(s.handleWantedSearch))
 
+	// Public route for login background (no auth required)
+	s.mux.HandleFunc("/api/public/trending-posters", s.handlePublicTrendingPosters)
+
 	// Discover routes (authenticated)
 	s.mux.HandleFunc("/api/discover/movies/trending", s.requireAuth(s.handleDiscoverTrendingMovies))
 	s.mux.HandleFunc("/api/discover/movies/popular", s.requireAuth(s.handleDiscoverPopularMovies))
 	s.mux.HandleFunc("/api/discover/movies/upcoming", s.requireAuth(s.handleDiscoverUpcomingMovies))
+	s.mux.HandleFunc("/api/discover/movies/theatrical", s.requireAuth(s.handleDiscoverTheatricalReleases))
 	s.mux.HandleFunc("/api/discover/movies/top-rated", s.requireAuth(s.handleDiscoverTopRatedMovies))
 	s.mux.HandleFunc("/api/discover/movies/genre/", s.requireAuth(s.handleDiscoverMoviesByGenre))
 	s.mux.HandleFunc("/api/discover/shows/trending", s.requireAuth(s.handleDiscoverTrendingTV))
 	s.mux.HandleFunc("/api/discover/shows/popular", s.requireAuth(s.handleDiscoverPopularTV))
 	s.mux.HandleFunc("/api/discover/shows/top-rated", s.requireAuth(s.handleDiscoverTopRatedTV))
+	s.mux.HandleFunc("/api/discover/shows/upcoming", s.requireAuth(s.handleDiscoverUpcomingTV))
 	s.mux.HandleFunc("/api/discover/shows/genre/", s.requireAuth(s.handleDiscoverTVByGenre))
 	s.mux.HandleFunc("/api/discover/genres/movie", s.requireAuth(s.handleMovieGenres))
 	s.mux.HandleFunc("/api/discover/genres/tv", s.requireAuth(s.handleTVGenres))
@@ -393,6 +419,12 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request, libraryID in
 		"status":  "scanning",
 		"message": "Library scan started",
 	})
+}
+
+func (s *Server) handleScanProgress(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	progress := s.scanner.GetProgress()
+	json.NewEncoder(w).Encode(progress)
 }
 
 // Content filtering for kids
@@ -630,6 +662,49 @@ func (s *Server) sendShowDetail(w http.ResponseWriter, show *database.Show) {
 	}
 
 	json.NewEncoder(w).Encode(detail)
+}
+
+func (s *Server) handleEpisode(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	// Parse path: /api/episodes/{id}
+	path := strings.TrimPrefix(r.URL.Path, "/api/episodes/")
+	if path == "" {
+		http.Error(w, "Episode ID required", http.StatusBadRequest)
+		return
+	}
+
+	id, err := strconv.ParseInt(path, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid episode ID", http.StatusBadRequest)
+		return
+	}
+
+	episode, err := s.db.GetEpisode(id)
+	if err != nil {
+		http.Error(w, "Episode not found", http.StatusNotFound)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		json.NewEncoder(w).Encode(episode)
+	case http.MethodDelete:
+		// Delete the file if it exists
+		if episode.Path != "" {
+			if err := os.Remove(episode.Path); err != nil && !os.IsNotExist(err) {
+				log.Printf("Failed to delete episode file: %v", err)
+			}
+		}
+		// Delete from database
+		if err := s.db.DeleteEpisode(id); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
@@ -958,9 +1033,10 @@ func (s *Server) handleMediaInfo(w http.ResponseWriter, r *http.Request) {
 	// Parse ffprobe output
 	var probeResult struct {
 		Format struct {
-			Duration string `json:"duration"`
-			Size     string `json:"size"`
-			BitRate  string `json:"bit_rate"`
+			FormatName string `json:"format_name"`
+			Duration   string `json:"duration"`
+			Size       string `json:"size"`
+			BitRate    string `json:"bit_rate"`
 		} `json:"format"`
 		Streams []struct {
 			Index          int               `json:"index"`
@@ -1062,11 +1138,27 @@ func (s *Server) handleMediaInfo(w http.ResponseWriter, r *http.Request) {
 	externalTracks := s.findExternalSubtitles(filePath, subtitleIndex)
 	subtitleTracks = append(subtitleTracks, externalTracks...)
 
+	// Get container format (e.g., "matroska,webm" -> "MKV")
+	container := probeResult.Format.FormatName
+	containerMap := map[string]string{
+		"matroska,webm": "MKV",
+		"mov,mp4,m4a,3gp,3g2,mj2": "MP4",
+		"avi": "AVI",
+		"mpegts": "TS",
+		"webm": "WEBM",
+	}
+	if mapped, ok := containerMap[container]; ok {
+		container = mapped
+	} else {
+		container = strings.ToUpper(strings.Split(container, ",")[0])
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"duration":       duration,
 		"fileSize":       fileSize,
 		"bitRate":        containerBitRate,
+		"container":      container,
 		"videoStreams":   videoStreams,
 		"audioStreams":   audioStreams,
 		"subtitleTracks": subtitleTracks,
@@ -1407,6 +1499,24 @@ func (s *Server) handleMetadataRefresh(w http.ResponseWriter, r *http.Request) {
 		"refreshed": refreshed,
 		"errors":    errors,
 		"total":     len(movies) + len(shows),
+	})
+}
+
+func (s *Server) handleLibraryClear(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if err := s.db.ClearAllLibraryData(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "All library data cleared",
 	})
 }
 
@@ -3111,6 +3221,39 @@ func (s *Server) enrichTVResults(result *metadata.DiscoverResult) *DiscoverResul
 	return enriched
 }
 
+// Public endpoint for login page background - returns poster URLs only
+func (s *Server) handlePublicTrendingPosters(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var posters []string
+
+	// Get trending movies
+	movies, err := s.metadata.GetTrendingMovies(1)
+	if err == nil {
+		for _, m := range movies.Results {
+			if m.PosterPath != "" {
+				posters = append(posters, m.PosterPath)
+			}
+		}
+	}
+
+	// Get trending TV shows
+	shows, err := s.metadata.GetTrendingTV(1)
+	if err == nil {
+		for _, s := range shows.Results {
+			if s.PosterPath != "" {
+				posters = append(posters, s.PosterPath)
+			}
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string][]string{"posters": posters})
+}
+
 func (s *Server) handleDiscoverTrendingMovies(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -3172,6 +3315,50 @@ func (s *Server) handleDiscoverUpcomingMovies(w http.ResponseWriter, r *http.Req
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(s.enrichMovieResults(result))
+}
+
+func (s *Server) handleDiscoverTheatricalReleases(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	page := 1
+	if p := r.URL.Query().Get("page"); p != "" {
+		page, _ = strconv.Atoi(p)
+	}
+
+	region := r.URL.Query().Get("region") // Optional: US, GB, CA, AU, etc.
+
+	result, err := s.metadata.GetTheatricalReleases(region, page)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(s.enrichMovieResults(result))
+}
+
+func (s *Server) handleDiscoverUpcomingTV(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	page := 1
+	if p := r.URL.Query().Get("page"); p != "" {
+		page, _ = strconv.Atoi(p)
+	}
+
+	result, err := s.metadata.GetUpcomingTV(page)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(s.enrichTVResults(result))
 }
 
 func (s *Server) handleDiscoverTopRatedMovies(w http.ResponseWriter, r *http.Request) {
@@ -3382,6 +3569,8 @@ func (s *Server) handleDiscoverMovieDetail(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	log.Printf("Discover movie detail request for ID: %d", id)
+
 	if s.metadata == nil {
 		http.Error(w, "TMDB not configured", http.StatusServiceUnavailable)
 		return
@@ -3389,9 +3578,12 @@ func (s *Server) handleDiscoverMovieDetail(w http.ResponseWriter, r *http.Reques
 
 	result, err := s.metadata.GetMovieDetail(id)
 	if err != nil {
+		log.Printf("Error getting movie detail: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	log.Printf("Movie %s has %d recommendations", result.Title, len(result.Recommendations))
 
 	// Enrich with library/request status
 	response := struct {
@@ -4770,6 +4962,7 @@ type SubtitleTrack struct {
 //   GET /api/subtitles/{type}/{id} - List subtitle tracks
 //   GET /api/subtitles/{type}/{id}/track/{index} - Get subtitle as WebVTT
 func (s *Server) handleSubtitles(w http.ResponseWriter, r *http.Request) {
+	log.Printf("handleSubtitles: %s %s", r.Method, r.URL.Path)
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -5025,11 +5218,15 @@ func (s *Server) findExternalSubtitles(mediaPath string, startIndex int) []Subti
 
 // serveSubtitleTrack extracts and serves a subtitle track as WebVTT
 func (s *Server) serveSubtitleTrack(w http.ResponseWriter, r *http.Request, filePath string, trackIndex int) {
+	log.Printf("serveSubtitleTrack: file=%s, trackIndex=%d", filePath, trackIndex)
+
 	// First, get count of embedded subtitles to determine if this is external
 	embeddedCount := s.countEmbeddedSubtitles(filePath)
+	log.Printf("serveSubtitleTrack: embeddedCount=%d", embeddedCount)
 
 	if trackIndex >= embeddedCount {
 		// This is an external subtitle file
+		log.Printf("serveSubtitleTrack: looking for external subtitle")
 		externalTracks := s.findExternalSubtitles(filePath, embeddedCount)
 		for _, track := range externalTracks {
 			if track.Index == trackIndex {
@@ -5041,28 +5238,191 @@ func (s *Server) serveSubtitleTrack(w http.ResponseWriter, r *http.Request, file
 		return
 	}
 
-	// Embedded subtitle - use FFmpeg to extract and convert to WebVTT
-	// -map 0:s:{index} selects the subtitle stream by index
-	// Use -copyts and -start_at_zero to handle MKV files with offset start times
-	cmd := exec.Command("ffmpeg",
-		"-copyts",
-		"-start_at_zero",
-		"-i", filePath,
-		"-map", fmt.Sprintf("0:s:%d", trackIndex),
-		"-f", "webvtt",
-		"-",
-	)
+	// Check for pre-extracted subtitles in the "subtitles" subfolder next to the video
+	videoDir := filepath.Dir(filePath)
+	baseName := filepath.Base(filePath)
+	baseNameNoExt := strings.TrimSuffix(baseName, filepath.Ext(baseName))
+	subtitlesDir := filepath.Join(videoDir, "subtitles")
 
-	output, err := cmd.Output()
-	if err != nil {
-		http.Error(w, "Failed to extract subtitle", http.StatusInternalServerError)
+	// Look for VTT files matching pattern: {name}.{index}.{lang}.vtt
+	if files, err := os.ReadDir(subtitlesDir); err == nil {
+		pattern := fmt.Sprintf("%s.%d.", baseNameNoExt, trackIndex)
+		for _, f := range files {
+			if strings.HasPrefix(f.Name(), pattern) && strings.HasSuffix(f.Name(), ".vtt") {
+				vttPath := filepath.Join(subtitlesDir, f.Name())
+				if cached, err := os.ReadFile(vttPath); err == nil {
+					log.Printf("serveSubtitleTrack: found pre-extracted subtitle: %s", f.Name())
+					w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
+					w.Header().Set("Cache-Control", "max-age=86400")
+					w.Write(cached)
+					return
+				}
+			}
+		}
+	}
+
+	// Fallback: check central cache directory
+	cacheDir := filepath.Join(filepath.Dir(s.config.DBPath), "subtitles")
+	os.MkdirAll(cacheDir, 0755)
+	cacheFile := filepath.Join(cacheDir, fmt.Sprintf("%s.track%d.vtt", baseName, trackIndex))
+
+	// Check disk cache
+	if cached, err := os.ReadFile(cacheFile); err == nil {
+		log.Printf("serveSubtitleTrack: disk cache hit, returning %d bytes", len(cached))
+		w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
+		w.Header().Set("Cache-Control", "max-age=86400")
+		w.Write(cached)
 		return
 	}
 
+	// Check memory cache
+	cacheKey := fmt.Sprintf("%s:%d", filePath, trackIndex)
+	s.subtitleMu.RLock()
+	cached, found := s.subtitleCache[cacheKey]
+	s.subtitleMu.RUnlock()
+
+	if found {
+		log.Printf("serveSubtitleTrack: memory cache hit, returning %d bytes", len(cached))
+		w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
+		w.Header().Set("Cache-Control", "max-age=86400")
+		w.Write(cached)
+		return
+	}
+
+	// Embedded subtitle - extract and convert to WebVTT
+	log.Printf("serveSubtitleTrack: cache miss, extracting from: %s (this may take 1-2 minutes for large files)", filePath)
+
+	var output []byte
+	var err error
+
+	// Use mkvextract for MKV files, otherwise use ffmpeg
+	if strings.HasSuffix(strings.ToLower(filePath), ".mkv") {
+		output, err = s.extractSubtitleMKV(filePath, trackIndex)
+	} else {
+		output, err = s.extractSubtitleFFmpeg(filePath, trackIndex)
+	}
+
+	if err != nil {
+		log.Printf("serveSubtitleTrack: extraction error: %v", err)
+		http.Error(w, "Failed to extract subtitle", http.StatusInternalServerError)
+		return
+	}
+	log.Printf("serveSubtitleTrack: extracted %d bytes, caching to disk", len(output))
+
+	// Save to disk cache (persistent)
+	if err := os.WriteFile(cacheFile, output, 0644); err != nil {
+		log.Printf("serveSubtitleTrack: failed to save to disk cache: %v", err)
+	}
+
+	// Also cache in memory for current session
+	s.subtitleMu.Lock()
+	s.subtitleCache[cacheKey] = output
+	s.subtitleMu.Unlock()
+
 	// Set headers for WebVTT
 	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
-	w.Header().Set("Cache-Control", "max-age=3600") // Cache for 1 hour
+	w.Header().Set("Cache-Control", "max-age=86400") // Cache for 24 hours
 	w.Write(output)
+}
+
+// extractSubtitleMKV uses mkvextract for fast MKV subtitle extraction
+func (s *Server) extractSubtitleMKV(filePath string, trackIndex int) ([]byte, error) {
+	// First get the actual track ID from ffprobe (subtitle stream index -> MKV track ID)
+	cmd := exec.Command("ffprobe",
+		"-v", "quiet",
+		"-print_format", "json",
+		"-show_streams",
+		"-select_streams", "s",
+		filePath,
+	)
+	probeOutput, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("ffprobe failed: %w", err)
+	}
+
+	var probeResult struct {
+		Streams []struct {
+			Index int `json:"index"`
+		} `json:"streams"`
+	}
+	if err := json.Unmarshal(probeOutput, &probeResult); err != nil {
+		return nil, fmt.Errorf("failed to parse ffprobe output: %w", err)
+	}
+
+	if trackIndex >= len(probeResult.Streams) {
+		return nil, fmt.Errorf("track index out of range")
+	}
+
+	// Get the actual stream index in the file
+	actualIndex := probeResult.Streams[trackIndex].Index
+
+	// Create temp file for extracted subtitle
+	tmpFile, err := os.CreateTemp("", "subtitle-*.srt")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	tmpFile.Close()
+	defer os.Remove(tmpPath)
+
+	// Extract with mkvextract
+	cmd = exec.Command("mkvextract", "tracks", filePath, fmt.Sprintf("%d:%s", actualIndex, tmpPath))
+	if err := cmd.Run(); err != nil {
+		// Fall back to ffmpeg if mkvextract fails
+		log.Printf("mkvextract failed, falling back to ffmpeg: %v", err)
+		return s.extractSubtitleFFmpeg(filePath, trackIndex)
+	}
+
+	// Read extracted subtitle
+	srtData, err := os.ReadFile(tmpPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read extracted subtitle: %w", err)
+	}
+
+	// Convert SRT to VTT
+	return s.srtToVtt(srtData), nil
+}
+
+// srtToVtt converts SRT subtitle format to WebVTT
+func (s *Server) srtToVtt(srt []byte) []byte {
+	content := string(srt)
+
+	// Replace SRT timestamp format (00:00:00,000) with VTT format (00:00:00.000)
+	content = strings.ReplaceAll(content, ",", ".")
+
+	// Add VTT header
+	vtt := "WEBVTT\n\n" + content
+
+	return []byte(vtt)
+}
+
+// extractSubtitleFFmpeg uses ffmpeg for subtitle extraction (fallback)
+func (s *Server) extractSubtitleFFmpeg(filePath string, trackIndex int) ([]byte, error) {
+	tmpFile, err := os.CreateTemp("", "subtitle-*.vtt")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	tmpFile.Close()
+	defer os.Remove(tmpPath)
+
+	cmd := exec.Command("ffmpeg",
+		"-y",
+		"-v", "error",
+		"-i", filePath,
+		"-map", fmt.Sprintf("0:s:%d", trackIndex),
+		"-f", "webvtt",
+		tmpPath,
+	)
+
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return nil, fmt.Errorf("ffmpeg error: %v, stderr: %s", err, string(exitErr.Stderr))
+		}
+		return nil, fmt.Errorf("ffmpeg error: %w", err)
+	}
+
+	return os.ReadFile(tmpPath)
 }
 
 // countEmbeddedSubtitles returns the number of embedded subtitle streams in a file
@@ -5124,4 +5484,304 @@ func (s *Server) serveExternalSubtitle(w http.ResponseWriter, subPath string) {
 	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
 	w.Header().Set("Cache-Control", "max-age=3600")
 	w.Write(output)
+}
+
+// Quality Preset handlers
+
+func (s *Server) handleQualityPresets(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	switch r.Method {
+	case http.MethodGet:
+		presets, err := s.db.GetQualityPresets()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(presets)
+
+	case http.MethodPost:
+		var preset database.QualityPreset
+		if err := json.NewDecoder(r.Body).Decode(&preset); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		if err := s.db.CreateQualityPreset(&preset); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(preset)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleQualityPreset(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/quality/presets/"), "/")
+	if len(parts) == 0 || parts[0] == "" {
+		http.Error(w, "Preset ID required", http.StatusBadRequest)
+		return
+	}
+
+	idStr := parts[0]
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid preset ID", http.StatusBadRequest)
+		return
+	}
+
+	// Check for /api/quality/presets/:id/default
+	if len(parts) > 1 && parts[1] == "default" && r.Method == http.MethodPost {
+		if err := s.db.SetDefaultQualityPreset(id); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		preset, err := s.db.GetQualityPreset(id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		json.NewEncoder(w).Encode(preset)
+
+	case http.MethodPut:
+		var preset database.QualityPreset
+		if err := json.NewDecoder(r.Body).Decode(&preset); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		preset.ID = id
+		if err := s.db.UpdateQualityPreset(&preset); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(preset)
+
+	case http.MethodDelete:
+		if err := s.db.DeleteQualityPreset(id); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// Import History handler
+
+func (s *Server) handleImportHistory(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	limit := 50
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+
+	history, err := s.db.GetImportHistory(limit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(history)
+}
+
+// Download Items handlers (database-tracked downloads for import)
+
+func (s *Server) handleDownloadItems(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	downloads, err := s.db.GetDownloads()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if downloads == nil {
+		downloads = []database.Download{}
+	}
+
+	json.NewEncoder(w).Encode(downloads)
+}
+
+func (s *Server) handleDownloadItem(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	// Extract ID from URL
+	idStr := strings.TrimPrefix(r.URL.Path, "/api/download-items/")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid download ID", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodDelete:
+		if err := s.db.DeleteDownload(id); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// Naming Templates handler
+
+func (s *Server) handleNamingTemplates(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	switch r.Method {
+	case http.MethodGet:
+		templates, err := s.db.GetNamingTemplates()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(templates)
+
+	case http.MethodPut:
+		var template database.NamingTemplate
+		if err := json.NewDecoder(r.Body).Decode(&template); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		if err := s.db.UpdateNamingTemplate(&template); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(template)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// Storage Status handler
+
+// calculateDirSize walks a directory and sums all file sizes
+func calculateDirSize(path string) int64 {
+	var size int64
+	filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil // Skip errors
+		}
+		if !info.IsDir() {
+			size += info.Size()
+		}
+		return nil
+	})
+	return size
+}
+
+func (s *Server) handleStorageStatus(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Get storage settings
+	settings, err := s.db.GetAllSettings()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	thresholdGB := int64(100)
+	if val, ok := settings["storage_threshold_gb"]; ok {
+		if parsed, err := strconv.ParseInt(val, 10, 64); err == nil {
+			thresholdGB = parsed
+		}
+	}
+
+	pauseEnabled := true
+	if val, ok := settings["storage_pause_enabled"]; ok {
+		pauseEnabled = val == "true"
+	}
+
+	upgradeDeleteOld := true
+	if val, ok := settings["upgrade_delete_old"]; ok {
+		upgradeDeleteOld = val == "true"
+	}
+
+	// Get libraries and calculate sizes by scanning folders
+	libraries, err := s.db.GetLibraries()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var moviesSize, tvSize, musicSize, booksSize int64
+	for _, lib := range libraries {
+		size := calculateDirSize(lib.Path)
+		switch lib.Type {
+		case "movies":
+			moviesSize += size
+		case "tv", "anime":
+			tvSize += size
+		case "music":
+			musicSize += size
+		case "books":
+			booksSize += size
+		}
+	}
+
+	// Get overall disk usage - try common mount points
+	var diskUsage *storage.DiskUsage
+	for _, checkPath := range []string{"/media", "/app/data", "/"} {
+		usage, err := storage.GetDiskUsage(checkPath)
+		if err == nil {
+			diskUsage = usage
+			break
+		}
+	}
+
+	// Return simplified response
+	response := struct {
+		ThresholdGB      int64              `json:"thresholdGb"`
+		PauseEnabled     bool               `json:"pauseEnabled"`
+		UpgradeDeleteOld bool               `json:"upgradeDeleteOld"`
+		MoviesSize       int64              `json:"moviesSize"`
+		TvSize           int64              `json:"tvSize"`
+		MusicSize        int64              `json:"musicSize"`
+		BooksSize        int64              `json:"booksSize"`
+		DiskUsage        *storage.DiskUsage `json:"diskUsage,omitempty"`
+	}{
+		ThresholdGB:      thresholdGB,
+		PauseEnabled:     pauseEnabled,
+		UpgradeDeleteOld: upgradeDeleteOld,
+		MoviesSize:       moviesSize,
+		TvSize:           tvSize,
+		MusicSize:        musicSize,
+		BooksSize:        booksSize,
+		DiskUsage:        diskUsage,
+	}
+
+	json.NewEncoder(w).Encode(response)
 }

@@ -50,7 +50,7 @@ func main() {
 	meta := metadata.NewService(db, apiKey, imageDir)
 
 	// Initialize scanner with metadata service
-	scan := scanner.New(db, meta)
+	scan := scanner.New(db, meta, dataDir)
 
 	// Initialize shared managers
 	downloads := downloadclient.NewManager(db)

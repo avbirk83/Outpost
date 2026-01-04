@@ -2,6 +2,7 @@ package database
 
 import (
 	"database/sql"
+	"encoding/json"
 	"strconv"
 	"strings"
 	"time"
@@ -22,38 +23,43 @@ type Library struct {
 }
 
 type Movie struct {
-	ID               int64     `json:"id"`
-	LibraryID        int64     `json:"libraryId"`
-	TmdbID           *int64    `json:"tmdbId,omitempty"`
-	ImdbID           *string   `json:"imdbId,omitempty"`
-	Title            string    `json:"title"`
-	OriginalTitle    *string   `json:"originalTitle,omitempty"`
-	Year             int       `json:"year"`
-	Overview         *string   `json:"overview,omitempty"`
-	Tagline          *string   `json:"tagline,omitempty"`
-	Runtime          *int      `json:"runtime,omitempty"`
-	Rating           *float64  `json:"rating,omitempty"`
-	ContentRating    *string   `json:"contentRating,omitempty"`
-	Genres           *string   `json:"genres,omitempty"`
-	Cast             *string   `json:"cast,omitempty"`
-	Crew             *string   `json:"crew,omitempty"`
-	Director         *string   `json:"director,omitempty"`
-	Writer           *string   `json:"writer,omitempty"`
-	Editor           *string   `json:"editor,omitempty"`
-	Producers        *string   `json:"producers,omitempty"`
-	Status           *string   `json:"status,omitempty"`
-	Budget           *int64    `json:"budget,omitempty"`
-	Revenue          *int64    `json:"revenue,omitempty"`
-	Country          *string   `json:"country,omitempty"`
-	OriginalLanguage *string   `json:"originalLanguage,omitempty"`
-	Trailers         *string   `json:"trailers,omitempty"`
-	PosterPath       *string   `json:"posterPath,omitempty"`
-	BackdropPath     *string   `json:"backdropPath,omitempty"`
-	FocalX           *float64  `json:"focalX,omitempty"`
-	FocalY           *float64  `json:"focalY,omitempty"`
-	Path             string    `json:"path"`
-	Size             int64     `json:"size"`
-	AddedAt          time.Time `json:"addedAt"`
+	ID                 int64     `json:"id"`
+	LibraryID          int64     `json:"libraryId"`
+	TmdbID             *int64    `json:"tmdbId,omitempty"`
+	ImdbID             *string   `json:"imdbId,omitempty"`
+	Title              string    `json:"title"`
+	OriginalTitle      *string   `json:"originalTitle,omitempty"`
+	Year               int       `json:"year"`
+	Overview           *string   `json:"overview,omitempty"`
+	Tagline            *string   `json:"tagline,omitempty"`
+	Runtime            *int      `json:"runtime,omitempty"`
+	Rating             *float64  `json:"rating,omitempty"`
+	ContentRating      *string   `json:"contentRating,omitempty"`
+	Genres             *string   `json:"genres,omitempty"`
+	Cast               *string   `json:"cast,omitempty"`
+	Crew               *string   `json:"crew,omitempty"`
+	Director           *string   `json:"director,omitempty"`
+	Writer             *string   `json:"writer,omitempty"`
+	Editor             *string   `json:"editor,omitempty"`
+	Producers          *string   `json:"producers,omitempty"`
+	Status             *string   `json:"status,omitempty"`
+	Budget             *int64    `json:"budget,omitempty"`
+	Revenue            *int64    `json:"revenue,omitempty"`
+	Country            *string   `json:"country,omitempty"`
+	OriginalLanguage   *string   `json:"originalLanguage,omitempty"`
+	TheatricalRelease  *string   `json:"theatricalRelease,omitempty"`
+	DigitalRelease     *string   `json:"digitalRelease,omitempty"`
+	Studios            *string   `json:"studios,omitempty"`
+	Trailers           *string   `json:"trailers,omitempty"`
+	PosterPath         *string   `json:"posterPath,omitempty"`
+	BackdropPath       *string   `json:"backdropPath,omitempty"`
+	FocalX             *float64  `json:"focalX,omitempty"`
+	FocalY             *float64  `json:"focalY,omitempty"`
+	Path               string    `json:"path"`
+	Size               int64     `json:"size"`
+	AddedAt            time.Time `json:"addedAt"`
+	LastWatchedAt      *string   `json:"lastWatchedAt,omitempty"`
+	PlayCount          int       `json:"playCount"`
 }
 
 type Show struct {
@@ -74,10 +80,11 @@ type Show struct {
 	Crew          *string  `json:"crew,omitempty"`
 	Network       *string  `json:"network,omitempty"`
 	PosterPath    *string  `json:"posterPath,omitempty"`
-	BackdropPath  *string  `json:"backdropPath,omitempty"`
-	FocalX        *float64 `json:"focalX,omitempty"`
-	FocalY        *float64 `json:"focalY,omitempty"`
-	Path          string   `json:"path"`
+	BackdropPath  *string     `json:"backdropPath,omitempty"`
+	FocalX        *float64   `json:"focalX,omitempty"`
+	FocalY        *float64   `json:"focalY,omitempty"`
+	Path          string     `json:"path"`
+	AddedAt       *time.Time `json:"addedAt,omitempty"`
 }
 
 type Season struct {
@@ -265,6 +272,90 @@ type WatchlistItem struct {
 	AddedAt   time.Time `json:"addedAt"`
 }
 
+// Quality preset types
+
+type QualityPreset struct {
+	ID               int64     `json:"id"`
+	Name             string    `json:"name"`
+	IsDefault        bool      `json:"isDefault"`
+	IsBuiltIn        bool      `json:"isBuiltIn"`
+	Resolution       string    `json:"resolution"`       // "4k", "1080p", "720p", "480p"
+	Source           string    `json:"source"`           // "remux", "bluray", "web", "any"
+	HDRFormats       []string  `json:"hdrFormats"`       // Array of HDR formats
+	Codec            string    `json:"codec"`            // "any", "hevc", "av1"
+	AudioFormats     []string  `json:"audioFormats"`     // Array of audio formats
+	PreferredEdition string    `json:"preferredEdition"` // "any", "theatrical", "directors", etc
+	MinSeeders       int       `json:"minSeeders"`
+	PreferSeasonPacks bool     `json:"preferSeasonPacks"`
+	AutoUpgrade      bool      `json:"autoUpgrade"`
+	CreatedAt        time.Time `json:"createdAt"`
+	UpdatedAt        time.Time `json:"updatedAt"`
+}
+
+type MediaQualityOverride struct {
+	ID        int64     `json:"id"`
+	MediaID   int64     `json:"mediaId"`
+	MediaType string    `json:"mediaType"`
+	PresetID  *int64    `json:"presetId"`
+	Monitored bool      `json:"monitored"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+type MediaQualityStatus struct {
+	ID                int64      `json:"id"`
+	MediaID           int64      `json:"mediaId"`
+	MediaType         string     `json:"mediaType"`
+	CurrentResolution *string    `json:"currentResolution"`
+	CurrentSource     *string    `json:"currentSource"`
+	CurrentHDR        *string    `json:"currentHdr"`
+	CurrentAudio      *string    `json:"currentAudio"`
+	CurrentEdition    *string    `json:"currentEdition"`
+	TargetMet         bool       `json:"targetMet"`
+	UpgradeAvailable  bool       `json:"upgradeAvailable"`
+	LastSearch        *time.Time `json:"lastSearch"`
+	CreatedAt         time.Time  `json:"createdAt"`
+	UpdatedAt         time.Time  `json:"updatedAt"`
+}
+
+// Download tracking types
+
+type Download struct {
+	ID               int64      `json:"id"`
+	DownloadClientID *int64     `json:"downloadClientId"`
+	ExternalID       string     `json:"externalId"`
+	MediaID          *int64     `json:"mediaId"`
+	MediaType        *string    `json:"mediaType"`
+	Title            string     `json:"title"`
+	Size             int64      `json:"size"`
+	Status           string     `json:"status"` // downloading, completed, importing, imported, failed, unmatched
+	Progress         float64    `json:"progress"`
+	DownloadPath     *string    `json:"downloadPath"`
+	ImportedPath     *string    `json:"importedPath"`
+	Error            *string    `json:"error"`
+	CreatedAt        time.Time  `json:"createdAt"`
+	UpdatedAt        time.Time  `json:"updatedAt"`
+}
+
+type NamingTemplate struct {
+	ID             int64  `json:"id"`
+	Type           string `json:"type"` // movie, tv, daily
+	FolderTemplate string `json:"folderTemplate"`
+	FileTemplate   string `json:"fileTemplate"`
+	IsDefault      bool   `json:"isDefault"`
+}
+
+type ImportHistory struct {
+	ID         int64     `json:"id"`
+	DownloadID *int64    `json:"downloadId"`
+	SourcePath string    `json:"sourcePath"`
+	DestPath   string    `json:"destPath"`
+	MediaID    *int64    `json:"mediaId"`
+	MediaType  *string   `json:"mediaType"`
+	Success    bool      `json:"success"`
+	Error      *string   `json:"error"`
+	CreatedAt  time.Time `json:"createdAt"`
+}
+
 func New(dbPath string) (*Database, error) {
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -315,6 +406,9 @@ func (d *Database) migrate() error {
 		revenue INTEGER,
 		country TEXT,
 		original_language TEXT,
+		theatrical_release TEXT,
+		digital_release TEXT,
+		studios TEXT,
 		trailers TEXT,
 		poster_path TEXT,
 		backdrop_path TEXT,
@@ -323,6 +417,8 @@ func (d *Database) migrate() error {
 		path TEXT NOT NULL UNIQUE,
 		size INTEGER,
 		added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		last_watched_at TEXT,
+		play_count INTEGER DEFAULT 0,
 		FOREIGN KEY (library_id) REFERENCES libraries(id) ON DELETE CASCADE
 	);
 
@@ -348,6 +444,7 @@ func (d *Database) migrate() error {
 		focal_x REAL,
 		focal_y REAL,
 		path TEXT NOT NULL UNIQUE,
+		added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY (library_id) REFERENCES libraries(id) ON DELETE CASCADE
 	);
 
@@ -548,6 +645,93 @@ func (d *Database) migrate() error {
 		added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY (library_id) REFERENCES libraries(id) ON DELETE CASCADE
 	);
+
+	-- Quality presets (built-in + custom)
+	CREATE TABLE IF NOT EXISTS quality_presets (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL,
+		is_default INTEGER DEFAULT 0,
+		is_built_in INTEGER DEFAULT 0,
+		resolution TEXT NOT NULL,
+		source TEXT NOT NULL,
+		hdr_formats TEXT,
+		codec TEXT DEFAULT 'any',
+		audio_formats TEXT,
+		preferred_edition TEXT DEFAULT 'any',
+		min_seeders INTEGER DEFAULT 3,
+		prefer_season_packs INTEGER DEFAULT 1,
+		auto_upgrade INTEGER DEFAULT 1,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	-- Per-item quality override
+	CREATE TABLE IF NOT EXISTS media_quality_override (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		media_id INTEGER NOT NULL,
+		media_type TEXT NOT NULL,
+		preset_id INTEGER REFERENCES quality_presets(id),
+		monitored INTEGER DEFAULT 1,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	-- Track current vs target quality
+	CREATE TABLE IF NOT EXISTS media_quality_status (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		media_id INTEGER NOT NULL,
+		media_type TEXT NOT NULL,
+		current_resolution TEXT,
+		current_source TEXT,
+		current_hdr TEXT,
+		current_audio TEXT,
+		current_edition TEXT,
+		target_met INTEGER DEFAULT 0,
+		upgrade_available INTEGER DEFAULT 0,
+		last_search DATETIME,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE(media_id, media_type)
+	);
+
+	-- Download tracking
+	CREATE TABLE IF NOT EXISTS downloads (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		download_client_id INTEGER REFERENCES download_clients(id),
+		external_id TEXT NOT NULL,
+		media_id INTEGER,
+		media_type TEXT,
+		title TEXT NOT NULL,
+		size INTEGER,
+		status TEXT NOT NULL DEFAULT 'downloading',
+		progress REAL DEFAULT 0,
+		download_path TEXT,
+		imported_path TEXT,
+		error TEXT,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	-- Naming templates
+	CREATE TABLE IF NOT EXISTS naming_templates (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		type TEXT NOT NULL,
+		folder_template TEXT NOT NULL,
+		file_template TEXT NOT NULL,
+		is_default INTEGER DEFAULT 0
+	);
+
+	-- Import history
+	CREATE TABLE IF NOT EXISTS import_history (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		download_id INTEGER REFERENCES downloads(id),
+		source_path TEXT NOT NULL,
+		dest_path TEXT NOT NULL,
+		media_id INTEGER,
+		media_type TEXT,
+		success INTEGER,
+		error TEXT,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
 	`
 	_, err := d.db.Exec(schema)
 	if err != nil {
@@ -571,10 +755,45 @@ func (d *Database) migrate() error {
 		"ALTER TABLE movies ADD COLUMN producers TEXT",
 		"ALTER TABLE movies ADD COLUMN crew TEXT",
 		"ALTER TABLE shows ADD COLUMN crew TEXT",
+		"ALTER TABLE movies ADD COLUMN theatrical_release TEXT",
+		"ALTER TABLE movies ADD COLUMN digital_release TEXT",
+		"ALTER TABLE movies ADD COLUMN studios TEXT",
+		"ALTER TABLE movies ADD COLUMN last_watched_at TEXT",
+		"ALTER TABLE movies ADD COLUMN play_count INTEGER DEFAULT 0",
+		"ALTER TABLE shows ADD COLUMN added_at DATETIME DEFAULT CURRENT_TIMESTAMP",
 	}
 	for _, m := range migrations {
 		// Ignore errors (column may already exist)
 		d.db.Exec(m)
+	}
+
+	// Seed built-in quality presets if none exist
+	var presetCount int
+	d.db.QueryRow("SELECT COUNT(*) FROM quality_presets WHERE is_built_in = 1").Scan(&presetCount)
+	if presetCount == 0 {
+		presets := []string{
+			`INSERT INTO quality_presets (name, is_built_in, is_default, resolution, source, hdr_formats, audio_formats, min_seeders, auto_upgrade) VALUES ('Best', 1, 1, '4k', 'remux', '["dv", "hdr10+", "hdr10"]', '["atmos", "truehd", "dtshd"]', 3, 1)`,
+			`INSERT INTO quality_presets (name, is_built_in, resolution, source, hdr_formats, min_seeders, auto_upgrade) VALUES ('High', 1, '4k', 'web', '["dv", "hdr10+", "hdr10"]', 3, 1)`,
+			`INSERT INTO quality_presets (name, is_built_in, resolution, source, min_seeders, auto_upgrade) VALUES ('Balanced', 1, '1080p', 'web', 3, 1)`,
+			`INSERT INTO quality_presets (name, is_built_in, resolution, source, codec, min_seeders, auto_upgrade) VALUES ('Storage Saver', 1, '1080p', 'web', 'hevc', 3, 0)`,
+		}
+		for _, p := range presets {
+			d.db.Exec(p)
+		}
+	}
+
+	// Seed default naming templates if none exist
+	var templateCount int
+	d.db.QueryRow("SELECT COUNT(*) FROM naming_templates").Scan(&templateCount)
+	if templateCount == 0 {
+		templates := []string{
+			`INSERT INTO naming_templates (type, folder_template, file_template, is_default) VALUES ('movie', '{Title} ({Year})', '{Title} ({Year})', 1)`,
+			`INSERT INTO naming_templates (type, folder_template, file_template, is_default) VALUES ('tv', '{Title} ({Year})/Season {Season:00}', '{Title} - S{Season:00}E{Episode:00} - {EpisodeTitle}', 1)`,
+			`INSERT INTO naming_templates (type, folder_template, file_template, is_default) VALUES ('daily', '{Title} ({Year})/Season {Year}', '{Title} - {Air-Date} - {EpisodeTitle}', 1)`,
+		}
+		for _, t := range templates {
+			d.db.Exec(t)
+		}
 	}
 
 	return nil
@@ -628,6 +847,28 @@ func (d *Database) DeleteLibrary(id int64) error {
 	return err
 }
 
+// ClearAllLibraryData removes all movies, shows, seasons, and episodes but keeps library definitions
+func (d *Database) ClearAllLibraryData() error {
+	// Delete in order to respect foreign key constraints
+	if _, err := d.db.Exec("DELETE FROM episodes"); err != nil {
+		return err
+	}
+	if _, err := d.db.Exec("DELETE FROM seasons"); err != nil {
+		return err
+	}
+	if _, err := d.db.Exec("DELETE FROM shows"); err != nil {
+		return err
+	}
+	if _, err := d.db.Exec("DELETE FROM movies"); err != nil {
+		return err
+	}
+	// Also clear progress and continue watching
+	if _, err := d.db.Exec("DELETE FROM progress"); err != nil {
+		return err
+	}
+	return nil
+}
+
 // Movie operations
 
 func (d *Database) CreateMovie(movie *Movie) error {
@@ -648,15 +889,20 @@ func (d *Database) UpdateMovieMetadata(movie *Movie) error {
 			tmdb_id = ?, imdb_id = ?, original_title = ?, overview = ?, tagline = ?,
 			runtime = ?, rating = ?, content_rating = ?, genres = ?, "cast" = ?, crew = ?,
 			director = ?, writer = ?, editor = ?, producers = ?, status = ?, budget = ?, revenue = ?,
-			country = ?, original_language = ?, trailers = ?,
+			country = ?, original_language = ?, theatrical_release = ?, digital_release = ?, studios = ?, trailers = ?,
 			poster_path = ?, backdrop_path = ?, focal_x = ?, focal_y = ?
 		WHERE id = ?`,
 		movie.TmdbID, movie.ImdbID, movie.OriginalTitle, movie.Overview, movie.Tagline,
 		movie.Runtime, movie.Rating, movie.ContentRating, movie.Genres, movie.Cast, movie.Crew,
 		movie.Director, movie.Writer, movie.Editor, movie.Producers, movie.Status, movie.Budget, movie.Revenue,
-		movie.Country, movie.OriginalLanguage, movie.Trailers,
+		movie.Country, movie.OriginalLanguage, movie.TheatricalRelease, movie.DigitalRelease, movie.Studios, movie.Trailers,
 		movie.PosterPath, movie.BackdropPath, movie.FocalX, movie.FocalY, movie.ID,
 	)
+	return err
+}
+
+func (d *Database) UpdateMoviePath(id int64, newPath string) error {
+	_, err := d.db.Exec(`UPDATE movies SET path = ? WHERE id = ?`, newPath, id)
 	return err
 }
 
@@ -664,7 +910,7 @@ func (d *Database) GetMovies() ([]Movie, error) {
 	rows, err := d.db.Query(`
 		SELECT id, library_id, tmdb_id, imdb_id, title, original_title, year, overview, tagline,
 			runtime, rating, content_rating, genres, "cast", crew, director, writer, editor, producers, status, budget, revenue,
-			country, original_language, trailers, poster_path, backdrop_path, focal_x, focal_y, path, size, added_at
+			country, original_language, theatrical_release, digital_release, studios, trailers, poster_path, backdrop_path, focal_x, focal_y, path, size, added_at, last_watched_at, play_count
 		FROM movies ORDER BY added_at DESC`)
 	if err != nil {
 		return nil, err
@@ -677,8 +923,8 @@ func (d *Database) GetMovies() ([]Movie, error) {
 		if err := rows.Scan(&m.ID, &m.LibraryID, &m.TmdbID, &m.ImdbID, &m.Title, &m.OriginalTitle, &m.Year,
 			&m.Overview, &m.Tagline, &m.Runtime, &m.Rating, &m.ContentRating, &m.Genres, &m.Cast, &m.Crew,
 			&m.Director, &m.Writer, &m.Editor, &m.Producers, &m.Status, &m.Budget, &m.Revenue,
-			&m.Country, &m.OriginalLanguage, &m.Trailers,
-			&m.PosterPath, &m.BackdropPath, &m.FocalX, &m.FocalY, &m.Path, &m.Size, &m.AddedAt); err != nil {
+			&m.Country, &m.OriginalLanguage, &m.TheatricalRelease, &m.DigitalRelease, &m.Studios, &m.Trailers,
+			&m.PosterPath, &m.BackdropPath, &m.FocalX, &m.FocalY, &m.Path, &m.Size, &m.AddedAt, &m.LastWatchedAt, &m.PlayCount); err != nil {
 			return nil, err
 		}
 		movies = append(movies, m)
@@ -729,13 +975,13 @@ func (d *Database) GetMovieByPath(path string) (*Movie, error) {
 	err := d.db.QueryRow(`
 		SELECT id, library_id, tmdb_id, imdb_id, title, original_title, year, overview, tagline,
 			runtime, rating, content_rating, genres, "cast", crew, director, writer, editor, producers, status, budget, revenue,
-			country, original_language, trailers, poster_path, backdrop_path, focal_x, focal_y, path, size, added_at
+			country, original_language, theatrical_release, digital_release, studios, trailers, poster_path, backdrop_path, focal_x, focal_y, path, size, added_at, last_watched_at, play_count
 		FROM movies WHERE path = ?`, path,
 	).Scan(&m.ID, &m.LibraryID, &m.TmdbID, &m.ImdbID, &m.Title, &m.OriginalTitle, &m.Year,
 		&m.Overview, &m.Tagline, &m.Runtime, &m.Rating, &m.ContentRating, &m.Genres, &m.Cast, &m.Crew,
 		&m.Director, &m.Writer, &m.Editor, &m.Producers, &m.Status, &m.Budget, &m.Revenue,
-		&m.Country, &m.OriginalLanguage, &m.Trailers,
-		&m.PosterPath, &m.BackdropPath, &m.FocalX, &m.FocalY, &m.Path, &m.Size, &m.AddedAt)
+		&m.Country, &m.OriginalLanguage, &m.TheatricalRelease, &m.DigitalRelease, &m.Studios, &m.Trailers,
+		&m.PosterPath, &m.BackdropPath, &m.FocalX, &m.FocalY, &m.Path, &m.Size, &m.AddedAt, &m.LastWatchedAt, &m.PlayCount)
 	if err != nil {
 		return nil, err
 	}
@@ -759,11 +1005,11 @@ func (d *Database) CreateShow(show *Show) error {
 func (d *Database) UpdateShowMetadata(show *Show) error {
 	_, err := d.db.Exec(`
 		UPDATE shows SET
-			tmdb_id = ?, tvdb_id = ?, imdb_id = ?, original_title = ?, overview = ?,
+			tmdb_id = ?, tvdb_id = ?, imdb_id = ?, original_title = ?, year = ?, overview = ?,
 			status = ?, rating = ?, content_rating = ?, genres = ?, "cast" = ?, crew = ?,
 			network = ?, poster_path = ?, backdrop_path = ?, focal_x = ?, focal_y = ?
 		WHERE id = ?`,
-		show.TmdbID, show.TvdbID, show.ImdbID, show.OriginalTitle, show.Overview,
+		show.TmdbID, show.TvdbID, show.ImdbID, show.OriginalTitle, show.Year, show.Overview,
 		show.Status, show.Rating, show.ContentRating, show.Genres, show.Cast, show.Crew,
 		show.Network, show.PosterPath, show.BackdropPath, show.FocalX, show.FocalY, show.ID,
 	)
@@ -773,8 +1019,8 @@ func (d *Database) UpdateShowMetadata(show *Show) error {
 func (d *Database) GetShows() ([]Show, error) {
 	rows, err := d.db.Query(`
 		SELECT id, library_id, tmdb_id, tvdb_id, imdb_id, title, original_title, year,
-			overview, status, rating, content_rating, genres, "cast", crew, network, poster_path, backdrop_path, focal_x, focal_y, path
-		FROM shows ORDER BY title`)
+			overview, status, rating, content_rating, genres, "cast", crew, network, poster_path, backdrop_path, focal_x, focal_y, path, added_at
+		FROM shows ORDER BY added_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -783,10 +1029,14 @@ func (d *Database) GetShows() ([]Show, error) {
 	var shows []Show
 	for rows.Next() {
 		var s Show
+		var addedAt sql.NullTime
 		if err := rows.Scan(&s.ID, &s.LibraryID, &s.TmdbID, &s.TvdbID, &s.ImdbID, &s.Title, &s.OriginalTitle, &s.Year,
 			&s.Overview, &s.Status, &s.Rating, &s.ContentRating, &s.Genres, &s.Cast, &s.Crew,
-			&s.Network, &s.PosterPath, &s.BackdropPath, &s.FocalX, &s.FocalY, &s.Path); err != nil {
+			&s.Network, &s.PosterPath, &s.BackdropPath, &s.FocalX, &s.FocalY, &s.Path, &addedAt); err != nil {
 			return nil, err
+		}
+		if addedAt.Valid {
+			s.AddedAt = &addedAt.Time
 		}
 		shows = append(shows, s)
 	}
@@ -795,30 +1045,38 @@ func (d *Database) GetShows() ([]Show, error) {
 
 func (d *Database) GetShowByPath(path string) (*Show, error) {
 	var s Show
+	var addedAt sql.NullTime
 	err := d.db.QueryRow(`
 		SELECT id, library_id, tmdb_id, tvdb_id, imdb_id, title, original_title, year,
-			overview, status, rating, content_rating, genres, "cast", crew, network, poster_path, backdrop_path, focal_x, focal_y, path
+			overview, status, rating, content_rating, genres, "cast", crew, network, poster_path, backdrop_path, focal_x, focal_y, path, added_at
 		FROM shows WHERE path = ?`, path,
 	).Scan(&s.ID, &s.LibraryID, &s.TmdbID, &s.TvdbID, &s.ImdbID, &s.Title, &s.OriginalTitle, &s.Year,
 		&s.Overview, &s.Status, &s.Rating, &s.ContentRating, &s.Genres, &s.Cast, &s.Crew,
-		&s.Network, &s.PosterPath, &s.BackdropPath, &s.FocalX, &s.FocalY, &s.Path)
+		&s.Network, &s.PosterPath, &s.BackdropPath, &s.FocalX, &s.FocalY, &s.Path, &addedAt)
 	if err != nil {
 		return nil, err
+	}
+	if addedAt.Valid {
+		s.AddedAt = &addedAt.Time
 	}
 	return &s, nil
 }
 
 func (d *Database) GetShow(id int64) (*Show, error) {
 	var s Show
+	var addedAt sql.NullTime
 	err := d.db.QueryRow(`
 		SELECT id, library_id, tmdb_id, tvdb_id, imdb_id, title, original_title, year,
-			overview, status, rating, content_rating, genres, "cast", crew, network, poster_path, backdrop_path, focal_x, focal_y, path
+			overview, status, rating, content_rating, genres, "cast", crew, network, poster_path, backdrop_path, focal_x, focal_y, path, added_at
 		FROM shows WHERE id = ?`, id,
 	).Scan(&s.ID, &s.LibraryID, &s.TmdbID, &s.TvdbID, &s.ImdbID, &s.Title, &s.OriginalTitle, &s.Year,
 		&s.Overview, &s.Status, &s.Rating, &s.ContentRating, &s.Genres, &s.Cast, &s.Crew,
-		&s.Network, &s.PosterPath, &s.BackdropPath, &s.FocalX, &s.FocalY, &s.Path)
+		&s.Network, &s.PosterPath, &s.BackdropPath, &s.FocalX, &s.FocalY, &s.Path, &addedAt)
 	if err != nil {
 		return nil, err
+	}
+	if addedAt.Valid {
+		s.AddedAt = &addedAt.Time
 	}
 	return &s, nil
 }
@@ -958,22 +1216,63 @@ func (d *Database) GetEpisode(id int64) (*Episode, error) {
 	return &e, nil
 }
 
+func (d *Database) DeleteEpisode(id int64) error {
+	_, err := d.db.Exec("DELETE FROM episodes WHERE id = ?", id)
+	return err
+}
+
+func (d *Database) UpdateEpisodeSize(id int64, size int64) error {
+	_, err := d.db.Exec("UPDATE episodes SET size = ? WHERE id = ?", size, id)
+	return err
+}
+
+func (d *Database) GetEpisodesWithMissingSize() ([]Episode, error) {
+	rows, err := d.db.Query(`
+		SELECT id, season_id, episode_number, title, overview, air_date, runtime, still_path, path, size
+		FROM episodes WHERE size = 0 OR size IS NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var episodes []Episode
+	for rows.Next() {
+		var e Episode
+		if err := rows.Scan(&e.ID, &e.SeasonID, &e.EpisodeNumber, &e.Title, &e.Overview, &e.AirDate, &e.Runtime, &e.StillPath, &e.Path, &e.Size); err != nil {
+			return nil, err
+		}
+		episodes = append(episodes, e)
+	}
+	return episodes, nil
+}
+
 func (d *Database) GetMovie(id int64) (*Movie, error) {
 	var m Movie
 	err := d.db.QueryRow(`
 		SELECT id, library_id, tmdb_id, imdb_id, title, original_title, year, overview, tagline,
 			runtime, rating, content_rating, genres, "cast", crew, director, writer, editor, producers, status, budget, revenue,
-			country, original_language, trailers, poster_path, backdrop_path, focal_x, focal_y, path, size, added_at
+			country, original_language, theatrical_release, digital_release, studios, trailers, poster_path, backdrop_path, focal_x, focal_y, path, size, added_at, last_watched_at, play_count
 		FROM movies WHERE id = ?`, id,
 	).Scan(&m.ID, &m.LibraryID, &m.TmdbID, &m.ImdbID, &m.Title, &m.OriginalTitle, &m.Year,
 		&m.Overview, &m.Tagline, &m.Runtime, &m.Rating, &m.ContentRating, &m.Genres, &m.Cast, &m.Crew,
 		&m.Director, &m.Writer, &m.Editor, &m.Producers, &m.Status, &m.Budget, &m.Revenue,
-		&m.Country, &m.OriginalLanguage, &m.Trailers,
-		&m.PosterPath, &m.BackdropPath, &m.FocalX, &m.FocalY, &m.Path, &m.Size, &m.AddedAt)
+		&m.Country, &m.OriginalLanguage, &m.TheatricalRelease, &m.DigitalRelease, &m.Studios, &m.Trailers,
+		&m.PosterPath, &m.BackdropPath, &m.FocalX, &m.FocalY, &m.Path, &m.Size, &m.AddedAt, &m.LastWatchedAt, &m.PlayCount)
 	if err != nil {
 		return nil, err
 	}
 	return &m, nil
+}
+
+// UpdateMoviePlayCount increments the play count and updates last watched time
+func (d *Database) UpdateMoviePlayCount(id int64) error {
+	now := time.Now().Format(time.RFC3339)
+	_, err := d.db.Exec(`
+		UPDATE movies SET
+			play_count = play_count + 1,
+			last_watched_at = ?
+		WHERE id = ?`, now, id)
+	return err
 }
 
 // Settings operations
@@ -2493,4 +2792,415 @@ func (d *Database) IsInWatchlist(userID, tmdbID int64, mediaType string) (bool, 
 		WHERE user_id = ? AND tmdb_id = ? AND media_type = ?
 	`, userID, tmdbID, mediaType).Scan(&count)
 	return count > 0, err
+}
+
+// Quality Preset operations
+
+func (d *Database) GetQualityPresets() ([]QualityPreset, error) {
+	rows, err := d.db.Query(`
+		SELECT id, name, is_default, is_built_in, resolution, source,
+		       hdr_formats, codec, audio_formats, preferred_edition,
+		       min_seeders, prefer_season_packs, auto_upgrade, created_at, updated_at
+		FROM quality_presets
+		ORDER BY is_default DESC, name ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var presets []QualityPreset
+	for rows.Next() {
+		var p QualityPreset
+		var isDefault, isBuiltIn, preferSeasonPacks, autoUpgrade int
+		var hdrFormatsJSON, audioFormatsJSON *string
+		if err := rows.Scan(
+			&p.ID, &p.Name, &isDefault, &isBuiltIn, &p.Resolution, &p.Source,
+			&hdrFormatsJSON, &p.Codec, &audioFormatsJSON, &p.PreferredEdition,
+			&p.MinSeeders, &preferSeasonPacks, &autoUpgrade, &p.CreatedAt, &p.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		p.IsDefault = isDefault == 1
+		p.IsBuiltIn = isBuiltIn == 1
+		p.PreferSeasonPacks = preferSeasonPacks == 1
+		p.AutoUpgrade = autoUpgrade == 1
+		// Parse JSON arrays
+		if hdrFormatsJSON != nil && *hdrFormatsJSON != "" {
+			json.Unmarshal([]byte(*hdrFormatsJSON), &p.HDRFormats)
+		}
+		if audioFormatsJSON != nil && *audioFormatsJSON != "" {
+			json.Unmarshal([]byte(*audioFormatsJSON), &p.AudioFormats)
+		}
+		if p.HDRFormats == nil {
+			p.HDRFormats = []string{}
+		}
+		if p.AudioFormats == nil {
+			p.AudioFormats = []string{}
+		}
+		presets = append(presets, p)
+	}
+	return presets, nil
+}
+
+func (d *Database) GetQualityPreset(id int64) (*QualityPreset, error) {
+	var p QualityPreset
+	var isDefault, isBuiltIn, preferSeasonPacks, autoUpgrade int
+	var hdrFormatsJSON, audioFormatsJSON *string
+	err := d.db.QueryRow(`
+		SELECT id, name, is_default, is_built_in, resolution, source,
+		       hdr_formats, codec, audio_formats, preferred_edition,
+		       min_seeders, prefer_season_packs, auto_upgrade, created_at, updated_at
+		FROM quality_presets WHERE id = ?
+	`, id).Scan(
+		&p.ID, &p.Name, &isDefault, &isBuiltIn, &p.Resolution, &p.Source,
+		&hdrFormatsJSON, &p.Codec, &audioFormatsJSON, &p.PreferredEdition,
+		&p.MinSeeders, &preferSeasonPacks, &autoUpgrade, &p.CreatedAt, &p.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	p.IsDefault = isDefault == 1
+	p.IsBuiltIn = isBuiltIn == 1
+	p.PreferSeasonPacks = preferSeasonPacks == 1
+	p.AutoUpgrade = autoUpgrade == 1
+	if hdrFormatsJSON != nil && *hdrFormatsJSON != "" {
+		json.Unmarshal([]byte(*hdrFormatsJSON), &p.HDRFormats)
+	}
+	if audioFormatsJSON != nil && *audioFormatsJSON != "" {
+		json.Unmarshal([]byte(*audioFormatsJSON), &p.AudioFormats)
+	}
+	if p.HDRFormats == nil {
+		p.HDRFormats = []string{}
+	}
+	if p.AudioFormats == nil {
+		p.AudioFormats = []string{}
+	}
+	return &p, nil
+}
+
+func (d *Database) GetDefaultQualityPreset() (*QualityPreset, error) {
+	var p QualityPreset
+	var isDefault, isBuiltIn, preferSeasonPacks, autoUpgrade int
+	var hdrFormatsJSON, audioFormatsJSON *string
+	err := d.db.QueryRow(`
+		SELECT id, name, is_default, is_built_in, resolution, source,
+		       hdr_formats, codec, audio_formats, preferred_edition,
+		       min_seeders, prefer_season_packs, auto_upgrade, created_at, updated_at
+		FROM quality_presets WHERE is_default = 1 LIMIT 1
+	`).Scan(
+		&p.ID, &p.Name, &isDefault, &isBuiltIn, &p.Resolution, &p.Source,
+		&hdrFormatsJSON, &p.Codec, &audioFormatsJSON, &p.PreferredEdition,
+		&p.MinSeeders, &preferSeasonPacks, &autoUpgrade, &p.CreatedAt, &p.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	p.IsDefault = isDefault == 1
+	p.IsBuiltIn = isBuiltIn == 1
+	p.PreferSeasonPacks = preferSeasonPacks == 1
+	p.AutoUpgrade = autoUpgrade == 1
+	if hdrFormatsJSON != nil && *hdrFormatsJSON != "" {
+		json.Unmarshal([]byte(*hdrFormatsJSON), &p.HDRFormats)
+	}
+	if audioFormatsJSON != nil && *audioFormatsJSON != "" {
+		json.Unmarshal([]byte(*audioFormatsJSON), &p.AudioFormats)
+	}
+	if p.HDRFormats == nil {
+		p.HDRFormats = []string{}
+	}
+	if p.AudioFormats == nil {
+		p.AudioFormats = []string{}
+	}
+	return &p, nil
+}
+
+func (d *Database) CreateQualityPreset(p *QualityPreset) error {
+	hdrFormatsJSON, _ := json.Marshal(p.HDRFormats)
+	audioFormatsJSON, _ := json.Marshal(p.AudioFormats)
+	result, err := d.db.Exec(`
+		INSERT INTO quality_presets (name, is_default, is_built_in, resolution, source,
+		                            hdr_formats, codec, audio_formats, preferred_edition,
+		                            min_seeders, prefer_season_packs, auto_upgrade)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, p.Name, p.IsDefault, p.IsBuiltIn, p.Resolution, p.Source,
+		string(hdrFormatsJSON), p.Codec, string(audioFormatsJSON), p.PreferredEdition,
+		p.MinSeeders, p.PreferSeasonPacks, p.AutoUpgrade)
+	if err != nil {
+		return err
+	}
+	p.ID, _ = result.LastInsertId()
+	return nil
+}
+
+func (d *Database) UpdateQualityPreset(p *QualityPreset) error {
+	hdrFormatsJSON, _ := json.Marshal(p.HDRFormats)
+	audioFormatsJSON, _ := json.Marshal(p.AudioFormats)
+	_, err := d.db.Exec(`
+		UPDATE quality_presets SET
+			name = ?, resolution = ?, source = ?, hdr_formats = ?,
+			codec = ?, audio_formats = ?, preferred_edition = ?,
+			min_seeders = ?, prefer_season_packs = ?, auto_upgrade = ?,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND is_built_in = 0
+	`, p.Name, p.Resolution, p.Source, string(hdrFormatsJSON),
+		p.Codec, string(audioFormatsJSON), p.PreferredEdition,
+		p.MinSeeders, p.PreferSeasonPacks, p.AutoUpgrade, p.ID)
+	return err
+}
+
+func (d *Database) DeleteQualityPreset(id int64) error {
+	_, err := d.db.Exec("DELETE FROM quality_presets WHERE id = ? AND is_built_in = 0", id)
+	return err
+}
+
+func (d *Database) SetDefaultQualityPreset(id int64) error {
+	tx, err := d.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Clear existing default
+	if _, err := tx.Exec("UPDATE quality_presets SET is_default = 0"); err != nil {
+		return err
+	}
+	// Set new default
+	if _, err := tx.Exec("UPDATE quality_presets SET is_default = 1 WHERE id = ?", id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// Download operations
+
+func (d *Database) GetDownloads() ([]Download, error) {
+	rows, err := d.db.Query(`
+		SELECT id, download_client_id, external_id, media_id, media_type, title,
+		       size, status, progress, download_path, imported_path, error,
+		       created_at, updated_at
+		FROM downloads
+		ORDER BY created_at DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var downloads []Download
+	for rows.Next() {
+		var dl Download
+		if err := rows.Scan(
+			&dl.ID, &dl.DownloadClientID, &dl.ExternalID, &dl.MediaID, &dl.MediaType,
+			&dl.Title, &dl.Size, &dl.Status, &dl.Progress, &dl.DownloadPath,
+			&dl.ImportedPath, &dl.Error, &dl.CreatedAt, &dl.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		downloads = append(downloads, dl)
+	}
+	return downloads, nil
+}
+
+func (d *Database) GetDownloadByExternalID(clientID int64, externalID string) (*Download, error) {
+	var dl Download
+	err := d.db.QueryRow(`
+		SELECT id, download_client_id, external_id, media_id, media_type, title,
+		       size, status, progress, download_path, imported_path, error,
+		       created_at, updated_at
+		FROM downloads WHERE download_client_id = ? AND external_id = ?
+	`, clientID, externalID).Scan(
+		&dl.ID, &dl.DownloadClientID, &dl.ExternalID, &dl.MediaID, &dl.MediaType,
+		&dl.Title, &dl.Size, &dl.Status, &dl.Progress, &dl.DownloadPath,
+		&dl.ImportedPath, &dl.Error, &dl.CreatedAt, &dl.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &dl, nil
+}
+
+func (d *Database) CreateDownload(dl *Download) error {
+	result, err := d.db.Exec(`
+		INSERT INTO downloads (download_client_id, external_id, media_id, media_type,
+		                       title, size, status, progress, download_path)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, dl.DownloadClientID, dl.ExternalID, dl.MediaID, dl.MediaType,
+		dl.Title, dl.Size, dl.Status, dl.Progress, dl.DownloadPath)
+	if err != nil {
+		return err
+	}
+	dl.ID, _ = result.LastInsertId()
+	return nil
+}
+
+func (d *Database) UpdateDownload(dl *Download) error {
+	_, err := d.db.Exec(`
+		UPDATE downloads SET
+			status = ?, progress = ?, download_path = ?, imported_path = ?,
+			error = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, dl.Status, dl.Progress, dl.DownloadPath, dl.ImportedPath, dl.Error, dl.ID)
+	return err
+}
+
+func (d *Database) DeleteDownload(id int64) error {
+	_, err := d.db.Exec("DELETE FROM downloads WHERE id = ?", id)
+	return err
+}
+
+// Naming Template operations
+
+func (d *Database) GetNamingTemplates() ([]NamingTemplate, error) {
+	rows, err := d.db.Query(`
+		SELECT id, type, folder_template, file_template, is_default
+		FROM naming_templates ORDER BY type
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var templates []NamingTemplate
+	for rows.Next() {
+		var t NamingTemplate
+		var isDefault int
+		if err := rows.Scan(&t.ID, &t.Type, &t.FolderTemplate, &t.FileTemplate, &isDefault); err != nil {
+			return nil, err
+		}
+		t.IsDefault = isDefault == 1
+		templates = append(templates, t)
+	}
+	return templates, nil
+}
+
+func (d *Database) GetNamingTemplate(templateType string) (*NamingTemplate, error) {
+	var t NamingTemplate
+	var isDefault int
+	err := d.db.QueryRow(`
+		SELECT id, type, folder_template, file_template, is_default
+		FROM naming_templates WHERE type = ? AND is_default = 1
+	`, templateType).Scan(&t.ID, &t.Type, &t.FolderTemplate, &t.FileTemplate, &isDefault)
+	if err != nil {
+		return nil, err
+	}
+	t.IsDefault = isDefault == 1
+	return &t, nil
+}
+
+func (d *Database) UpdateNamingTemplate(t *NamingTemplate) error {
+	_, err := d.db.Exec(`
+		UPDATE naming_templates SET folder_template = ?, file_template = ?
+		WHERE id = ?
+	`, t.FolderTemplate, t.FileTemplate, t.ID)
+	return err
+}
+
+// Import History operations
+
+func (d *Database) CreateImportHistory(ih *ImportHistory) error {
+	result, err := d.db.Exec(`
+		INSERT INTO import_history (download_id, source_path, dest_path, media_id, media_type, success, error)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, ih.DownloadID, ih.SourcePath, ih.DestPath, ih.MediaID, ih.MediaType, ih.Success, ih.Error)
+	if err != nil {
+		return err
+	}
+	ih.ID, _ = result.LastInsertId()
+	return nil
+}
+
+func (d *Database) GetImportHistory(limit int) ([]ImportHistory, error) {
+	rows, err := d.db.Query(`
+		SELECT id, download_id, source_path, dest_path, media_id, media_type, success, error, created_at
+		FROM import_history ORDER BY created_at DESC LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var history []ImportHistory
+	for rows.Next() {
+		var ih ImportHistory
+		var success int
+		if err := rows.Scan(&ih.ID, &ih.DownloadID, &ih.SourcePath, &ih.DestPath,
+			&ih.MediaID, &ih.MediaType, &success, &ih.Error, &ih.CreatedAt); err != nil {
+			return nil, err
+		}
+		ih.Success = success == 1
+		history = append(history, ih)
+	}
+	return history, nil
+}
+
+// Media Quality Status operations
+
+func (d *Database) GetMediaQualityStatus(mediaID int64, mediaType string) (*MediaQualityStatus, error) {
+	var s MediaQualityStatus
+	var targetMet, upgradeAvailable int
+	err := d.db.QueryRow(`
+		SELECT id, media_id, media_type, current_resolution, current_source,
+		       current_hdr, current_audio, current_edition, target_met,
+		       upgrade_available, last_search, created_at, updated_at
+		FROM media_quality_status WHERE media_id = ? AND media_type = ?
+	`, mediaID, mediaType).Scan(
+		&s.ID, &s.MediaID, &s.MediaType, &s.CurrentResolution, &s.CurrentSource,
+		&s.CurrentHDR, &s.CurrentAudio, &s.CurrentEdition, &targetMet,
+		&upgradeAvailable, &s.LastSearch, &s.CreatedAt, &s.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	s.TargetMet = targetMet == 1
+	s.UpgradeAvailable = upgradeAvailable == 1
+	return &s, nil
+}
+
+func (d *Database) UpsertMediaQualityStatus(s *MediaQualityStatus) error {
+	_, err := d.db.Exec(`
+		INSERT INTO media_quality_status (media_id, media_type, current_resolution, current_source,
+		                                  current_hdr, current_audio, current_edition, target_met,
+		                                  upgrade_available, last_search)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(media_id, media_type) DO UPDATE SET
+			current_resolution = excluded.current_resolution,
+			current_source = excluded.current_source,
+			current_hdr = excluded.current_hdr,
+			current_audio = excluded.current_audio,
+			current_edition = excluded.current_edition,
+			target_met = excluded.target_met,
+			upgrade_available = excluded.upgrade_available,
+			last_search = excluded.last_search,
+			updated_at = CURRENT_TIMESTAMP
+	`, s.MediaID, s.MediaType, s.CurrentResolution, s.CurrentSource,
+		s.CurrentHDR, s.CurrentAudio, s.CurrentEdition, s.TargetMet,
+		s.UpgradeAvailable, s.LastSearch)
+	return err
+}
+
+// Storage size operations
+
+func (d *Database) GetTotalMoviesSize() (int64, error) {
+	var total int64
+	err := d.db.QueryRow("SELECT COALESCE(SUM(size), 0) FROM movies").Scan(&total)
+	return total, err
+}
+
+func (d *Database) GetTotalTVSize() (int64, error) {
+	var total int64
+	err := d.db.QueryRow("SELECT COALESCE(SUM(size), 0) FROM episodes").Scan(&total)
+	return total, err
+}
+
+func (d *Database) GetTotalMusicSize() (int64, error) {
+	var total int64
+	err := d.db.QueryRow("SELECT COALESCE(SUM(size), 0) FROM tracks").Scan(&total)
+	return total, err
+}
+
+func (d *Database) GetTotalBooksSize() (int64, error) {
+	var total int64
+	err := d.db.QueryRow("SELECT COALESCE(SUM(size), 0) FROM books").Scan(&total)
+	return total, err
 }

@@ -14,9 +14,9 @@
 
 <button
 	{onclick}
-	class="flex-shrink-0 w-28 text-center cursor-pointer group {className}"
+	class="flex-shrink-0 w-36 text-center cursor-pointer group {className}"
 >
-	<div class="w-28 h-28 rounded-full bg-bg-elevated overflow-hidden mx-auto ring-2 ring-white/10 group-hover:ring-white/30 transition-all">
+	<div class="w-36 h-36 rounded-full bg-bg-elevated overflow-hidden mx-auto ring-2 ring-white/10 group-hover:ring-white/30 transition-all">
 		{#if profilePath}
 			<img
 				src={getTmdbImageUrl(profilePath, 'w185')}
@@ -24,7 +24,7 @@
 				class="w-full h-full object-cover"
 			/>
 		{:else}
-			<div class="w-full h-full flex items-center justify-center text-3xl text-text-muted bg-gradient-to-br from-bg-card to-bg-elevated">
+			<div class="w-full h-full flex items-center justify-center text-4xl text-text-muted bg-gradient-to-br from-bg-card to-bg-elevated">
 				{name.charAt(0)}
 			</div>
 		{/if}

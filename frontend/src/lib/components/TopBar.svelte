@@ -173,10 +173,10 @@
 		}
 
 		const [moviesRes, showsRes, artistsRes, booksRes] = await Promise.all([
-			fetch(`/api/movies`),
-			fetch(`/api/shows`),
-			fetch(`/api/artists`),
-			fetch(`/api/books`),
+			fetch(`/api/movies`, { credentials: 'include' }),
+			fetch(`/api/shows`, { credentials: 'include' }),
+			fetch(`/api/artists`, { credentials: 'include' }),
+			fetch(`/api/books`, { credentials: 'include' }),
 		]);
 
 		cachedMovies = moviesRes.ok ? await moviesRes.json() : [];
@@ -210,10 +210,10 @@
 				// Admin can search TMDB for movies and/or TV based on filter
 				const tmdbPromises: Promise<Response>[] = [];
 				if (isAdmin && includeMovies) {
-					tmdbPromises.push(fetch(`/api/tmdb/search/movie?q=${encodeURIComponent(query)}`));
+					tmdbPromises.push(fetch(`/api/tmdb/search/movie?q=${encodeURIComponent(query)}`, { credentials: 'include' }));
 				}
 				if (isAdmin && includeTV) {
-					tmdbPromises.push(fetch(`/api/tmdb/search/tv?q=${encodeURIComponent(query)}`));
+					tmdbPromises.push(fetch(`/api/tmdb/search/tv?q=${encodeURIComponent(query)}`, { credentials: 'include' }));
 				}
 
 				await loadLibraryCache();

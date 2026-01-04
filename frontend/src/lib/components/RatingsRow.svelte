@@ -13,7 +13,7 @@
 	const tmdbPath = $derived(mediaType === 'movie' ? 'movie' : 'tv');
 </script>
 
-<div class="p-3 flex justify-around items-center border-t border-white/10 {className}">
+<div class="flex justify-around items-center {className}">
 	{#if tmdbRating}
 		<a
 			href="https://www.themoviedb.org/{tmdbPath}/{tmdbId}"

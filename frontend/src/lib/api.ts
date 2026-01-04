@@ -1,5 +1,13 @@
 const API_BASE = '/api';
 
+// Helper to ensure credentials are always included
+async function apiFetch(url: string, options: RequestInit = {}): Promise<Response> {
+	return fetch(url, {
+		...options,
+		credentials: 'include'
+	});
+}
+
 export interface HealthResponse {
 	status: string;
 }
@@ -72,6 +80,7 @@ export interface Show {
 	focalX?: number;
 	focalY?: number;
 	path: string;
+	addedAt?: string;
 	// Watch state
 	watchState?: 'unwatched' | 'partial' | 'watched';
 	watchedEpisodes?: number;
@@ -127,7 +136,7 @@ export interface TmdbTVResult {
 }
 
 export async function getHealth(): Promise<HealthResponse> {
-	const response = await fetch(`${API_BASE}/health`);
+	const response = await apiFetch(`${API_BASE}/health`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -137,7 +146,7 @@ export async function getHealth(): Promise<HealthResponse> {
 // Libraries
 
 export async function getLibraries(): Promise<Library[]> {
-	const response = await fetch(`${API_BASE}/libraries`);
+	const response = await apiFetch(`${API_BASE}/libraries`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -145,7 +154,7 @@ export async function getLibraries(): Promise<Library[]> {
 }
 
 export async function createLibrary(library: Omit<Library, 'id'>): Promise<Library> {
-	const response = await fetch(`${API_BASE}/libraries`, {
+	const response = await apiFetch(`${API_BASE}/libraries`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(library)
@@ -157,7 +166,7 @@ export async function createLibrary(library: Omit<Library, 'id'>): Promise<Libra
 }
 
 export async function deleteLibrary(id: number): Promise<void> {
-	const response = await fetch(`${API_BASE}/libraries/${id}`, {
+	const response = await apiFetch(`${API_BASE}/libraries/${id}`, {
 		method: 'DELETE'
 	});
 	if (!response.ok) {
@@ -166,9 +175,32 @@ export async function deleteLibrary(id: number): Promise<void> {
 }
 
 export async function scanLibrary(id: number): Promise<{ status: string; message: string }> {
-	const response = await fetch(`${API_BASE}/libraries/${id}/scan`, {
+	const response = await apiFetch(`${API_BASE}/libraries/${id}/scan`, {
 		method: 'POST'
 	});
+	if (!response.ok) {
+		throw new Error(`API error: ${response.status}`);
+	}
+	return response.json();
+}
+
+export interface ScanProgress {
+	scanning: boolean;
+	library: string;
+	phase: string;
+	current: number;
+	total: number;
+	percent: number;
+	// Result of last scan
+	lastLibrary?: string;
+	lastAdded: number;
+	lastSkipped: number;
+	lastErrors: number;
+	lastScanAt?: string;
+}
+
+export async function getScanProgress(): Promise<ScanProgress> {
+	const response = await apiFetch(`${API_BASE}/scan/progress`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -178,7 +210,7 @@ export async function scanLibrary(id: number): Promise<{ status: string; message
 // Movies
 
 export async function getMovies(): Promise<Movie[]> {
-	const response = await fetch(`${API_BASE}/movies`);
+	const response = await apiFetch(`${API_BASE}/movies`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -186,7 +218,7 @@ export async function getMovies(): Promise<Movie[]> {
 }
 
 export async function getMovie(id: number): Promise<Movie> {
-	const response = await fetch(`${API_BASE}/movies/${id}`);
+	const response = await apiFetch(`${API_BASE}/movies/${id}`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -194,7 +226,7 @@ export async function getMovie(id: number): Promise<Movie> {
 }
 
 export async function refreshMovieMetadata(id: number): Promise<Movie> {
-	const response = await fetch(`${API_BASE}/movies/${id}/refresh`, {
+	const response = await apiFetch(`${API_BASE}/movies/${id}/refresh`, {
 		method: 'POST'
 	});
 	if (!response.ok) {
@@ -204,7 +236,7 @@ export async function refreshMovieMetadata(id: number): Promise<Movie> {
 }
 
 export async function matchMovie(id: number, tmdbId: number): Promise<Movie> {
-	const response = await fetch(`${API_BASE}/movies/${id}/match`, {
+	const response = await apiFetch(`${API_BASE}/movies/${id}/match`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ tmdbId })
@@ -218,7 +250,7 @@ export async function matchMovie(id: number, tmdbId: number): Promise<Movie> {
 // Shows
 
 export async function getShows(): Promise<Show[]> {
-	const response = await fetch(`${API_BASE}/shows`);
+	const response = await apiFetch(`${API_BASE}/shows`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -226,7 +258,7 @@ export async function getShows(): Promise<Show[]> {
 }
 
 export async function getShow(id: number): Promise<ShowDetail> {
-	const response = await fetch(`${API_BASE}/shows/${id}`);
+	const response = await apiFetch(`${API_BASE}/shows/${id}`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -234,7 +266,7 @@ export async function getShow(id: number): Promise<ShowDetail> {
 }
 
 export async function refreshShowMetadata(id: number): Promise<ShowDetail> {
-	const response = await fetch(`${API_BASE}/shows/${id}/refresh`, {
+	const response = await apiFetch(`${API_BASE}/shows/${id}/refresh`, {
 		method: 'POST'
 	});
 	if (!response.ok) {
@@ -244,7 +276,7 @@ export async function refreshShowMetadata(id: number): Promise<ShowDetail> {
 }
 
 export async function matchShow(id: number, tmdbId: number): Promise<ShowDetail> {
-	const response = await fetch(`${API_BASE}/shows/${id}/match`, {
+	const response = await apiFetch(`${API_BASE}/shows/${id}/match`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ tmdbId })
@@ -290,13 +322,14 @@ export interface MediaInfo {
 	duration: number;
 	fileSize?: number;
 	bitRate?: number;
+	container?: string;
 	videoStreams: VideoStream[];
 	audioStreams: AudioStream[];
 	subtitleTracks: SubtitleTrack[];
 }
 
 export async function getMediaInfo(type: 'movie' | 'episode', id: number): Promise<MediaInfo> {
-	const response = await fetch(`${API_BASE}/media-info/${type}/${id}`);
+	const response = await apiFetch(`${API_BASE}/media-info/${type}/${id}`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -313,7 +346,7 @@ export interface Progress {
 }
 
 export async function getProgress(type: string, id: number): Promise<Progress> {
-	const response = await fetch(`${API_BASE}/progress/${type}/${id}`);
+	const response = await apiFetch(`${API_BASE}/progress/${type}/${id}`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -321,7 +354,7 @@ export async function getProgress(type: string, id: number): Promise<Progress> {
 }
 
 export async function saveProgress(progress: Progress): Promise<void> {
-	const response = await fetch(`${API_BASE}/progress`, {
+	const response = await apiFetch(`${API_BASE}/progress`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(progress)
@@ -350,7 +383,7 @@ export interface ContinueWatchingItem {
 }
 
 export async function getContinueWatching(): Promise<ContinueWatchingItem[]> {
-	const response = await fetch(`${API_BASE}/continue-watching`);
+	const response = await apiFetch(`${API_BASE}/continue-watching`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -358,7 +391,7 @@ export async function getContinueWatching(): Promise<ContinueWatchingItem[]> {
 }
 
 export async function removeContinueWatching(mediaType: string, mediaId: number): Promise<void> {
-	const response = await fetch(`${API_BASE}/continue-watching/${mediaType}/${mediaId}`, {
+	const response = await apiFetch(`${API_BASE}/continue-watching/${mediaType}/${mediaId}`, {
 		method: 'DELETE'
 	});
 	if (!response.ok) {
@@ -369,7 +402,7 @@ export async function removeContinueWatching(mediaType: string, mediaId: number)
 // Settings
 
 export async function getSettings(): Promise<Record<string, string>> {
-	const response = await fetch(`${API_BASE}/settings`);
+	const response = await apiFetch(`${API_BASE}/settings`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -377,7 +410,7 @@ export async function getSettings(): Promise<Record<string, string>> {
 }
 
 export async function saveSettings(settings: Record<string, string>): Promise<void> {
-	const response = await fetch(`${API_BASE}/settings`, {
+	const response = await apiFetch(`${API_BASE}/settings`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(settings)
@@ -388,7 +421,17 @@ export async function saveSettings(settings: Record<string, string>): Promise<vo
 }
 
 export async function refreshAllMetadata(): Promise<{ refreshed: number; errors: number; total: number }> {
-	const response = await fetch(`${API_BASE}/metadata/refresh`, {
+	const response = await apiFetch(`${API_BASE}/metadata/refresh`, {
+		method: 'POST'
+	});
+	if (!response.ok) {
+		throw new Error(`API error: ${response.status}`);
+	}
+	return response.json();
+}
+
+export async function clearLibraryData(): Promise<{ success: boolean; message: string }> {
+	const response = await apiFetch(`${API_BASE}/library/clear`, {
 		method: 'POST'
 	});
 	if (!response.ok) {
@@ -402,7 +445,7 @@ export async function refreshAllMetadata(): Promise<{ refreshed: number; errors:
 export async function searchTmdbMovies(query: string, year?: number): Promise<TmdbMovieResult[]> {
 	const params = new URLSearchParams({ q: query });
 	if (year) params.set('year', year.toString());
-	const response = await fetch(`${API_BASE}/tmdb/search/movie?${params}`);
+	const response = await apiFetch(`${API_BASE}/tmdb/search/movie?${params}`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -412,7 +455,7 @@ export async function searchTmdbMovies(query: string, year?: number): Promise<Tm
 export async function searchTmdbTV(query: string, year?: number): Promise<TmdbTVResult[]> {
 	const params = new URLSearchParams({ q: query });
 	if (year) params.set('year', year.toString());
-	const response = await fetch(`${API_BASE}/tmdb/search/tv?${params}`);
+	const response = await apiFetch(`${API_BASE}/tmdb/search/tv?${params}`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -449,7 +492,7 @@ export interface SetupStatus {
 }
 
 export async function checkSetup(): Promise<SetupStatus> {
-	const response = await fetch(`${API_BASE}/auth/setup`);
+	const response = await apiFetch(`${API_BASE}/auth/setup`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -457,7 +500,7 @@ export async function checkSetup(): Promise<SetupStatus> {
 }
 
 export async function setup(username: string, password: string): Promise<User> {
-	const response = await fetch(`${API_BASE}/auth/setup`, {
+	const response = await apiFetch(`${API_BASE}/auth/setup`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ username, password })
@@ -469,7 +512,7 @@ export async function setup(username: string, password: string): Promise<User> {
 }
 
 export async function login(username: string, password: string): Promise<LoginResponse> {
-	const response = await fetch(`${API_BASE}/auth/login`, {
+	const response = await apiFetch(`${API_BASE}/auth/login`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ username, password })
@@ -481,7 +524,7 @@ export async function login(username: string, password: string): Promise<LoginRe
 }
 
 export async function logout(): Promise<void> {
-	const response = await fetch(`${API_BASE}/auth/logout`, {
+	const response = await apiFetch(`${API_BASE}/auth/logout`, {
 		method: 'POST'
 	});
 	if (!response.ok) {
@@ -491,7 +534,7 @@ export async function logout(): Promise<void> {
 
 export async function getCurrentUser(): Promise<User | null> {
 	try {
-		const response = await fetch(`${API_BASE}/auth/me`);
+		const response = await apiFetch(`${API_BASE}/auth/me`);
 		if (!response.ok) {
 			return null;
 		}
@@ -504,7 +547,7 @@ export async function getCurrentUser(): Promise<User | null> {
 // Users
 
 export async function getUsers(): Promise<User[]> {
-	const response = await fetch(`${API_BASE}/users`);
+	const response = await apiFetch(`${API_BASE}/users`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -512,7 +555,7 @@ export async function getUsers(): Promise<User[]> {
 }
 
 export async function createUser(username: string, password: string, role: string): Promise<User> {
-	const response = await fetch(`${API_BASE}/users`, {
+	const response = await apiFetch(`${API_BASE}/users`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ username, password, role })
@@ -524,7 +567,7 @@ export async function createUser(username: string, password: string, role: strin
 }
 
 export async function updateUser(id: number, data: { username?: string; password?: string; role?: string }): Promise<User> {
-	const response = await fetch(`${API_BASE}/users/${id}`, {
+	const response = await apiFetch(`${API_BASE}/users/${id}`, {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(data)
@@ -536,7 +579,7 @@ export async function updateUser(id: number, data: { username?: string; password
 }
 
 export async function deleteUser(id: number): Promise<void> {
-	const response = await fetch(`${API_BASE}/users/${id}`, {
+	const response = await apiFetch(`${API_BASE}/users/${id}`, {
 		method: 'DELETE'
 	});
 	if (!response.ok) {
@@ -584,7 +627,7 @@ export interface TestConnectionResult {
 }
 
 export async function getDownloadClients(): Promise<DownloadClient[]> {
-	const response = await fetch(`${API_BASE}/download-clients`);
+	const response = await apiFetch(`${API_BASE}/download-clients`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -592,7 +635,7 @@ export async function getDownloadClients(): Promise<DownloadClient[]> {
 }
 
 export async function createDownloadClient(client: Omit<DownloadClient, 'id'>): Promise<DownloadClient> {
-	const response = await fetch(`${API_BASE}/download-clients`, {
+	const response = await apiFetch(`${API_BASE}/download-clients`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(client)
@@ -604,7 +647,7 @@ export async function createDownloadClient(client: Omit<DownloadClient, 'id'>): 
 }
 
 export async function updateDownloadClient(id: number, client: Partial<DownloadClient>): Promise<DownloadClient> {
-	const response = await fetch(`${API_BASE}/download-clients/${id}`, {
+	const response = await apiFetch(`${API_BASE}/download-clients/${id}`, {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(client)
@@ -616,7 +659,7 @@ export async function updateDownloadClient(id: number, client: Partial<DownloadC
 }
 
 export async function deleteDownloadClient(id: number): Promise<void> {
-	const response = await fetch(`${API_BASE}/download-clients/${id}`, {
+	const response = await apiFetch(`${API_BASE}/download-clients/${id}`, {
 		method: 'DELETE'
 	});
 	if (!response.ok) {
@@ -625,7 +668,7 @@ export async function deleteDownloadClient(id: number): Promise<void> {
 }
 
 export async function testDownloadClient(id: number): Promise<TestConnectionResult> {
-	const response = await fetch(`${API_BASE}/download-clients/${id}/test`, {
+	const response = await apiFetch(`${API_BASE}/download-clients/${id}/test`, {
 		method: 'POST'
 	});
 	if (!response.ok) {
@@ -635,7 +678,7 @@ export async function testDownloadClient(id: number): Promise<TestConnectionResu
 }
 
 export async function getDownloads(): Promise<Download[]> {
-	const response = await fetch(`${API_BASE}/downloads`);
+	const response = await apiFetch(`${API_BASE}/downloads`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -710,7 +753,7 @@ export interface IndexerCapabilities {
 }
 
 export async function getIndexers(): Promise<Indexer[]> {
-	const response = await fetch(`${API_BASE}/indexers`);
+	const response = await apiFetch(`${API_BASE}/indexers`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -718,7 +761,7 @@ export async function getIndexers(): Promise<Indexer[]> {
 }
 
 export async function createIndexer(indexer: Omit<Indexer, 'id'>): Promise<Indexer> {
-	const response = await fetch(`${API_BASE}/indexers`, {
+	const response = await apiFetch(`${API_BASE}/indexers`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(indexer)
@@ -730,7 +773,7 @@ export async function createIndexer(indexer: Omit<Indexer, 'id'>): Promise<Index
 }
 
 export async function updateIndexer(id: number, indexer: Partial<Indexer>): Promise<Indexer> {
-	const response = await fetch(`${API_BASE}/indexers/${id}`, {
+	const response = await apiFetch(`${API_BASE}/indexers/${id}`, {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(indexer)
@@ -742,7 +785,7 @@ export async function updateIndexer(id: number, indexer: Partial<Indexer>): Prom
 }
 
 export async function deleteIndexer(id: number): Promise<void> {
-	const response = await fetch(`${API_BASE}/indexers/${id}`, {
+	const response = await apiFetch(`${API_BASE}/indexers/${id}`, {
 		method: 'DELETE'
 	});
 	if (!response.ok) {
@@ -751,7 +794,7 @@ export async function deleteIndexer(id: number): Promise<void> {
 }
 
 export async function testIndexer(id: number): Promise<TestConnectionResult> {
-	const response = await fetch(`${API_BASE}/indexers/${id}/test`, {
+	const response = await apiFetch(`${API_BASE}/indexers/${id}/test`, {
 		method: 'POST'
 	});
 	if (!response.ok) {
@@ -761,7 +804,7 @@ export async function testIndexer(id: number): Promise<TestConnectionResult> {
 }
 
 export async function getIndexerCapabilities(id: number): Promise<IndexerCapabilities> {
-	const response = await fetch(`${API_BASE}/indexers/${id}/capabilities`);
+	const response = await apiFetch(`${API_BASE}/indexers/${id}/capabilities`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -793,7 +836,7 @@ export async function searchIndexers(params: SearchParams): Promise<SearchResult
 	if (params.categories?.length) searchParams.set('categories', params.categories.join(','));
 	if (params.limit) searchParams.set('limit', params.limit.toString());
 
-	const response = await fetch(`${API_BASE}/search?${searchParams}`);
+	const response = await apiFetch(`${API_BASE}/search?${searchParams}`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -813,7 +856,7 @@ export async function searchIndexersScored(params: SearchParams): Promise<Scored
 	if (params.limit) searchParams.set('limit', params.limit.toString());
 	if (params.profileId) searchParams.set('profileId', params.profileId.toString());
 
-	const response = await fetch(`${API_BASE}/search/scored?${searchParams}`);
+	const response = await apiFetch(`${API_BASE}/search/scored?${searchParams}`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -828,7 +871,7 @@ export interface GrabParams {
 }
 
 export async function grabRelease(params: GrabParams): Promise<{ success: boolean; message: string; client?: string }> {
-	const response = await fetch(`${API_BASE}/grab`, {
+	const response = await apiFetch(`${API_BASE}/grab`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(params)
@@ -877,7 +920,7 @@ export interface ParsedRelease {
 }
 
 export async function getQualityProfiles(): Promise<QualityProfile[]> {
-	const response = await fetch(`${API_BASE}/quality-profiles`);
+	const response = await apiFetch(`${API_BASE}/quality-profiles`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -885,7 +928,7 @@ export async function getQualityProfiles(): Promise<QualityProfile[]> {
 }
 
 export async function createQualityProfile(profile: Omit<QualityProfile, 'id'>): Promise<QualityProfile> {
-	const response = await fetch(`${API_BASE}/quality-profiles`, {
+	const response = await apiFetch(`${API_BASE}/quality-profiles`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(profile)
@@ -897,7 +940,7 @@ export async function createQualityProfile(profile: Omit<QualityProfile, 'id'>):
 }
 
 export async function updateQualityProfile(id: number, profile: Partial<QualityProfile>): Promise<QualityProfile> {
-	const response = await fetch(`${API_BASE}/quality-profiles/${id}`, {
+	const response = await apiFetch(`${API_BASE}/quality-profiles/${id}`, {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(profile)
@@ -909,7 +952,7 @@ export async function updateQualityProfile(id: number, profile: Partial<QualityP
 }
 
 export async function deleteQualityProfile(id: number): Promise<void> {
-	const response = await fetch(`${API_BASE}/quality-profiles/${id}`, {
+	const response = await apiFetch(`${API_BASE}/quality-profiles/${id}`, {
 		method: 'DELETE'
 	});
 	if (!response.ok) {
@@ -918,7 +961,7 @@ export async function deleteQualityProfile(id: number): Promise<void> {
 }
 
 export async function getCustomFormats(): Promise<CustomFormat[]> {
-	const response = await fetch(`${API_BASE}/custom-formats`);
+	const response = await apiFetch(`${API_BASE}/custom-formats`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -926,7 +969,7 @@ export async function getCustomFormats(): Promise<CustomFormat[]> {
 }
 
 export async function createCustomFormat(format: Omit<CustomFormat, 'id'>): Promise<CustomFormat> {
-	const response = await fetch(`${API_BASE}/custom-formats`, {
+	const response = await apiFetch(`${API_BASE}/custom-formats`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(format)
@@ -938,7 +981,7 @@ export async function createCustomFormat(format: Omit<CustomFormat, 'id'>): Prom
 }
 
 export async function updateCustomFormat(id: number, format: Partial<CustomFormat>): Promise<CustomFormat> {
-	const response = await fetch(`${API_BASE}/custom-formats/${id}`, {
+	const response = await apiFetch(`${API_BASE}/custom-formats/${id}`, {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(format)
@@ -950,7 +993,7 @@ export async function updateCustomFormat(id: number, format: Partial<CustomForma
 }
 
 export async function deleteCustomFormat(id: number): Promise<void> {
-	const response = await fetch(`${API_BASE}/custom-formats/${id}`, {
+	const response = await apiFetch(`${API_BASE}/custom-formats/${id}`, {
 		method: 'DELETE'
 	});
 	if (!response.ok) {
@@ -959,7 +1002,7 @@ export async function deleteCustomFormat(id: number): Promise<void> {
 }
 
 export async function parseReleaseName(name: string): Promise<ParsedRelease> {
-	const response = await fetch(`${API_BASE}/releases/parse`, {
+	const response = await apiFetch(`${API_BASE}/releases/parse`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ name })
@@ -987,7 +1030,7 @@ export interface WantedItem {
 }
 
 export async function getWantedItems(): Promise<WantedItem[]> {
-	const response = await fetch(`${API_BASE}/wanted`);
+	const response = await apiFetch(`${API_BASE}/wanted`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -995,7 +1038,7 @@ export async function getWantedItems(): Promise<WantedItem[]> {
 }
 
 export async function getWantedItem(id: number): Promise<WantedItem> {
-	const response = await fetch(`${API_BASE}/wanted/${id}`);
+	const response = await apiFetch(`${API_BASE}/wanted/${id}`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -1003,7 +1046,7 @@ export async function getWantedItem(id: number): Promise<WantedItem> {
 }
 
 export async function createWantedItem(item: Omit<WantedItem, 'id' | 'addedAt'>): Promise<WantedItem> {
-	const response = await fetch(`${API_BASE}/wanted`, {
+	const response = await apiFetch(`${API_BASE}/wanted`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(item)
@@ -1018,7 +1061,7 @@ export async function createWantedItem(item: Omit<WantedItem, 'id' | 'addedAt'>)
 }
 
 export async function updateWantedItem(id: number, updates: Partial<WantedItem>): Promise<WantedItem> {
-	const response = await fetch(`${API_BASE}/wanted/${id}`, {
+	const response = await apiFetch(`${API_BASE}/wanted/${id}`, {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(updates)
@@ -1030,7 +1073,7 @@ export async function updateWantedItem(id: number, updates: Partial<WantedItem>)
 }
 
 export async function deleteWantedItem(id: number): Promise<void> {
-	const response = await fetch(`${API_BASE}/wanted/${id}`, {
+	const response = await apiFetch(`${API_BASE}/wanted/${id}`, {
 		method: 'DELETE'
 	});
 	if (!response.ok) {
@@ -1039,7 +1082,7 @@ export async function deleteWantedItem(id: number): Promise<void> {
 }
 
 export async function searchWantedItem(id: number): Promise<ScoredSearchResult[]> {
-	const response = await fetch(`${API_BASE}/wanted/search/${id}`, {
+	const response = await apiFetch(`${API_BASE}/wanted/search/${id}`, {
 		method: 'POST'
 	});
 	if (!response.ok) {
@@ -1053,12 +1096,16 @@ export async function searchWantedItem(id: number): Promise<ScoredSearchResult[]
 export interface DiscoverItem {
 	id: number;
 	type: 'movie' | 'show';
+	mediaType?: 'movie' | 'tv'; // Added for compatibility with combined lists
 	title: string;
+	name?: string; // TV shows may use name instead of title
 	overview: string;
 	releaseDate: string;
+	firstAirDate?: string; // TV shows use this
 	posterPath: string;
 	backdropPath: string;
 	rating: number;
+	voteAverage?: number; // Alternative rating field from TMDB
 	popularity: number;
 	focalX?: number;
 	focalY?: number;
@@ -1078,7 +1125,7 @@ export interface DiscoverResult {
 }
 
 export async function getTrendingMovies(page = 1): Promise<DiscoverResult> {
-	const response = await fetch(`${API_BASE}/discover/movies/trending?page=${page}`);
+	const response = await apiFetch(`${API_BASE}/discover/movies/trending?page=${page}`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -1086,7 +1133,7 @@ export async function getTrendingMovies(page = 1): Promise<DiscoverResult> {
 }
 
 export async function getPopularMovies(page = 1): Promise<DiscoverResult> {
-	const response = await fetch(`${API_BASE}/discover/movies/popular?page=${page}`);
+	const response = await apiFetch(`${API_BASE}/discover/movies/popular?page=${page}`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -1094,7 +1141,25 @@ export async function getPopularMovies(page = 1): Promise<DiscoverResult> {
 }
 
 export async function getUpcomingMovies(page = 1): Promise<DiscoverResult> {
-	const response = await fetch(`${API_BASE}/discover/movies/upcoming?page=${page}`);
+	const response = await apiFetch(`${API_BASE}/discover/movies/upcoming?page=${page}`);
+	if (!response.ok) {
+		throw new Error(`API error: ${response.status}`);
+	}
+	return response.json();
+}
+
+export async function getTheatricalReleases(region = '', page = 1): Promise<DiscoverResult> {
+	const params = new URLSearchParams({ page: page.toString() });
+	if (region) params.append('region', region);
+	const response = await apiFetch(`${API_BASE}/discover/movies/theatrical?${params}`);
+	if (!response.ok) {
+		throw new Error(`API error: ${response.status}`);
+	}
+	return response.json();
+}
+
+export async function getUpcomingShows(page = 1): Promise<DiscoverResult> {
+	const response = await apiFetch(`${API_BASE}/discover/shows/upcoming?page=${page}`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -1102,7 +1167,7 @@ export async function getUpcomingMovies(page = 1): Promise<DiscoverResult> {
 }
 
 export async function getTopRatedMovies(page = 1): Promise<DiscoverResult> {
-	const response = await fetch(`${API_BASE}/discover/movies/top-rated?page=${page}`);
+	const response = await apiFetch(`${API_BASE}/discover/movies/top-rated?page=${page}`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -1110,7 +1175,7 @@ export async function getTopRatedMovies(page = 1): Promise<DiscoverResult> {
 }
 
 export async function getTrendingShows(page = 1): Promise<DiscoverResult> {
-	const response = await fetch(`${API_BASE}/discover/shows/trending?page=${page}`);
+	const response = await apiFetch(`${API_BASE}/discover/shows/trending?page=${page}`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -1118,7 +1183,7 @@ export async function getTrendingShows(page = 1): Promise<DiscoverResult> {
 }
 
 export async function getPopularShows(page = 1): Promise<DiscoverResult> {
-	const response = await fetch(`${API_BASE}/discover/shows/popular?page=${page}`);
+	const response = await apiFetch(`${API_BASE}/discover/shows/popular?page=${page}`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -1126,7 +1191,7 @@ export async function getPopularShows(page = 1): Promise<DiscoverResult> {
 }
 
 export async function getTopRatedShows(page = 1): Promise<DiscoverResult> {
-	const response = await fetch(`${API_BASE}/discover/shows/top-rated?page=${page}`);
+	const response = await apiFetch(`${API_BASE}/discover/shows/top-rated?page=${page}`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -1155,7 +1220,7 @@ export async function getRequests(status?: string): Promise<Request[]> {
 	const url = status
 		? `${API_BASE}/requests?status=${status}`
 		: `${API_BASE}/requests`;
-	const response = await fetch(url);
+	const response = await apiFetch(url);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -1170,7 +1235,7 @@ export async function createRequest(request: {
 	overview?: string;
 	posterPath?: string;
 }): Promise<Request> {
-	const response = await fetch(`${API_BASE}/requests`, {
+	const response = await apiFetch(`${API_BASE}/requests`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(request)
@@ -1185,7 +1250,7 @@ export async function createRequest(request: {
 }
 
 export async function updateRequest(id: number, status: string, statusReason?: string): Promise<Request> {
-	const response = await fetch(`${API_BASE}/requests/${id}`, {
+	const response = await apiFetch(`${API_BASE}/requests/${id}`, {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ status, statusReason })
@@ -1197,7 +1262,7 @@ export async function updateRequest(id: number, status: string, statusReason?: s
 }
 
 export async function deleteRequest(id: number): Promise<void> {
-	const response = await fetch(`${API_BASE}/requests/${id}`, {
+	const response = await apiFetch(`${API_BASE}/requests/${id}`, {
 		method: 'DELETE'
 	});
 	if (!response.ok) {
@@ -1214,9 +1279,28 @@ export function getTmdbImageUrl(path: string | undefined, size = 'w500'): string
 // Discover detail types
 
 export interface CastMember {
+	id: number;
 	name: string;
 	character: string;
 	photo: string;
+}
+
+export interface CrewMember {
+	id: number;
+	name: string;
+	job: string;
+	photo: string | null;
+}
+
+export interface RecommendedItem {
+	id: number;
+	title: string;
+	posterPath: string | null;
+	releaseDate: string;
+	rating: number;
+	mediaType: 'movie' | 'tv';
+	runtime?: number;
+	contentRating?: string;
 }
 
 export interface DiscoverMovieDetail {
@@ -1227,11 +1311,22 @@ export interface DiscoverMovieDetail {
 	releaseDate: string;
 	runtime: number;
 	rating: number;
+	contentRating?: string;
 	posterPath: string;
 	backdropPath: string;
 	genres: string[];
 	cast: CastMember[];
+	crew: CrewMember[];
 	director: string;
+	imdbId?: string;
+	status: string;
+	budget?: number;
+	revenue?: number;
+	originalLanguage?: string;
+	productionCountries?: string[];
+	productionCompanies?: string[];
+	trailerKey?: string;
+	recommendations?: RecommendedItem[];
 }
 
 export interface DiscoverShowDetail {
@@ -1241,16 +1336,24 @@ export interface DiscoverShowDetail {
 	firstAirDate: string;
 	status: string;
 	rating: number;
+	contentRating?: string;
 	posterPath: string;
 	backdropPath: string;
 	genres: string[];
 	networks: string[];
 	seasons: number;
+	episodes: number;
 	cast: CastMember[];
+	crew: CrewMember[];
+	imdbId?: string;
+	originalLanguage?: string;
+	productionCountries?: string[];
+	trailerKey?: string;
+	recommendations?: RecommendedItem[];
 }
 
 export async function getDiscoverMovieDetail(id: number): Promise<DiscoverMovieDetail> {
-	const response = await fetch(`${API_BASE}/discover/movie/${id}`);
+	const response = await apiFetch(`${API_BASE}/discover/movie/${id}`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -1258,7 +1361,7 @@ export async function getDiscoverMovieDetail(id: number): Promise<DiscoverMovieD
 }
 
 export async function getDiscoverShowDetail(id: number): Promise<DiscoverShowDetail> {
-	const response = await fetch(`${API_BASE}/discover/show/${id}`);
+	const response = await apiFetch(`${API_BASE}/discover/show/${id}`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -1275,7 +1378,7 @@ export interface TrailerInfo {
 }
 
 export async function getTrailers(tmdbId: number, mediaType: 'movie' | 'tv'): Promise<TrailerInfo[]> {
-	const response = await fetch(`${API_BASE}/trailers/${mediaType}/${tmdbId}`);
+	const response = await apiFetch(`${API_BASE}/trailers/${mediaType}/${tmdbId}`);
 	if (!response.ok) {
 		throw new Error('Failed to fetch trailers');
 	}
@@ -1301,7 +1404,7 @@ export interface TMDBMovieSearchResult {
 }
 
 export async function getMovieRecommendations(tmdbId: number): Promise<TMDBMovieSearchResult> {
-	const response = await fetch(`${API_BASE}/movie/recommendations/${tmdbId}`);
+	const response = await apiFetch(`${API_BASE}/movie/recommendations/${tmdbId}`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -1310,7 +1413,7 @@ export async function getMovieRecommendations(tmdbId: number): Promise<TMDBMovie
 
 // Movie suggestions - genre-based, excluding library items
 export async function getMovieSuggestions(movieId: number): Promise<{ results: TMDBMovieResult[] }> {
-	const response = await fetch(`${API_BASE}/movies/suggestions/${movieId}`);
+	const response = await apiFetch(`${API_BASE}/movies/suggestions/${movieId}`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -1329,7 +1432,7 @@ export interface TMDBShowResult {
 }
 
 export async function getShowSuggestions(showId: number): Promise<{ results: TMDBShowResult[] }> {
-	const response = await fetch(`${API_BASE}/shows/suggestions/${showId}`);
+	const response = await apiFetch(`${API_BASE}/shows/suggestions/${showId}`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -1343,7 +1446,7 @@ export interface Genre {
 }
 
 export async function getMovieGenres(): Promise<{ genres: Genre[] }> {
-	const response = await fetch(`${API_BASE}/discover/genres/movie`);
+	const response = await apiFetch(`${API_BASE}/discover/genres/movie`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -1351,7 +1454,7 @@ export async function getMovieGenres(): Promise<{ genres: Genre[] }> {
 }
 
 export async function getTVGenres(): Promise<{ genres: Genre[] }> {
-	const response = await fetch(`${API_BASE}/discover/genres/tv`);
+	const response = await apiFetch(`${API_BASE}/discover/genres/tv`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -1359,7 +1462,7 @@ export async function getTVGenres(): Promise<{ genres: Genre[] }> {
 }
 
 export async function getMoviesByGenre(genreId: number, page: number = 1): Promise<DiscoverResult> {
-	const response = await fetch(`${API_BASE}/discover/movies/genre/${genreId}?page=${page}`);
+	const response = await apiFetch(`${API_BASE}/discover/movies/genre/${genreId}?page=${page}`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -1367,7 +1470,7 @@ export async function getMoviesByGenre(genreId: number, page: number = 1): Promi
 }
 
 export async function getTVByGenre(genreId: number, page: number = 1): Promise<DiscoverResult> {
-	const response = await fetch(`${API_BASE}/discover/shows/genre/${genreId}?page=${page}`);
+	const response = await apiFetch(`${API_BASE}/discover/shows/genre/${genreId}?page=${page}`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -1440,31 +1543,31 @@ export interface Book {
 // Music API functions
 
 export async function getArtists(): Promise<Artist[]> {
-	const response = await fetch(`${API_BASE}/artists`);
+	const response = await apiFetch(`${API_BASE}/artists`);
 	if (!response.ok) throw new Error(`API error: ${response.status}`);
 	return response.json();
 }
 
 export async function getArtist(id: number): Promise<ArtistDetail> {
-	const response = await fetch(`${API_BASE}/artists/${id}`);
+	const response = await apiFetch(`${API_BASE}/artists/${id}`);
 	if (!response.ok) throw new Error(`API error: ${response.status}`);
 	return response.json();
 }
 
 export async function getAlbums(): Promise<Album[]> {
-	const response = await fetch(`${API_BASE}/albums`);
+	const response = await apiFetch(`${API_BASE}/albums`);
 	if (!response.ok) throw new Error(`API error: ${response.status}`);
 	return response.json();
 }
 
 export async function getAlbum(id: number): Promise<AlbumDetail> {
-	const response = await fetch(`${API_BASE}/albums/${id}`);
+	const response = await apiFetch(`${API_BASE}/albums/${id}`);
 	if (!response.ok) throw new Error(`API error: ${response.status}`);
 	return response.json();
 }
 
 export async function getTrack(id: number): Promise<Track> {
-	const response = await fetch(`${API_BASE}/tracks/${id}`);
+	const response = await apiFetch(`${API_BASE}/tracks/${id}`);
 	if (!response.ok) throw new Error(`API error: ${response.status}`);
 	return response.json();
 }
@@ -1472,13 +1575,13 @@ export async function getTrack(id: number): Promise<Track> {
 // Book API functions
 
 export async function getBooks(): Promise<Book[]> {
-	const response = await fetch(`${API_BASE}/books`);
+	const response = await apiFetch(`${API_BASE}/books`);
 	if (!response.ok) throw new Error(`API error: ${response.status}`);
 	return response.json();
 }
 
 export async function getBook(id: number): Promise<Book> {
-	const response = await fetch(`${API_BASE}/books/${id}`);
+	const response = await apiFetch(`${API_BASE}/books/${id}`);
 	if (!response.ok) throw new Error(`API error: ${response.status}`);
 	return response.json();
 }
@@ -1491,13 +1594,13 @@ export interface WatchStatus {
 }
 
 export async function getWatchStatus(mediaType: 'movie' | 'episode', mediaId: number): Promise<WatchStatus> {
-	const response = await fetch(`${API_BASE}/watched/${mediaType}/${mediaId}`);
+	const response = await apiFetch(`${API_BASE}/watched/${mediaType}/${mediaId}`);
 	if (!response.ok) throw new Error(`API error: ${response.status}`);
 	return response.json();
 }
 
 export async function markAsWatched(mediaType: 'movie' | 'episode', mediaId: number, duration?: number): Promise<void> {
-	const response = await fetch(`${API_BASE}/watched/${mediaType}/${mediaId}`, {
+	const response = await apiFetch(`${API_BASE}/watched/${mediaType}/${mediaId}`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ duration: duration || 3600 })
@@ -1506,7 +1609,14 @@ export async function markAsWatched(mediaType: 'movie' | 'episode', mediaId: num
 }
 
 export async function markAsUnwatched(mediaType: 'movie' | 'episode', mediaId: number): Promise<void> {
-	const response = await fetch(`${API_BASE}/watched/${mediaType}/${mediaId}`, {
+	const response = await apiFetch(`${API_BASE}/watched/${mediaType}/${mediaId}`, {
+		method: 'DELETE'
+	});
+	if (!response.ok) throw new Error(`API error: ${response.status}`);
+}
+
+export async function deleteEpisode(episodeId: number): Promise<void> {
+	const response = await apiFetch(`${API_BASE}/episodes/${episodeId}`, {
 		method: 'DELETE'
 	});
 	if (!response.ok) throw new Error(`API error: ${response.status}`);
@@ -1526,7 +1636,7 @@ export interface SubtitleTrack {
 }
 
 export async function getSubtitleTracks(mediaType: 'movie' | 'episode', mediaId: number): Promise<SubtitleTrack[]> {
-	const response = await fetch(`${API_BASE}/subtitles/${mediaType}/${mediaId}`);
+	const response = await apiFetch(`${API_BASE}/subtitles/${mediaType}/${mediaId}`);
 	if (!response.ok) throw new Error(`API error: ${response.status}`);
 	return response.json();
 }
@@ -1570,7 +1680,7 @@ export interface PersonDetail {
 }
 
 export async function getPersonDetail(personId: number): Promise<PersonDetail> {
-	const response = await fetch(`${API_BASE}/person/${personId}`);
+	const response = await apiFetch(`${API_BASE}/person/${personId}`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -1596,7 +1706,7 @@ export interface WatchlistItem {
 }
 
 export async function getWatchlist(): Promise<WatchlistItem[]> {
-	const response = await fetch(`${API_BASE}/watchlist`);
+	const response = await apiFetch(`${API_BASE}/watchlist`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -1604,7 +1714,7 @@ export async function getWatchlist(): Promise<WatchlistItem[]> {
 }
 
 export async function addToWatchlist(tmdbId: number, mediaType: 'movie' | 'tv'): Promise<void> {
-	const response = await fetch(`${API_BASE}/watchlist`, {
+	const response = await apiFetch(`${API_BASE}/watchlist`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ tmdbId, mediaType })
@@ -1615,7 +1725,7 @@ export async function addToWatchlist(tmdbId: number, mediaType: 'movie' | 'tv'):
 }
 
 export async function removeFromWatchlist(tmdbId: number, mediaType: 'movie' | 'tv'): Promise<void> {
-	const response = await fetch(`${API_BASE}/watchlist/${tmdbId}/${mediaType}`, {
+	const response = await apiFetch(`${API_BASE}/watchlist/${tmdbId}/${mediaType}`, {
 		method: 'DELETE'
 	});
 	if (!response.ok) {
@@ -1624,7 +1734,7 @@ export async function removeFromWatchlist(tmdbId: number, mediaType: 'movie' | '
 }
 
 export async function isInWatchlist(tmdbId: number, mediaType: 'movie' | 'tv'): Promise<boolean> {
-	const response = await fetch(`${API_BASE}/watchlist/${tmdbId}/${mediaType}`);
+	const response = await apiFetch(`${API_BASE}/watchlist/${tmdbId}/${mediaType}`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -1651,7 +1761,7 @@ export interface DiscoverShowDetailWithStatus extends DiscoverShowDetail {
 }
 
 export async function getDiscoverMovieDetailWithStatus(id: number): Promise<DiscoverMovieDetailWithStatus> {
-	const response = await fetch(`${API_BASE}/discover/movie/${id}`);
+	const response = await apiFetch(`${API_BASE}/discover/movie/${id}`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -1659,9 +1769,179 @@ export async function getDiscoverMovieDetailWithStatus(id: number): Promise<Disc
 }
 
 export async function getDiscoverShowDetailWithStatus(id: number): Promise<DiscoverShowDetailWithStatus> {
-	const response = await fetch(`${API_BASE}/discover/show/${id}`);
+	const response = await apiFetch(`${API_BASE}/discover/show/${id}`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
+	return response.json();
+}
+
+// Quality Preset API
+
+export interface QualityPreset {
+	id: number;
+	name: string;
+	isDefault: boolean;
+	isBuiltIn: boolean;
+	resolution: string;
+	source: string;
+	hdrFormats: string | null;
+	codec: string;
+	audioFormats: string | null;
+	preferredEdition: string;
+	minSeeders: number;
+	preferSeasonPacks: boolean;
+	autoUpgrade: boolean;
+	createdAt: string;
+	updatedAt: string;
+}
+
+export async function getQualityPresets(): Promise<QualityPreset[]> {
+	const response = await apiFetch(`${API_BASE}/quality/presets`);
+	if (!response.ok) throw new Error(`API error: ${response.status}`);
+	return response.json();
+}
+
+export async function getQualityPreset(id: number): Promise<QualityPreset> {
+	const response = await apiFetch(`${API_BASE}/quality/presets/${id}`);
+	if (!response.ok) throw new Error(`API error: ${response.status}`);
+	return response.json();
+}
+
+export async function createQualityPreset(preset: Partial<QualityPreset>): Promise<QualityPreset> {
+	const response = await apiFetch(`${API_BASE}/quality/presets`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(preset),
+	});
+	if (!response.ok) throw new Error(`API error: ${response.status}`);
+	return response.json();
+}
+
+export async function updateQualityPreset(id: number, preset: Partial<QualityPreset>): Promise<QualityPreset> {
+	const response = await apiFetch(`${API_BASE}/quality/presets/${id}`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(preset),
+	});
+	if (!response.ok) throw new Error(`API error: ${response.status}`);
+	return response.json();
+}
+
+export async function deleteQualityPreset(id: number): Promise<void> {
+	const response = await apiFetch(`${API_BASE}/quality/presets/${id}`, {
+		method: 'DELETE',
+	});
+	if (!response.ok) throw new Error(`API error: ${response.status}`);
+}
+
+export async function setDefaultQualityPreset(id: number): Promise<void> {
+	const response = await apiFetch(`${API_BASE}/quality/presets/${id}/default`, {
+		method: 'POST',
+	});
+	if (!response.ok) throw new Error(`API error: ${response.status}`);
+}
+
+// Download Tracking API
+
+export interface DownloadItem {
+	id: number;
+	downloadClientId: number | null;
+	externalId: string;
+	mediaId: number | null;
+	mediaType: string | null;
+	title: string;
+	size: number;
+	status: 'downloading' | 'completed' | 'importing' | 'imported' | 'failed' | 'unmatched';
+	progress: number;
+	downloadPath: string | null;
+	importedPath: string | null;
+	error: string | null;
+	createdAt: string;
+	updatedAt: string;
+}
+
+export async function getDownloadItems(): Promise<DownloadItem[]> {
+	const response = await apiFetch(`${API_BASE}/download-items`);
+	if (!response.ok) throw new Error(`API error: ${response.status}`);
+	return response.json();
+}
+
+export async function deleteDownloadItem(id: number): Promise<void> {
+	const response = await apiFetch(`${API_BASE}/download-items/${id}`, {
+		method: 'DELETE',
+	});
+	if (!response.ok) throw new Error(`API error: ${response.status}`);
+}
+
+// Import History API
+
+export interface ImportHistoryItem {
+	id: number;
+	downloadId: number | null;
+	sourcePath: string;
+	destPath: string;
+	mediaId: number | null;
+	mediaType: string | null;
+	success: boolean;
+	error: string | null;
+	createdAt: string;
+}
+
+export async function getImportHistory(limit = 50): Promise<ImportHistoryItem[]> {
+	const response = await apiFetch(`${API_BASE}/imports/history?limit=${limit}`);
+	if (!response.ok) throw new Error(`API error: ${response.status}`);
+	return response.json();
+}
+
+// Naming Template API
+
+export interface NamingTemplate {
+	id: number;
+	type: 'movie' | 'tv' | 'daily';
+	folderTemplate: string;
+	fileTemplate: string;
+	isDefault: boolean;
+}
+
+export async function getNamingTemplates(): Promise<NamingTemplate[]> {
+	const response = await apiFetch(`${API_BASE}/settings/naming`);
+	if (!response.ok) throw new Error(`API error: ${response.status}`);
+	return response.json();
+}
+
+export async function updateNamingTemplate(template: NamingTemplate): Promise<NamingTemplate> {
+	const response = await apiFetch(`${API_BASE}/settings/naming`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(template),
+	});
+	if (!response.ok) throw new Error(`API error: ${response.status}`);
+	return response.json();
+}
+
+// Storage Management API
+
+export interface DiskUsage {
+	total: number;
+	free: number;
+	used: number;
+	usedPercent: number;
+}
+
+export interface StorageStatus {
+	thresholdGb: number;
+	pauseEnabled: boolean;
+	upgradeDeleteOld: boolean;
+	moviesSize: number;
+	tvSize: number;
+	musicSize: number;
+	booksSize: number;
+	diskUsage?: DiskUsage;
+}
+
+export async function getStorageStatus(): Promise<StorageStatus> {
+	const response = await apiFetch(`${API_BASE}/storage/status`);
+	if (!response.ok) throw new Error(`API error: ${response.status}`);
 	return response.json();
 }

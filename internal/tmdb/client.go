@@ -61,30 +61,57 @@ type MovieResult struct {
 }
 
 type MovieDetails struct {
-	ID                  int64               `json:"id"`
-	ImdbID              string              `json:"imdb_id"`
-	Title               string              `json:"title"`
-	OriginalTitle       string              `json:"original_title"`
-	Overview            string              `json:"overview"`
-	Tagline             string              `json:"tagline"`
-	ReleaseDate         string              `json:"release_date"`
-	Runtime             int                 `json:"runtime"`
-	VoteAverage         float64             `json:"vote_average"`
-	PosterPath          string              `json:"poster_path"`
-	BackdropPath        string              `json:"backdrop_path"`
-	Genres              []Genre             `json:"genres"`
-	Credits             Credits             `json:"credits"`
-	Status              string              `json:"status"`
-	Budget              int64               `json:"budget"`
-	Revenue             int64               `json:"revenue"`
-	OriginalLanguage    string              `json:"original_language"`
-	ProductionCountries []ProductionCountry `json:"production_countries"`
-	Videos              Videos              `json:"videos"`
+	ID                    int64                 `json:"id"`
+	ImdbID                string                `json:"imdb_id"`
+	Title                 string                `json:"title"`
+	OriginalTitle         string                `json:"original_title"`
+	Overview              string                `json:"overview"`
+	Tagline               string                `json:"tagline"`
+	ReleaseDate           string                `json:"release_date"`
+	Runtime               int                   `json:"runtime"`
+	VoteAverage           float64               `json:"vote_average"`
+	PosterPath            string                `json:"poster_path"`
+	BackdropPath          string                `json:"backdrop_path"`
+	Genres                []Genre               `json:"genres"`
+	Credits               Credits               `json:"credits"`
+	Status                string                `json:"status"`
+	Budget                int64                 `json:"budget"`
+	Revenue               int64                 `json:"revenue"`
+	OriginalLanguage      string                `json:"original_language"`
+	ProductionCountries   []ProductionCountry   `json:"production_countries"`
+	ProductionCompanies   []ProductionCompany   `json:"production_companies"`
+	Videos                Videos                `json:"videos"`
+	ReleaseDates          ReleaseDatesResult    `json:"release_dates"`
+	Recommendations       MovieSearchResult     `json:"recommendations"`
 }
 
 type ProductionCountry struct {
 	ISO31661 string `json:"iso_3166_1"`
 	Name     string `json:"name"`
+}
+
+type ProductionCompany struct {
+	ID            int64  `json:"id"`
+	Name          string `json:"name"`
+	LogoPath      string `json:"logo_path"`
+	OriginCountry string `json:"origin_country"`
+}
+
+type ReleaseDatesResult struct {
+	Results []CountryReleaseDates `json:"results"`
+}
+
+type CountryReleaseDates struct {
+	ISO31661     string        `json:"iso_3166_1"`
+	ReleaseDates []ReleaseDate `json:"release_dates"`
+}
+
+type ReleaseDate struct {
+	Certification string `json:"certification"`
+	ISO6391       string `json:"iso_639_1"`
+	ReleaseDate   string `json:"release_date"`
+	Type          int    `json:"type"` // 1=Premiere, 2=Theatrical (limited), 3=Theatrical, 4=Digital, 5=Physical, 6=TV
+	Note          string `json:"note"`
 }
 
 type Videos struct {
@@ -147,21 +174,24 @@ type TVResult struct {
 }
 
 type TVDetails struct {
-	ID            int64         `json:"id"`
-	Name          string        `json:"name"`
-	OriginalName  string        `json:"original_name"`
-	Overview      string        `json:"overview"`
-	FirstAirDate  string        `json:"first_air_date"`
-	Status        string        `json:"status"`
-	VoteAverage   float64       `json:"vote_average"`
-	PosterPath    string        `json:"poster_path"`
-	BackdropPath  string        `json:"backdrop_path"`
-	Genres        []Genre       `json:"genres"`
-	Networks      []Network     `json:"networks"`
-	Seasons       []SeasonInfo  `json:"seasons"`
-	Credits       Credits       `json:"credits"`
-	ExternalIDs   ExternalIDs   `json:"external_ids"`
-	Videos        Videos        `json:"videos"`
+	ID                  int64               `json:"id"`
+	Name                string              `json:"name"`
+	OriginalName        string              `json:"original_name"`
+	Overview            string              `json:"overview"`
+	FirstAirDate        string              `json:"first_air_date"`
+	Status              string              `json:"status"`
+	VoteAverage         float64             `json:"vote_average"`
+	PosterPath          string              `json:"poster_path"`
+	BackdropPath        string              `json:"backdrop_path"`
+	Genres              []Genre             `json:"genres"`
+	Networks            []Network           `json:"networks"`
+	Seasons             []SeasonInfo        `json:"seasons"`
+	Credits             Credits             `json:"credits"`
+	ExternalIDs         ExternalIDs         `json:"external_ids"`
+	Videos              Videos              `json:"videos"`
+	Recommendations     TVSearchResult      `json:"recommendations"`
+	OriginalLanguage    string              `json:"original_language"`
+	ProductionCountries []ProductionCountry `json:"production_countries"`
 }
 
 type Network struct {
@@ -213,20 +243,6 @@ type ContentRatingsResponse struct {
 type ContentRating struct {
 	ISO31661 string `json:"iso_3166_1"`
 	Rating   string `json:"rating"`
-}
-
-type ReleaseDatesResponse struct {
-	Results []ReleaseDateResult `json:"results"`
-}
-
-type ReleaseDateResult struct {
-	ISO31661     string        `json:"iso_3166_1"`
-	ReleaseDates []ReleaseDate `json:"release_dates"`
-}
-
-type ReleaseDate struct {
-	Certification string `json:"certification"`
-	Type          int    `json:"type"`
 }
 
 // Person types
@@ -324,7 +340,7 @@ func (c *Client) SearchMovie(title string, year int) (*MovieSearchResult, error)
 // GetMovieDetails gets detailed info about a movie including credits
 func (c *Client) GetMovieDetails(tmdbID int64) (*MovieDetails, error) {
 	data, err := c.get(fmt.Sprintf("/movie/%d", tmdbID), map[string]string{
-		"append_to_response": "credits,videos",
+		"append_to_response": "credits,videos,release_dates,recommendations",
 	})
 	if err != nil {
 		return nil, err
@@ -345,7 +361,7 @@ func (c *Client) GetMovieContentRating(tmdbID int64) (string, error) {
 		return "", err
 	}
 
-	var result ReleaseDatesResponse
+	var result ReleaseDatesResult
 	if err := json.Unmarshal(data, &result); err != nil {
 		return "", err
 	}
@@ -379,6 +395,76 @@ func (c *Client) GetMovieRecommendations(tmdbID int64) (*MovieSearchResult, erro
 	return &result, nil
 }
 
+// EnrichedMovieResult extends MovieResult with runtime and content rating
+type EnrichedMovieResult struct {
+	MovieResult
+	Runtime       int    `json:"runtime"`
+	ContentRating string `json:"content_rating"`
+}
+
+// EnrichedMovieSearchResult is like MovieSearchResult but with enriched results
+type EnrichedMovieSearchResult struct {
+	Page         int                   `json:"page"`
+	Results      []EnrichedMovieResult `json:"results"`
+	TotalPages   int                   `json:"total_pages"`
+	TotalResults int                   `json:"total_results"`
+}
+
+// GetEnrichedMovieRecommendations gets recommendations with runtime and content rating
+func (c *Client) GetEnrichedMovieRecommendations(tmdbID int64, limit int) (*EnrichedMovieSearchResult, error) {
+	// First get basic recommendations
+	basic, err := c.GetMovieRecommendations(tmdbID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Limit the number we enrich to avoid too many API calls
+	if limit <= 0 || limit > len(basic.Results) {
+		limit = len(basic.Results)
+	}
+	if limit > 20 {
+		limit = 20 // Cap at 20 to avoid excessive API calls
+	}
+
+	enriched := &EnrichedMovieSearchResult{
+		Page:         basic.Page,
+		TotalPages:   basic.TotalPages,
+		TotalResults: basic.TotalResults,
+		Results:      make([]EnrichedMovieResult, 0, limit),
+	}
+
+	// Fetch details for each recommendation (in parallel would be better but keeping simple)
+	for i := 0; i < limit && i < len(basic.Results); i++ {
+		rec := basic.Results[i]
+		enrichedRec := EnrichedMovieResult{MovieResult: rec}
+
+		// Try to get details for runtime and certification
+		details, err := c.GetMovieDetails(rec.ID)
+		if err == nil {
+			enrichedRec.Runtime = details.Runtime
+			enrichedRec.ContentRating = c.extractUSCertification(details)
+		}
+
+		enriched.Results = append(enriched.Results, enrichedRec)
+	}
+
+	return enriched, nil
+}
+
+// extractUSCertification gets the US content rating from movie details
+func (c *Client) extractUSCertification(details *MovieDetails) string {
+	for _, country := range details.ReleaseDates.Results {
+		if country.ISO31661 == "US" {
+			for _, release := range country.ReleaseDates {
+				if release.Certification != "" {
+					return release.Certification
+				}
+			}
+		}
+	}
+	return ""
+}
+
 // SearchTV searches for TV shows by title and optional year
 func (c *Client) SearchTV(title string, year int) (*TVSearchResult, error) {
 	params := map[string]string{"query": title}
@@ -399,10 +485,10 @@ func (c *Client) SearchTV(title string, year int) (*TVSearchResult, error) {
 	return &result, nil
 }
 
-// GetTVDetails gets detailed info about a TV show including credits, external IDs, and videos
+// GetTVDetails gets detailed info about a TV show including credits, external IDs, videos, and recommendations
 func (c *Client) GetTVDetails(tmdbID int64) (*TVDetails, error) {
 	data, err := c.get(fmt.Sprintf("/tv/%d", tmdbID), map[string]string{
-		"append_to_response": "credits,external_ids,videos",
+		"append_to_response": "credits,external_ids,videos,recommendations",
 	})
 	if err != nil {
 		return nil, err
@@ -770,6 +856,39 @@ func GetYear(dateStr string) int {
 	return 0
 }
 
+// GetUSReleaseDates extracts theatrical and digital release dates for US
+func GetUSReleaseDates(releaseDates ReleaseDatesResult) (theatrical, digital string) {
+	for _, country := range releaseDates.Results {
+		if country.ISO31661 == "US" {
+			for _, rd := range country.ReleaseDates {
+				// Type 3 = Theatrical
+				if rd.Type == 3 && theatrical == "" {
+					theatrical = rd.ReleaseDate
+				}
+				// Type 4 = Digital
+				if rd.Type == 4 && digital == "" {
+					digital = rd.ReleaseDate
+				}
+			}
+			break
+		}
+	}
+	return theatrical, digital
+}
+
+// GetStudios returns production company names as JSON array
+func GetStudios(companies []ProductionCompany) string {
+	if len(companies) == 0 {
+		return ""
+	}
+	var names []string
+	for _, c := range companies {
+		names = append(names, c.Name)
+	}
+	data, _ := json.Marshal(names)
+	return string(data)
+}
+
 // Discover types
 type DiscoverResult struct {
 	Page         int           `json:"page"`
@@ -880,6 +999,70 @@ func (c *Client) GetUpcomingMovies(page int) (*DiscoverMovieResult, error) {
 	}
 
 	var result DiscoverMovieResult
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
+// DiscoverTheatricalReleases returns upcoming movies using discover endpoint
+func (c *Client) DiscoverTheatricalReleases(region string, page int) (*DiscoverMovieResult, error) {
+	// Get today's date and 1 year out for a full year of upcoming releases
+	today := time.Now().Format("2006-01-02")
+	oneYearOut := time.Now().AddDate(1, 0, 0).Format("2006-01-02")
+
+	// Filter by upcoming date range, sort by popularity
+	// Popularity naturally surfaces major anticipated releases
+	params := map[string]string{
+		"primary_release_date.gte": today,
+		"primary_release_date.lte": oneYearOut,
+		"sort_by":                  "popularity.desc",
+		"include_adult":            "false",
+		"include_video":            "false",
+	}
+	if region != "" {
+		params["region"] = region
+	}
+	if page > 0 {
+		params["page"] = strconv.Itoa(page)
+	}
+
+	data, err := c.get("/discover/movie", params)
+	if err != nil {
+		return nil, err
+	}
+
+	var result DiscoverMovieResult
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
+// DiscoverUpcomingTV returns upcoming TV shows using discover endpoint
+func (c *Client) DiscoverUpcomingTV(page int) (*DiscoverTVResult, error) {
+	// Get today's date and 1 year out for upcoming shows
+	today := time.Now().Format("2006-01-02")
+	oneYearOut := time.Now().AddDate(1, 0, 0).Format("2006-01-02")
+
+	params := map[string]string{
+		"first_air_date.gte": today,
+		"first_air_date.lte": oneYearOut,
+		"sort_by":            "popularity.desc",
+		"include_adult":      "false",
+	}
+	if page > 0 {
+		params["page"] = strconv.Itoa(page)
+	}
+
+	data, err := c.get("/discover/tv", params)
+	if err != nil {
+		return nil, err
+	}
+
+	var result DiscoverTVResult
 	if err := json.Unmarshal(data, &result); err != nil {
 		return nil, err
 	}
@@ -1118,4 +1301,74 @@ func (c *Client) GetTVRecommendations(tmdbID int64) (*DiscoverTVResult, error) {
 	}
 
 	return &result, nil
+}
+
+// EnrichedTVResult extends TVResult with episode runtime and content rating
+type EnrichedTVResult struct {
+	TVResult
+	EpisodeRuntime int    `json:"episode_runtime"`
+	ContentRating  string `json:"content_rating"`
+}
+
+// EnrichedTVSearchResult is like DiscoverTVResult but with enriched results
+type EnrichedTVSearchResult struct {
+	Page         int                `json:"page"`
+	Results      []EnrichedTVResult `json:"results"`
+	TotalPages   int                `json:"total_pages"`
+	TotalResults int                `json:"total_results"`
+}
+
+// TVDetailsMinimal is a minimal response for getting episode runtime
+type TVDetailsMinimal struct {
+	ID             int64 `json:"id"`
+	EpisodeRunTime []int `json:"episode_run_time"`
+}
+
+// GetEnrichedTVRecommendations gets recommendations with runtime and content rating
+func (c *Client) GetEnrichedTVRecommendations(tmdbID int64, limit int) (*EnrichedTVSearchResult, error) {
+	// First get basic recommendations
+	basic, err := c.GetTVRecommendations(tmdbID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Limit the number we enrich to avoid too many API calls
+	if limit <= 0 || limit > len(basic.Results) {
+		limit = len(basic.Results)
+	}
+	if limit > 20 {
+		limit = 20 // Cap at 20 to avoid excessive API calls
+	}
+
+	enriched := &EnrichedTVSearchResult{
+		Page:         basic.Page,
+		TotalPages:   basic.TotalPages,
+		TotalResults: basic.TotalResults,
+		Results:      make([]EnrichedTVResult, 0, limit),
+	}
+
+	// Fetch details for each recommendation
+	for i := 0; i < limit && i < len(basic.Results); i++ {
+		rec := basic.Results[i]
+		enrichedRec := EnrichedTVResult{TVResult: rec}
+
+		// Get episode runtime from TV details
+		data, err := c.get(fmt.Sprintf("/tv/%d", rec.ID), nil)
+		if err == nil {
+			var details TVDetailsMinimal
+			if json.Unmarshal(data, &details) == nil && len(details.EpisodeRunTime) > 0 {
+				enrichedRec.EpisodeRuntime = details.EpisodeRunTime[0]
+			}
+		}
+
+		// Get content rating
+		rating, err := c.GetTVContentRating(rec.ID)
+		if err == nil {
+			enrichedRec.ContentRating = rating
+		}
+
+		enriched.Results = append(enriched.Results, enrichedRec)
+	}
+
+	return enriched, nil
 }

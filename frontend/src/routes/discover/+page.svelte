@@ -3,11 +3,12 @@
 	import {
 		getTrendingMovies,
 		getPopularMovies,
-		getUpcomingMovies,
+		getTheatricalReleases,
 		getTopRatedMovies,
 		getTrendingShows,
 		getPopularShows,
 		getTopRatedShows,
+		getUpcomingShows,
 		getMovieGenres,
 		getTVGenres,
 		getMoviesByGenre,
@@ -17,16 +18,17 @@
 		type DiscoverItem,
 		type Genre
 	} from '$lib/api';
-	import MediaRow from '$lib/components/MediaRow.svelte';
-	import PosterCard from '$lib/components/PosterCard.svelte';
+	import ScrollSection from '$lib/components/containers/ScrollSection.svelte';
+	import MediaCard from '$lib/components/media/MediaCard.svelte';
 
 	// Row data
 	let trendingMovies: DiscoverItem[] = $state([]);
 	let popularMovies: DiscoverItem[] = $state([]);
-	let upcomingMovies: DiscoverItem[] = $state([]);
+	let theatricalReleases: DiscoverItem[] = $state([]);
 	let topRatedMovies: DiscoverItem[] = $state([]);
 	let trendingShows: DiscoverItem[] = $state([]);
 	let popularShows: DiscoverItem[] = $state([]);
+	let upcomingShows: DiscoverItem[] = $state([]);
 	let topRatedShows: DiscoverItem[] = $state([]);
 
 	// Genre data
@@ -34,6 +36,7 @@
 	let tvGenres: Genre[] = $state([]);
 	let movieGenreContent: Map<number, DiscoverItem[]> = $state(new Map());
 	let tvGenreContent: Map<number, DiscoverItem[]> = $state(new Map());
+
 
 	// Priority genres to show (common ones)
 	const priorityMovieGenreIds = [28, 35, 27, 878, 10749, 12]; // Action, Comedy, Horror, Sci-Fi, Romance, Adventure
@@ -43,26 +46,46 @@
 	let error: string | null = $state(null);
 	let activeTab = $state<'movies' | 'shows'>('movies');
 
+	async function loadTheatricalReleases() {
+		try {
+			// Fetch 3 pages for more content (~60 items)
+			const [page1, page2, page3] = await Promise.all([
+				getTheatricalReleases('', 1),
+				getTheatricalReleases('', 2),
+				getTheatricalReleases('', 3)
+			]);
+			theatricalReleases = [...page1.results, ...page2.results, ...page3.results];
+		} catch (e) {
+			console.error('Failed to load theatrical releases:', e);
+		}
+	}
+
 	onMount(async () => {
 		try {
 			// Load base content and genres in parallel
 			const [
 				trendingM,
 				popularM,
-				upcomingM,
+				theatricalM1,
+				theatricalM2,
+				theatricalM3,
 				topRatedM,
 				trendingS,
 				popularS,
+				upcomingS,
 				topRatedS,
 				movieGenresRes,
 				tvGenresRes
 			] = await Promise.all([
 				getTrendingMovies(),
 				getPopularMovies(),
-				getUpcomingMovies(),
+				getTheatricalReleases('', 1),
+				getTheatricalReleases('', 2),
+				getTheatricalReleases('', 3),
 				getTopRatedMovies(),
 				getTrendingShows(),
 				getPopularShows(),
+				getUpcomingShows(),
 				getTopRatedShows(),
 				getMovieGenres().catch(() => ({ genres: [] })),
 				getTVGenres().catch(() => ({ genres: [] }))
@@ -70,10 +93,11 @@
 
 			trendingMovies = trendingM.results;
 			popularMovies = popularM.results;
-			upcomingMovies = upcomingM.results;
+			theatricalReleases = [...theatricalM1.results, ...theatricalM2.results, ...theatricalM3.results];
 			topRatedMovies = topRatedM.results;
 			trendingShows = trendingS.results;
 			popularShows = popularS.results;
+			upcomingShows = upcomingS.results;
 			topRatedShows = topRatedS.results;
 			movieGenres = movieGenresRes.genres;
 			tvGenres = tvGenresRes.genres;
@@ -159,10 +183,11 @@
 
 			trendingMovies = updateItems(trendingMovies);
 			popularMovies = updateItems(popularMovies);
-			upcomingMovies = updateItems(upcomingMovies);
+			theatricalReleases = updateItems(theatricalReleases);
 			topRatedMovies = updateItems(topRatedMovies);
 			trendingShows = updateItems(trendingShows);
 			popularShows = updateItems(popularShows);
+			upcomingShows = updateItems(upcomingShows);
 			topRatedShows = updateItems(topRatedShows);
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Failed to create request';
@@ -254,15 +279,15 @@
 				<div class="absolute inset-0 bg-gradient-to-t from-bg-primary via-transparent to-bg-primary/30 pointer-events-none"></div>
 
 				<!-- Content -->
-				<div class="relative h-full flex items-end pb-12 px-6">
+				<div class="relative h-full flex items-end pb-12 px-[60px]">
 					<div class="max-w-2xl">
 						{#key currentHero.id}
 							<div class="animate-fade-in">
 								<div class="flex items-center gap-2 mb-4">
-									<span class="px-3 py-1.5 text-xs font-medium rounded-lg bg-white/10 border border-white/20 text-white">
+									<span class="px-3 py-1.5 text-xs font-medium rounded-full bg-glass border border-border-subtle text-text-primary">
 										Trending
 									</span>
-									<span class="px-3 py-1.5 text-xs font-medium rounded-lg bg-white/10 border border-white/20 text-white">
+									<span class="px-3 py-1.5 text-xs font-medium rounded-full bg-glass border border-border-subtle text-text-primary">
 										{activeTab === 'movies' ? 'Movie' : 'TV Series'}
 									</span>
 								</div>
@@ -279,12 +304,12 @@
 								{/if}
 							</div>
 						{/key}
-						<!-- Circular action buttons (matching home page) -->
+						<!-- Circular action buttons -->
 						<div class="flex items-center gap-2">
 							<!-- Details -->
 							<a
 								href={activeTab === 'movies' ? `/discover/movie/${currentHero.id}` : `/discover/show/${currentHero.id}`}
-								class="w-11 h-11 rounded-full bg-white/10 border border-white/20 text-white flex items-center justify-center hover:bg-white/20 transition-all"
+								class="w-11 h-11 rounded-full bg-glass border border-border-subtle text-text-primary flex items-center justify-center hover:bg-glass-hover transition-all"
 								title="View Details"
 							>
 								<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -295,7 +320,7 @@
 							{#if currentHero.inLibrary}
 								<a
 									href={activeTab === 'movies' ? `/movies/${currentHero.libraryId}` : `/tv/${currentHero.libraryId}`}
-									class="w-11 h-11 rounded-full bg-green-600 border border-green-500 text-white flex items-center justify-center hover:bg-green-500 transition-all"
+									class="w-11 h-11 rounded-full bg-green-600/80 border border-green-500/50 text-white flex items-center justify-center hover:bg-green-500/80 transition-all"
 									title="In Library"
 								>
 									<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -304,7 +329,7 @@
 								</a>
 							{:else if currentHero.requested || currentHero.requestStatus}
 								<button
-									class="w-11 h-11 rounded-full bg-yellow-600 border border-yellow-500 text-white flex items-center justify-center transition-all cursor-default"
+									class="w-11 h-11 rounded-full bg-yellow-600/80 border border-yellow-500/50 text-white flex items-center justify-center transition-all cursor-default"
 									title="Request Pending"
 									disabled
 								>
@@ -315,7 +340,7 @@
 							{:else}
 								<button
 									onclick={(e) => handleRequest(e, currentHero)}
-									class="w-11 h-11 rounded-full bg-white/10 border border-white/20 text-white flex items-center justify-center hover:bg-white/20 transition-all"
+									class="w-11 h-11 rounded-full bg-glass border border-border-subtle text-text-primary flex items-center justify-center hover:bg-glass-hover transition-all"
 									title="Request"
 								>
 									<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -330,7 +355,7 @@
 					<div class="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-3">
 						<button
 							onclick={prevHero}
-							class="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors border border-white/20"
+							class="p-1.5 rounded-full bg-glass hover:bg-glass-hover text-text-primary transition-colors border border-border-subtle"
 							aria-label="Previous"
 						>
 							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -341,14 +366,14 @@
 							{#each currentHeroes as _, i}
 								<button
 									onclick={() => goToHero(i)}
-									class="w-2 h-2 rounded-full transition-all {i === currentHeroIndex ? 'bg-white w-6' : 'bg-white/30 hover:bg-white/50'}"
+									class="w-2 h-2 rounded-full transition-all {i === currentHeroIndex ? 'bg-text-primary w-6' : 'bg-text-muted hover:bg-text-secondary'}"
 									aria-label="Go to slide {i + 1}"
 								></button>
 							{/each}
 						</div>
 						<button
 							onclick={nextHero}
-							class="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors border border-white/20"
+							class="p-1.5 rounded-full bg-glass hover:bg-glass-hover text-text-primary transition-colors border border-border-subtle"
 							aria-label="Next"
 						>
 							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -361,9 +386,9 @@
 		{/if}
 
 		<!-- Content sections -->
-		<div class="space-y-8 px-6 pb-8">
+		<div class="space-y-8 pb-8">
 			{#if error}
-				<div class="bg-white/5 border border-white/10 text-text-secondary px-4 py-3 rounded-xl flex items-center justify-between">
+				<div class="mx-[60px] bg-white/5 border border-white/10 text-text-secondary px-4 py-3 rounded-xl flex items-center justify-between">
 					<span>{error}</span>
 					<button class="text-text-muted hover:text-text-secondary" onclick={() => (error = null)} title="Dismiss">
 						<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -373,134 +398,161 @@
 				</div>
 			{/if}
 
-			<!-- Tab bar -->
-			<div class="inline-flex gap-1 p-1.5 rounded-xl bg-black/40 backdrop-blur-md border border-white/10">
+			<!-- Filter Pills -->
+			<div class="mx-[60px] flex flex-wrap gap-2">
+				<!-- Media type pills -->
 				<button
 					onclick={() => activeTab = 'movies'}
-					class="px-4 py-2 text-sm font-medium transition-all rounded-lg
+					class="px-4 py-2.5 text-sm font-medium transition-all rounded-full min-h-[44px] flex items-center
 						{activeTab === 'movies'
-							? 'bg-white/15 text-white'
-							: 'text-white/60 hover:text-white hover:bg-white/5'}"
+							? 'bg-white text-black border border-white'
+							: 'bg-glass backdrop-blur-xl border border-border-subtle text-text-secondary hover:bg-glass-hover hover:text-text-primary'}"
 				>
 					Movies
 				</button>
 				<button
 					onclick={() => activeTab = 'shows'}
-					class="px-4 py-2 text-sm font-medium transition-all rounded-lg
+					class="px-4 py-2.5 text-sm font-medium transition-all rounded-full min-h-[44px] flex items-center
 						{activeTab === 'shows'
-							? 'bg-white/15 text-white'
-							: 'text-white/60 hover:text-white hover:bg-white/5'}"
+							? 'bg-white text-black border border-white'
+							: 'bg-glass backdrop-blur-xl border border-border-subtle text-text-secondary hover:bg-glass-hover hover:text-text-primary'}"
 				>
 					TV Shows
 				</button>
+
+				<!-- Separator -->
+				<div class="w-px h-8 bg-border-subtle self-center mx-1"></div>
+
+				<!-- Genre pills -->
+				{#if activeTab === 'movies'}
+					{#each priorityMovieGenreIds as genreId}
+						{@const genre = movieGenres.find(g => g.id === genreId)}
+						{#if genre && movieGenreContent.get(genreId)?.length}
+							<button
+								onclick={() => document.getElementById(`genre-movie-${genreId}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+								class="px-3 py-1.5 text-xs font-medium transition-all rounded-full bg-glass backdrop-blur-xl border border-border-subtle text-text-secondary hover:bg-glass-hover hover:text-text-primary"
+							>
+								{genre.name}
+							</button>
+						{/if}
+					{/each}
+				{:else}
+					{#each priorityTVGenreIds as genreId}
+						{@const genre = tvGenres.find(g => g.id === genreId)}
+						{#if genre && tvGenreContent.get(genreId)?.length}
+							<button
+								onclick={() => document.getElementById(`genre-tv-${genreId}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+								class="px-3 py-1.5 text-xs font-medium transition-all rounded-full bg-glass backdrop-blur-xl border border-border-subtle text-text-secondary hover:bg-glass-hover hover:text-text-primary"
+							>
+								{genre.name}
+							</button>
+						{/if}
+					{/each}
+				{/if}
 			</div>
 
 			<!-- Movies Tab Content -->
 			{#if activeTab === 'movies'}
 				<!-- Trending Movies -->
 				{#if trendingMovies.length > 0}
-					<MediaRow title="Trending Movies">
-						{#each trendingMovies.slice(0, 12) as item}
-							<div class="flex-shrink-0 w-32 sm:w-36">
-								<PosterCard
-									href={getDetailUrl(item)}
-									title={item.title || item.name || ''}
-									subtitle={item.releaseDate?.substring(0, 4)}
-									posterUrl={item.posterPath ? getImageUrl(item.posterPath) : undefined}
-									mediaType={item.type === 'movie' ? 'movie' : 'series'}
-									inLibrary={item.inLibrary}
-									requested={item.requested}
-									requestStatus={item.requestStatus}
-									onRequest={(e) => handleRequest(e, item)}
-								/>
-							</div>
+					<ScrollSection title="Trending Movies">
+						{#each trendingMovies.slice(0, 25) as item}
+							<MediaCard
+								type="poster"
+								title={item.title || item.name || ''}
+								subtitle={item.releaseDate?.substring(0, 4)}
+								imagePath={item.posterPath}
+								isLocal={false}
+								mediaType="movie"
+								inLibrary={item.inLibrary}
+								requested={item.requested}
+								href={getDetailUrl(item)}
+							/>
 						{/each}
-					</MediaRow>
+					</ScrollSection>
 				{/if}
 
 				<!-- Popular Movies -->
 				{#if popularMovies.length > 0}
-					<MediaRow title="Popular Movies">
-						{#each popularMovies.slice(0, 12) as item}
-							<div class="flex-shrink-0 w-32 sm:w-36">
-								<PosterCard
-									href={getDetailUrl(item)}
-									title={item.title || item.name || ''}
-									subtitle={item.releaseDate?.substring(0, 4)}
-									posterUrl={item.posterPath ? getImageUrl(item.posterPath) : undefined}
-									mediaType={item.type === 'movie' ? 'movie' : 'series'}
-									inLibrary={item.inLibrary}
-									requested={item.requested}
-									requestStatus={item.requestStatus}
-									onRequest={(e) => handleRequest(e, item)}
-								/>
-							</div>
+					<ScrollSection title="Popular Movies">
+						{#each popularMovies.slice(0, 25) as item}
+							<MediaCard
+								type="poster"
+								title={item.title || item.name || ''}
+								subtitle={item.releaseDate?.substring(0, 4)}
+								imagePath={item.posterPath}
+								isLocal={false}
+								mediaType="movie"
+								inLibrary={item.inLibrary}
+								requested={item.requested}
+								href={getDetailUrl(item)}
+							/>
 						{/each}
-					</MediaRow>
+					</ScrollSection>
 				{/if}
 
-				<!-- Upcoming Movies -->
-				{#if upcomingMovies.length > 0}
-					<MediaRow title="Upcoming Movies">
-						{#each upcomingMovies.slice(0, 12) as item}
-							<div class="flex-shrink-0 w-32 sm:w-36">
-								<PosterCard
-									href={getDetailUrl(item)}
-									title={item.title || item.name || ''}
-									subtitle={item.releaseDate?.substring(0, 4)}
-									posterUrl={item.posterPath ? getImageUrl(item.posterPath) : undefined}
-									mediaType={item.type === 'movie' ? 'movie' : 'series'}
-									inLibrary={item.inLibrary}
-									requested={item.requested}
-									requestStatus={item.requestStatus}
-									onRequest={(e) => handleRequest(e, item)}
-								/>
-							</div>
+				<!-- Coming to Theaters -->
+				<ScrollSection title="Coming to Theaters">
+					{#if theatricalReleases.length > 0}
+						{#each theatricalReleases.slice(0, 40) as item}
+							<MediaCard
+								type="poster"
+								title={item.title || item.name || ''}
+								subtitle={item.releaseDate?.substring(0, 4)}
+								imagePath={item.posterPath}
+								isLocal={false}
+								mediaType="movie"
+								inLibrary={item.inLibrary}
+								requested={item.requested}
+								href={getDetailUrl(item)}
+							/>
 						{/each}
-					</MediaRow>
-				{/if}
+					{:else}
+						<div class="py-8 text-center text-text-muted w-full">
+							No upcoming theatrical releases found
+						</div>
+					{/if}
+				</ScrollSection>
 
 				<!-- Top Rated Movies -->
 				{#if topRatedMovies.length > 0}
-					<MediaRow title="Top Rated Movies">
-						{#each topRatedMovies.slice(0, 12) as item}
-							<div class="flex-shrink-0 w-32 sm:w-36">
-								<PosterCard
-									href={getDetailUrl(item)}
-									title={item.title || item.name || ''}
-									subtitle={item.releaseDate?.substring(0, 4)}
-									posterUrl={item.posterPath ? getImageUrl(item.posterPath) : undefined}
-									mediaType={item.type === 'movie' ? 'movie' : 'series'}
-									inLibrary={item.inLibrary}
-									requested={item.requested}
-									requestStatus={item.requestStatus}
-									onRequest={(e) => handleRequest(e, item)}
-								/>
-							</div>
+					<ScrollSection title="Top Rated Movies">
+						{#each topRatedMovies.slice(0, 25) as item}
+							<MediaCard
+								type="poster"
+								title={item.title || item.name || ''}
+								subtitle={item.releaseDate?.substring(0, 4)}
+								imagePath={item.posterPath}
+								isLocal={false}
+								mediaType="movie"
+								inLibrary={item.inLibrary}
+								requested={item.requested}
+								href={getDetailUrl(item)}
+							/>
 						{/each}
-					</MediaRow>
+					</ScrollSection>
 				{/if}
 
 				<!-- Genre Rows -->
 				{#each priorityMovieGenreIds as genreId}
 					{#if movieGenreContent.get(genreId)?.length}
-						<MediaRow title={getGenreName(genreId, 'movie')}>
-							{#each (movieGenreContent.get(genreId) || []).slice(0, 12) as item}
-								<div class="flex-shrink-0 w-32 sm:w-36">
-									<PosterCard
-										href={getDetailUrl(item)}
+						<div id="genre-movie-{genreId}" class="scroll-mt-24">
+							<ScrollSection title={getGenreName(genreId, 'movie')}>
+								{#each (movieGenreContent.get(genreId) || []).slice(0, 25) as item}
+									<MediaCard
+										type="poster"
 										title={item.title || item.name || ''}
 										subtitle={item.releaseDate?.substring(0, 4)}
-										posterUrl={item.posterPath ? getImageUrl(item.posterPath) : undefined}
-										mediaType={item.type === 'movie' ? 'movie' : 'series'}
+										imagePath={item.posterPath}
+										isLocal={false}
+										mediaType="movie"
 										inLibrary={item.inLibrary}
 										requested={item.requested}
-										requestStatus={item.requestStatus}
-										onRequest={(e) => handleRequest(e, item)}
+										href={getDetailUrl(item)}
 									/>
-								</div>
-							{/each}
-						</MediaRow>
+								{/each}
+							</ScrollSection>
+						</div>
 					{/if}
 				{/each}
 			{/if}
@@ -509,87 +561,100 @@
 			{#if activeTab === 'shows'}
 				<!-- Trending Shows -->
 				{#if trendingShows.length > 0}
-					<MediaRow title="Trending TV Shows">
-						{#each trendingShows.slice(0, 12) as item}
-							<div class="flex-shrink-0 w-32 sm:w-36">
-								<PosterCard
-									href={getDetailUrl(item)}
-									title={item.title || item.name || ''}
-									subtitle={item.releaseDate?.substring(0, 4)}
-									posterUrl={item.posterPath ? getImageUrl(item.posterPath) : undefined}
-									mediaType="series"
-									inLibrary={item.inLibrary}
-									requested={item.requested}
-									requestStatus={item.requestStatus}
-									onRequest={(e) => handleRequest(e, item)}
-								/>
-							</div>
+					<ScrollSection title="Trending TV Shows">
+						{#each trendingShows.slice(0, 25) as item}
+							<MediaCard
+								type="poster"
+								title={item.title || item.name || ''}
+								subtitle={item.releaseDate?.substring(0, 4)}
+								imagePath={item.posterPath}
+								isLocal={false}
+								mediaType="tv"
+								inLibrary={item.inLibrary}
+								requested={item.requested}
+								href={getDetailUrl(item)}
+							/>
 						{/each}
-					</MediaRow>
+					</ScrollSection>
 				{/if}
 
 				<!-- Popular Shows -->
 				{#if popularShows.length > 0}
-					<MediaRow title="Popular TV Shows">
-						{#each popularShows.slice(0, 12) as item}
-							<div class="flex-shrink-0 w-32 sm:w-36">
-								<PosterCard
-									href={getDetailUrl(item)}
-									title={item.title || item.name || ''}
-									subtitle={item.releaseDate?.substring(0, 4)}
-									posterUrl={item.posterPath ? getImageUrl(item.posterPath) : undefined}
-									mediaType="series"
-									inLibrary={item.inLibrary}
-									requested={item.requested}
-									requestStatus={item.requestStatus}
-									onRequest={(e) => handleRequest(e, item)}
-								/>
-							</div>
+					<ScrollSection title="Popular TV Shows">
+						{#each popularShows.slice(0, 25) as item}
+							<MediaCard
+								type="poster"
+								title={item.title || item.name || ''}
+								subtitle={item.releaseDate?.substring(0, 4)}
+								imagePath={item.posterPath}
+								isLocal={false}
+								mediaType="tv"
+								inLibrary={item.inLibrary}
+								requested={item.requested}
+								href={getDetailUrl(item)}
+							/>
 						{/each}
-					</MediaRow>
+					</ScrollSection>
+				{/if}
+
+				<!-- Upcoming Shows -->
+				{#if upcomingShows.length > 0}
+					<ScrollSection title="Upcoming TV Shows">
+						{#each upcomingShows.slice(0, 25) as item}
+							<MediaCard
+								type="poster"
+								title={item.title || item.name || ''}
+								subtitle={item.releaseDate?.substring(0, 4)}
+								imagePath={item.posterPath}
+								isLocal={false}
+								mediaType="tv"
+								inLibrary={item.inLibrary}
+								requested={item.requested}
+								href={getDetailUrl(item)}
+							/>
+						{/each}
+					</ScrollSection>
 				{/if}
 
 				<!-- Top Rated Shows -->
 				{#if topRatedShows.length > 0}
-					<MediaRow title="Top Rated TV Shows">
-						{#each topRatedShows.slice(0, 12) as item}
-							<div class="flex-shrink-0 w-32 sm:w-36">
-								<PosterCard
-									href={getDetailUrl(item)}
-									title={item.title || item.name || ''}
-									subtitle={item.releaseDate?.substring(0, 4)}
-									posterUrl={item.posterPath ? getImageUrl(item.posterPath) : undefined}
-									mediaType="series"
-									inLibrary={item.inLibrary}
-									requested={item.requested}
-									requestStatus={item.requestStatus}
-									onRequest={(e) => handleRequest(e, item)}
-								/>
-							</div>
+					<ScrollSection title="Top Rated TV Shows">
+						{#each topRatedShows.slice(0, 25) as item}
+							<MediaCard
+								type="poster"
+								title={item.title || item.name || ''}
+								subtitle={item.releaseDate?.substring(0, 4)}
+								imagePath={item.posterPath}
+								isLocal={false}
+								mediaType="tv"
+								inLibrary={item.inLibrary}
+								requested={item.requested}
+								href={getDetailUrl(item)}
+							/>
 						{/each}
-					</MediaRow>
+					</ScrollSection>
 				{/if}
 
 				<!-- Genre Rows -->
 				{#each priorityTVGenreIds as genreId}
 					{#if tvGenreContent.get(genreId)?.length}
-						<MediaRow title={getGenreName(genreId, 'tv')}>
-							{#each (tvGenreContent.get(genreId) || []).slice(0, 12) as item}
-								<div class="flex-shrink-0 w-32 sm:w-36">
-									<PosterCard
-										href={getDetailUrl(item)}
+						<div id="genre-tv-{genreId}" class="scroll-mt-24">
+							<ScrollSection title={getGenreName(genreId, 'tv')}>
+								{#each (tvGenreContent.get(genreId) || []).slice(0, 25) as item}
+									<MediaCard
+										type="poster"
 										title={item.title || item.name || ''}
 										subtitle={item.releaseDate?.substring(0, 4)}
-										posterUrl={item.posterPath ? getImageUrl(item.posterPath) : undefined}
-										mediaType="series"
+										imagePath={item.posterPath}
+										isLocal={false}
+										mediaType="tv"
 										inLibrary={item.inLibrary}
 										requested={item.requested}
-										requestStatus={item.requestStatus}
-										onRequest={(e) => handleRequest(e, item)}
+										href={getDetailUrl(item)}
 									/>
-								</div>
-							{/each}
-						</MediaRow>
+								{/each}
+							</ScrollSection>
+						</div>
 					{/if}
 				{/each}
 			{/if}

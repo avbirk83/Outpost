@@ -1,13 +1,16 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
+	import Select from '$lib/components/ui/Select.svelte';
 	import {
 		getLibraries,
 		createLibrary,
 		deleteLibrary,
 		scanLibrary,
+		getScanProgress,
 		getSettings,
 		saveSettings,
 		refreshAllMetadata,
+		clearLibraryData,
 		getDownloadClients,
 		createDownloadClient,
 		updateDownloadClient,
@@ -18,32 +21,39 @@
 		updateIndexer,
 		deleteIndexer,
 		testIndexer,
-		getQualityProfiles,
-		createQualityProfile,
-		updateQualityProfile,
-		deleteQualityProfile,
+		getQualityPresets,
+		createQualityPreset,
+		updateQualityPreset,
+		deleteQualityPreset,
+		setDefaultQualityPreset,
+		getStorageStatus,
 		type Library,
 		type DownloadClient,
 		type Indexer,
-		type QualityProfile
+		type QualityPreset,
+		type ScanProgress,
+		type StorageStatus
 	} from '$lib/api';
 
 	let libraries: Library[] = $state([]);
 	let downloadClients: DownloadClient[] = $state([]);
 	let indexers: Indexer[] = $state([]);
-	let qualityProfiles: QualityProfile[] = $state([]);
+	let qualityPresets: QualityPreset[] = $state([]);
+	let storageStatus: StorageStatus | null = $state(null);
 	let loading = $state(true);
 	let error: string | null = $state(null);
 	let showAddForm = $state(false);
 	let showAddClientForm = $state(false);
 	let showAddIndexerForm = $state(false);
-	let showAddProfileForm = $state(false);
-	let editingProfile: QualityProfile | null = $state(null);
+	let showAddPresetForm = $state(false);
+	let editingPreset: QualityPreset | null = $state(null);
 	let scanning: Record<number, boolean> = $state({});
 	let testing: Record<number, boolean> = $state({});
 	let testingIndexer: Record<number, boolean> = $state({});
 	let testResults: Record<number, { success: boolean; message: string }> = $state({});
 	let indexerTestResults: Record<number, { success: boolean; message: string }> = $state({});
+	let scanProgress: ScanProgress | null = $state(null);
+	let progressInterval: ReturnType<typeof setInterval> | null = null;
 
 	// Form state
 	let name = $state('');
@@ -68,21 +78,25 @@
 	let indexerApiKey = $state('');
 	let indexerCategories = $state('');
 
-	// Quality profile form state
-	let profileName = $state('');
-	let profileUpgradeAllowed = $state(true);
-	let profileUpgradeUntilScore = $state(100000);
-	let profileMinFormatScore = $state(0);
-	let profileCutoffFormatScore = $state(50000);
-	let profileQualities: string[] = $state([]);
+	// Quality preset form state
+	let presetName = $state('');
+	let presetResolution = $state('1080p');
+	let presetSource = $state('web');
+	let presetHdrFormats: string[] = $state([]);
+	let presetCodec = $state('any');
+	let presetAudioFormats: string[] = $state([]);
+	let presetPreferredEdition = $state('any');
+	let presetMinSeeders = $state(3);
+	let presetPreferSeasonPacks = $state(true);
+	let presetAutoUpgrade = $state(true);
 
-	// All available qualities
-	const allQualities = [
-		'Remux-2160p', 'Bluray-2160p', 'WEBDL-2160p', 'WEBRip-2160p', 'HDTV-2160p',
-		'Remux-1080p', 'Bluray-1080p', 'WEBDL-1080p', 'WEBRip-1080p', 'HDTV-1080p',
-		'Bluray-720p', 'WEBDL-720p', 'WEBRip-720p', 'HDTV-720p',
-		'DVD', 'SDTV'
-	];
+	// Preset options
+	const resolutionOptions = ['4k', '1080p', '720p', '480p'];
+	const sourceOptions = ['remux', 'bluray', 'web', 'any'];
+	const hdrOptions = ['dv', 'hdr10+', 'hdr10', 'hlg'];
+	const audioOptions = ['atmos', 'truehd', 'dtshd', 'dtsx', 'dd+'];
+	const codecOptions = ['any', 'hevc', 'av1'];
+	const editionOptions = ['any', 'theatrical', 'directors', 'extended', 'unrated'];
 
 	// Settings state
 	let tmdbApiKey = $state('');
@@ -90,10 +104,67 @@
 	let settingsSaved = $state(false);
 	let refreshingMetadata = $state(false);
 	let refreshResult: { refreshed: number; errors: number; total: number } | null = $state(null);
+	let clearingLibrary = $state(false);
+	let showClearConfirm = $state(false);
+
+	// Tab navigation
+	type SettingsTab = 'general' | 'quality' | 'sources' | 'automation';
+	let currentTab: SettingsTab = $state('general');
+
+	const tabs: { id: SettingsTab; label: string; icon: string }[] = [
+		{ id: 'general', label: 'General', icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z' },
+		{ id: 'quality', label: 'Quality', icon: 'M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z' },
+		{ id: 'sources', label: 'Sources', icon: 'M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9' },
+		{ id: 'automation', label: 'Automation', icon: 'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15' }
+	];
 
 	onMount(async () => {
-		await Promise.all([loadLibraries(), loadSettings(), loadDownloadClients(), loadIndexers(), loadQualityProfiles()]);
+		await Promise.all([loadLibraries(), loadSettings(), loadDownloadClients(), loadIndexers(), loadQualityPresets(), loadStorageStatus()]);
+		// Check if a scan is already running
+		checkScanProgress();
 	});
+
+	onDestroy(() => {
+		if (progressInterval) {
+			clearInterval(progressInterval);
+			progressInterval = null;
+		}
+	});
+
+	function startProgressPolling() {
+		if (progressInterval) return; // Already polling
+		// Check immediately, then poll every second
+		checkScanProgress();
+		progressInterval = setInterval(async () => {
+			await checkScanProgress();
+		}, 1000);
+	}
+
+	function stopProgressPolling() {
+		if (progressInterval) {
+			clearInterval(progressInterval);
+			progressInterval = null;
+		}
+	}
+
+	async function checkScanProgress() {
+		try {
+			const progress = await getScanProgress();
+			scanProgress = progress;
+			if (progress.scanning) {
+				startProgressPolling();
+			} else {
+				stopProgressPolling();
+				// Clear scanning states when done
+				for (const id of Object.keys(scanning)) {
+					scanning[Number(id)] = false;
+				}
+			}
+		} catch (e) {
+			console.error('Failed to get scan progress:', e);
+			stopProgressPolling();
+		}
+	}
 
 	async function loadSettings() {
 		try {
@@ -128,6 +199,20 @@
 			error = e instanceof Error ? e.message : 'Failed to refresh metadata';
 		} finally {
 			refreshingMetadata = false;
+		}
+	}
+
+	async function handleClearLibrary() {
+		try {
+			clearingLibrary = true;
+			await clearLibraryData();
+			showClearConfirm = false;
+			// Reload the page to reflect changes
+			window.location.reload();
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to clear library data';
+		} finally {
+			clearingLibrary = false;
 		}
 	}
 
@@ -169,9 +254,8 @@
 		try {
 			scanning[id] = true;
 			await scanLibrary(id);
-			setTimeout(() => {
-				scanning[id] = false;
-			}, 2000);
+			// Start polling for progress
+			startProgressPolling();
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to start scan';
 			scanning[id] = false;
@@ -373,112 +457,157 @@
 		}
 	}
 
-	// Quality profile functions
-	async function loadQualityProfiles() {
+	// Quality preset functions
+	async function loadQualityPresets() {
 		try {
-			qualityProfiles = await getQualityProfiles();
+			qualityPresets = (await getQualityPresets()) || [];
 		} catch (e) {
-			console.error('Failed to load quality profiles:', e);
+			console.error('Failed to load quality presets:', e);
+			qualityPresets = [];
 		}
 	}
 
-	function resetProfileForm() {
-		profileName = '';
-		profileUpgradeAllowed = true;
-		profileUpgradeUntilScore = 100000;
-		profileMinFormatScore = 0;
-		profileCutoffFormatScore = 50000;
-		profileQualities = [];
-		editingProfile = null;
+	function resetPresetForm() {
+		presetName = '';
+		presetResolution = '1080p';
+		presetSource = 'web';
+		presetHdrFormats = [];
+		presetCodec = 'any';
+		presetAudioFormats = [];
+		presetPreferredEdition = 'any';
+		presetMinSeeders = 3;
+		presetPreferSeasonPacks = true;
+		presetAutoUpgrade = true;
+		editingPreset = null;
 	}
 
-	async function handleAddProfile() {
+	async function handleAddPreset() {
 		try {
-			await createQualityProfile({
-				name: profileName,
-				upgradeAllowed: profileUpgradeAllowed,
-				upgradeUntilScore: profileUpgradeUntilScore,
-				minFormatScore: profileMinFormatScore,
-				cutoffFormatScore: profileCutoffFormatScore,
-				qualities: JSON.stringify(profileQualities),
-				customFormats: '{}'
+			await createQualityPreset({
+				name: presetName,
+				resolution: presetResolution,
+				source: presetSource,
+				hdrFormats: presetHdrFormats,
+				codec: presetCodec,
+				audioFormats: presetAudioFormats,
+				preferredEdition: presetPreferredEdition,
+				minSeeders: presetMinSeeders,
+				preferSeasonPacks: presetPreferSeasonPacks,
+				autoUpgrade: presetAutoUpgrade
 			});
-			resetProfileForm();
-			showAddProfileForm = false;
-			await loadQualityProfiles();
+			resetPresetForm();
+			showAddPresetForm = false;
+			await loadQualityPresets();
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to add quality profile';
+			error = e instanceof Error ? e.message : 'Failed to add quality preset';
 		}
 	}
 
-	async function handleUpdateProfile() {
-		if (!editingProfile) return;
+	async function handleUpdatePreset() {
+		if (!editingPreset) return;
 		try {
-			await updateQualityProfile(editingProfile.id, {
-				name: profileName,
-				upgradeAllowed: profileUpgradeAllowed,
-				upgradeUntilScore: profileUpgradeUntilScore,
-				minFormatScore: profileMinFormatScore,
-				cutoffFormatScore: profileCutoffFormatScore,
-				qualities: JSON.stringify(profileQualities)
+			await updateQualityPreset(editingPreset.id, {
+				name: presetName,
+				resolution: presetResolution,
+				source: presetSource,
+				hdrFormats: presetHdrFormats,
+				codec: presetCodec,
+				audioFormats: presetAudioFormats,
+				preferredEdition: presetPreferredEdition,
+				minSeeders: presetMinSeeders,
+				preferSeasonPacks: presetPreferSeasonPacks,
+				autoUpgrade: presetAutoUpgrade
 			});
-			resetProfileForm();
-			await loadQualityProfiles();
+			resetPresetForm();
+			await loadQualityPresets();
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to update quality profile';
+			error = e instanceof Error ? e.message : 'Failed to update quality preset';
 		}
 	}
 
-	function startEditProfile(profile: QualityProfile) {
-		editingProfile = profile;
-		profileName = profile.name;
-		profileUpgradeAllowed = profile.upgradeAllowed;
-		profileUpgradeUntilScore = profile.upgradeUntilScore;
-		profileMinFormatScore = profile.minFormatScore;
-		profileCutoffFormatScore = profile.cutoffFormatScore;
-		try {
-			profileQualities = JSON.parse(profile.qualities || '[]');
-		} catch {
-			profileQualities = [];
-		}
-		showAddProfileForm = false;
+	function startEditPreset(preset: QualityPreset) {
+		editingPreset = preset;
+		presetName = preset.name;
+		presetResolution = preset.resolution;
+		presetSource = preset.source;
+		presetHdrFormats = preset.hdrFormats || [];
+		presetCodec = preset.codec || 'any';
+		presetAudioFormats = preset.audioFormats || [];
+		presetPreferredEdition = preset.preferredEdition || 'any';
+		presetMinSeeders = preset.minSeeders;
+		presetPreferSeasonPacks = preset.preferSeasonPacks;
+		presetAutoUpgrade = preset.autoUpgrade;
+		showAddPresetForm = false;
 	}
 
-	async function handleDeleteProfile(id: number) {
-		if (!confirm('Are you sure you want to delete this quality profile?')) return;
+	async function handleDeletePreset(id: number) {
+		if (!confirm('Are you sure you want to delete this quality preset?')) return;
 		try {
-			await deleteQualityProfile(id);
-			await loadQualityProfiles();
+			await deleteQualityPreset(id);
+			await loadQualityPresets();
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to delete quality profile';
+			error = e instanceof Error ? e.message : 'Failed to delete quality preset';
 		}
 	}
 
-	function toggleQuality(quality: string) {
-		if (profileQualities.includes(quality)) {
-			profileQualities = profileQualities.filter(q => q !== quality);
+	async function handleSetDefaultPreset(id: number) {
+		try {
+			await setDefaultQualityPreset(id);
+			await loadQualityPresets();
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to set default preset';
+		}
+	}
+
+	function toggleHdrFormat(format: string) {
+		if (presetHdrFormats.includes(format)) {
+			presetHdrFormats = presetHdrFormats.filter(f => f !== format);
 		} else {
-			profileQualities = [...profileQualities, quality];
+			presetHdrFormats = [...presetHdrFormats, format];
 		}
 	}
 
-	function getQualityColor(quality: string): string {
-		if (quality.includes('Remux')) return 'bg-purple-600';
-		if (quality.includes('2160p')) return 'bg-blue-600';
-		if (quality.includes('1080p')) return 'bg-green-600';
-		if (quality.includes('720p')) return 'bg-white-600';
-		return 'bg-bg-elevated';
+	function toggleAudioFormat(format: string) {
+		if (presetAudioFormats.includes(format)) {
+			presetAudioFormats = presetAudioFormats.filter(f => f !== format);
+		} else {
+			presetAudioFormats = [...presetAudioFormats, format];
+		}
 	}
 
-	function formatProfileQualities(qualitiesJson: string): string {
+	function getPresetDescription(preset: QualityPreset): string {
+		const parts: string[] = [];
+		parts.push(preset.resolution.toUpperCase());
+		if (preset.source !== 'any') parts.push(preset.source.toUpperCase());
+		if (preset.hdrFormats && preset.hdrFormats.length > 0) {
+			parts.push(preset.hdrFormats.map(h => h.toUpperCase()).join('/'));
+		}
+		return parts.join(' · ');
+	}
+
+	function getResolutionColor(resolution: string): string {
+		switch (resolution) {
+			case '4k': return 'bg-purple-600';
+			case '1080p': return 'bg-blue-600';
+			case '720p': return 'bg-green-600';
+			default: return 'bg-bg-elevated';
+		}
+	}
+
+	// Storage management functions
+	async function loadStorageStatus() {
 		try {
-			const quals = JSON.parse(qualitiesJson || '[]');
-			if (quals.length === 0) return 'All qualities';
-			if (quals.length <= 3) return quals.join(', ');
-			return `${quals.slice(0, 2).join(', ')} +${quals.length - 2} more`;
-		} catch {
-			return 'All qualities';
+			storageStatus = await getStorageStatus();
+		} catch (e) {
+			console.error('Failed to load storage status:', e);
+			storageStatus = { thresholdGb: 50, pauseEnabled: false, upgradeDeleteOld: true, moviesSize: 0, tvSize: 0, musicSize: 0, booksSize: 0 };
 		}
+	}
+
+	function getStorageBarColor(usedPercent: number, freeGb: number, thresholdGb: number): string {
+		if (freeGb < thresholdGb) return 'bg-red-500';
+		if (usedPercent > 80) return 'bg-yellow-500';
+		return 'bg-green-500';
 	}
 
 	// Input class for consistency
@@ -507,6 +636,27 @@
 			</button>
 		</div>
 	{/if}
+
+	<!-- Tab Navigation -->
+	<div class="flex gap-1 p-1 bg-bg-card rounded-xl border border-white/5">
+		{#each tabs as tab}
+			<button
+				class="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all flex-1 justify-center
+					{currentTab === tab.id ? 'bg-white/10 text-text-primary' : 'text-text-muted hover:text-text-secondary hover:bg-white/5'}"
+				onclick={() => currentTab = tab.id}
+			>
+				<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={tab.icon} />
+				</svg>
+				<span class="hidden sm:inline">{tab.label}</span>
+			</button>
+		{/each}
+	</div>
+
+	<!-- ============================================ -->
+	<!-- GENERAL TAB -->
+	<!-- ============================================ -->
+	{#if currentTab === 'general'}
 
 	<!-- TMDB Settings -->
 	<section class="glass-card p-6 space-y-4">
@@ -587,6 +737,39 @@
 				</p>
 			{/if}
 		</div>
+
+		<div class="pt-4 border-t border-white/10">
+			<label class={labelClass}>Clear Library Data</label>
+			<p class="text-xs text-text-muted mb-2">
+				Remove all movies, TV shows, and watch progress. Library folders will be kept but all scanned media will be deleted.
+			</p>
+			{#if showClearConfirm}
+				<div class="flex items-center gap-3">
+					<span class="text-sm text-yellow-400">Are you sure? This cannot be undone.</span>
+					<button
+						class="liquid-btn !bg-red-600 hover:!bg-red-700 disabled:opacity-50"
+						onclick={handleClearLibrary}
+						disabled={clearingLibrary}
+					>
+						{clearingLibrary ? 'Clearing...' : 'Yes, Clear All'}
+					</button>
+					<button
+						class="liquid-btn"
+						onclick={() => showClearConfirm = false}
+						disabled={clearingLibrary}
+					>
+						Cancel
+					</button>
+				</div>
+			{:else}
+				<button
+					class="liquid-btn !bg-red-600/20 !text-red-400 hover:!bg-red-600/30"
+					onclick={() => showClearConfirm = true}
+				>
+					Clear All Library Data
+				</button>
+			{/if}
+		</div>
 	</section>
 
 	<!-- Libraries -->
@@ -633,13 +816,17 @@
 					</div>
 					<div>
 						<label for="lib-type" class={labelClass}>Type</label>
-						<select id="lib-type" bind:value={type} class={selectClass}>
-							<option value="movies">Movies</option>
-							<option value="tv">TV Shows</option>
-							<option value="anime">Anime</option>
-							<option value="music">Music</option>
-							<option value="books">Books</option>
-						</select>
+						<Select
+							id="lib-type"
+							bind:value={type}
+							options={[
+								{ value: 'movies', label: 'Movies' },
+								{ value: 'tv', label: 'TV Shows' },
+								{ value: 'anime', label: 'Anime' },
+								{ value: 'music', label: 'Music' },
+								{ value: 'books', label: 'Books' }
+							]}
+						/>
 					</div>
 				</div>
 				<div>
@@ -681,9 +868,9 @@
 							<button
 								class="liquid-btn-sm disabled:opacity-50"
 								onclick={() => handleScan(lib.id)}
-								disabled={scanning[lib.id]}
+								disabled={scanning[lib.id] || scanProgress?.scanning}
 							>
-								{scanning[lib.id] ? 'Scanning...' : 'Scan'}
+								{scanning[lib.id] || (scanProgress?.scanning && scanProgress.library === lib.name) ? 'Scanning...' : 'Scan'}
 							</button>
 							<button
 								class="liquid-btn-sm !bg-white/5 !border-t-white/10 text-text-secondary hover:text-white"
@@ -696,7 +883,75 @@
 				{/each}
 			</div>
 		{/if}
+
+		<!-- Scan Progress Bar -->
+		{#if scanProgress?.scanning}
+			<div class="p-4 bg-bg-elevated/50 rounded-xl border border-white/5 space-y-3">
+				<div class="flex items-center justify-between">
+					<div class="flex items-center gap-3">
+						<div class="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
+						<div>
+							<span class="text-text-primary font-medium">
+								{scanProgress.phase === 'counting' ? 'Counting files...' :
+								 scanProgress.phase === 'extracting' ? 'Extracting subtitles...' :
+								 `Scanning ${scanProgress.library}`}
+							</span>
+							{#if scanProgress.phase !== 'counting' && scanProgress.total > 0}
+								<span class="text-text-muted ml-2 text-sm">
+									{scanProgress.current} / {scanProgress.total}
+								</span>
+							{/if}
+						</div>
+					</div>
+					{#if scanProgress.percent > 0}
+						<span class="text-text-secondary text-sm font-medium">{scanProgress.percent}%</span>
+					{/if}
+				</div>
+				{#if scanProgress.total > 0}
+					<div class="w-full bg-bg-card rounded-full h-2 overflow-hidden">
+						<div
+							class="bg-blue-500 h-full transition-all duration-300 ease-out"
+							style="width: {scanProgress.percent}%"
+						></div>
+					</div>
+				{/if}
+			</div>
+		{:else if scanProgress?.lastLibrary}
+			<!-- Last Scan Result -->
+			<div class="p-4 bg-bg-elevated/50 rounded-xl border border-white/5">
+				<div class="flex items-center justify-between">
+					<div class="flex items-center gap-3">
+						<svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+						</svg>
+						<div>
+							<span class="text-text-primary font-medium">
+								Scan complete: {scanProgress.lastLibrary}
+							</span>
+							<div class="text-sm text-text-secondary mt-0.5">
+								<span class="text-green-400">{scanProgress.lastAdded} added</span>
+								{#if scanProgress.lastSkipped > 0}
+									<span class="mx-1">·</span>
+									<span>{scanProgress.lastSkipped} skipped</span>
+								{/if}
+								{#if scanProgress.lastErrors > 0}
+									<span class="mx-1">·</span>
+									<span class="text-red-400">{scanProgress.lastErrors} errors</span>
+								{/if}
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+		{/if}
 	</section>
+
+	{/if}
+
+	<!-- ============================================ -->
+	<!-- SOURCES TAB -->
+	<!-- ============================================ -->
+	{#if currentTab === 'sources'}
 
 	<!-- Download Clients -->
 	<section class="glass-card p-6 space-y-4">
@@ -732,12 +987,17 @@
 					</div>
 					<div>
 						<label for="client-type" class={labelClass}>Type</label>
-						<select id="client-type" bind:value={clientType} onchange={() => { clientPort = getDefaultPort(clientType); }} class={selectClass}>
-							<option value="qbittorrent">qBittorrent</option>
-							<option value="transmission">Transmission</option>
-							<option value="sabnzbd">SABnzbd</option>
-							<option value="nzbget">NZBGet</option>
-						</select>
+						<Select
+							id="client-type"
+							bind:value={clientType}
+							onchange={() => { clientPort = getDefaultPort(clientType); }}
+							options={[
+								{ value: 'qbittorrent', label: 'qBittorrent' },
+								{ value: 'transmission', label: 'Transmission' },
+								{ value: 'sabnzbd', label: 'SABnzbd' },
+								{ value: 'nzbget', label: 'NZBGet' }
+							]}
+						/>
 					</div>
 				</div>
 				<div class="grid sm:grid-cols-3 gap-4">
@@ -885,11 +1145,15 @@
 					</div>
 					<div>
 						<label for="indexer-type" class={labelClass}>Type</label>
-						<select id="indexer-type" bind:value={indexerType} class={selectClass}>
-							<option value="torznab">Torznab (Torrent)</option>
-							<option value="newznab">Newznab (Usenet)</option>
-							<option value="prowlarr">Prowlarr</option>
-						</select>
+						<Select
+							id="indexer-type"
+							bind:value={indexerType}
+							options={[
+								{ value: 'torznab', label: 'Torznab (Torrent)' },
+								{ value: 'newznab', label: 'Newznab (Usenet)' },
+								{ value: 'prowlarr', label: 'Prowlarr' }
+							]}
+						/>
 					</div>
 				</div>
 				<div>
@@ -977,84 +1241,136 @@
 		{/if}
 	</section>
 
-	<!-- Quality Profiles -->
+	{/if}
+
+	<!-- ============================================ -->
+	<!-- QUALITY TAB -->
+	<!-- ============================================ -->
+	{#if currentTab === 'quality'}
+
+	<!-- Quality Presets -->
 	<section class="glass-card p-6 space-y-4">
 		<div class="flex items-center justify-between">
 			<div class="flex items-center gap-3">
-				<div class="w-10 h-10 rounded-xl bg-white-600/20 flex items-center justify-center">
-					<svg class="w-5 h-5 text-white-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+				<div class="w-10 h-10 rounded-xl bg-cyan-600/20 flex items-center justify-center">
+					<svg class="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
 					</svg>
 				</div>
 				<div>
-					<h2 class="text-lg font-semibold text-text-primary">Quality Profiles</h2>
-					<p class="text-sm text-text-secondary">Control release quality preferences</p>
+					<h2 class="text-lg font-semibold text-text-primary">Quality Presets</h2>
+					<p class="text-sm text-text-secondary">Define target quality for automatic downloads</p>
 				</div>
 			</div>
 			<button
 				class="liquid-btn-sm"
-				onclick={() => { showAddProfileForm = !showAddProfileForm; resetProfileForm(); }}
+				onclick={() => { showAddPresetForm = !showAddPresetForm; resetPresetForm(); }}
 			>
-				{showAddProfileForm ? 'Cancel' : 'Add Profile'}
+				{showAddPresetForm ? 'Cancel' : 'Add Preset'}
 			</button>
 		</div>
 
-		{#if showAddProfileForm || editingProfile}
+		{#if showAddPresetForm || editingPreset}
 			<form
 				class="p-4 bg-bg-elevated/50 rounded-xl space-y-4 border border-white/5"
-				onsubmit={(e) => { e.preventDefault(); editingProfile ? handleUpdateProfile() : handleAddProfile(); }}
+				onsubmit={(e) => { e.preventDefault(); editingPreset ? handleUpdatePreset() : handleAddPreset(); }}
 			>
 				<div>
-					<label for="profile-name" class={labelClass}>Profile Name</label>
-					<input type="text" id="profile-name" bind:value={profileName} required class={inputClass} placeholder="4K Enthusiast" />
+					<label for="preset-name" class={labelClass}>Preset Name</label>
+					<input type="text" id="preset-name" bind:value={presetName} required class={inputClass} placeholder="My Custom Preset" disabled={editingPreset?.isBuiltIn} />
+				</div>
+
+				<div class="grid sm:grid-cols-2 gap-4">
+					<div>
+						<label for="preset-resolution" class={labelClass}>Resolution</label>
+						<Select
+							id="preset-resolution"
+							bind:value={presetResolution}
+							options={resolutionOptions.map(res => ({ value: res, label: res.toUpperCase() }))}
+						/>
+					</div>
+					<div>
+						<label for="preset-source" class={labelClass}>Source</label>
+						<Select
+							id="preset-source"
+							bind:value={presetSource}
+							options={sourceOptions.map(src => ({ value: src, label: src.charAt(0).toUpperCase() + src.slice(1) }))}
+						/>
+					</div>
 				</div>
 
 				<div>
-					<label class="block text-sm text-text-secondary mb-2">Allowed Qualities</label>
-					<p class="text-xs text-text-muted mb-3">Select which quality tiers are acceptable. Empty = all allowed.</p>
+					<label class="block text-sm text-text-secondary mb-2">HDR Formats (optional)</label>
+					<p class="text-xs text-text-muted mb-3">Select preferred HDR formats. Empty = SDR is acceptable.</p>
 					<div class="flex flex-wrap gap-2">
-						{#each allQualities as quality}
+						{#each hdrOptions as hdr}
 							<button
 								type="button"
-								class="px-3 py-1.5 text-xs rounded-lg transition-colors font-medium {profileQualities.includes(quality) ? getQualityColor(quality) + ' text-white' : 'bg-bg-card text-text-muted hover:bg-bg-elevated'}"
-								onclick={() => toggleQuality(quality)}
+								class="px-3 py-1.5 text-xs rounded-lg transition-colors font-medium {presetHdrFormats.includes(hdr) ? 'bg-purple-600 text-white' : 'bg-bg-card text-text-muted hover:bg-bg-elevated'}"
+								onclick={() => toggleHdrFormat(hdr)}
 							>
-								{quality}
+								{hdr.toUpperCase()}
 							</button>
 						{/each}
 					</div>
 				</div>
 
-				<div class="grid sm:grid-cols-2 gap-4">
-					<div class="flex items-center gap-3">
-						<input type="checkbox" id="profile-upgrade" bind:checked={profileUpgradeAllowed} class="w-4 h-4 rounded bg-bg-elevated border-white/20 text-white-400 focus:ring-white-400" />
-						<label for="profile-upgrade" class="text-sm text-text-secondary">Allow upgrades</label>
-					</div>
-					<div>
-						<label for="profile-upgrade-until" class={labelClass}>Upgrade until score</label>
-						<input type="number" id="profile-upgrade-until" bind:value={profileUpgradeUntilScore} class={inputClass} disabled={!profileUpgradeAllowed} />
+				<div>
+					<label class="block text-sm text-text-secondary mb-2">Audio Formats (optional)</label>
+					<p class="text-xs text-text-muted mb-3">Select preferred audio formats. Empty = any audio.</p>
+					<div class="flex flex-wrap gap-2">
+						{#each audioOptions as audio}
+							<button
+								type="button"
+								class="px-3 py-1.5 text-xs rounded-lg transition-colors font-medium {presetAudioFormats.includes(audio) ? 'bg-blue-600 text-white' : 'bg-bg-card text-text-muted hover:bg-bg-elevated'}"
+								onclick={() => toggleAudioFormat(audio)}
+							>
+								{audio.toUpperCase()}
+							</button>
+						{/each}
 					</div>
 				</div>
 
-				<div class="grid sm:grid-cols-2 gap-4">
+				<div class="grid sm:grid-cols-3 gap-4">
 					<div>
-						<label for="profile-min-score" class={labelClass}>Minimum format score</label>
-						<input type="number" id="profile-min-score" bind:value={profileMinFormatScore} class={inputClass} />
-						<p class="text-xs text-text-muted mt-1">Releases below this score are rejected</p>
+						<label for="preset-codec" class={labelClass}>Codec</label>
+						<Select
+							id="preset-codec"
+							bind:value={presetCodec}
+							options={codecOptions.map(codec => ({ value: codec, label: codec.toUpperCase() }))}
+						/>
 					</div>
 					<div>
-						<label for="profile-cutoff" class={labelClass}>Cutoff score</label>
-						<input type="number" id="profile-cutoff" bind:value={profileCutoffFormatScore} class={inputClass} />
-						<p class="text-xs text-text-muted mt-1">Stop upgrading once reached</p>
+						<label for="preset-edition" class={labelClass}>Preferred Edition</label>
+						<Select
+							id="preset-edition"
+							bind:value={presetPreferredEdition}
+							options={editionOptions.map(edition => ({ value: edition, label: edition.charAt(0).toUpperCase() + edition.slice(1) }))}
+						/>
 					</div>
+					<div>
+						<label for="preset-seeders" class={labelClass}>Min Seeders</label>
+						<input type="number" id="preset-seeders" bind:value={presetMinSeeders} min="0" class={inputClass} />
+					</div>
+				</div>
+
+				<div class="flex flex-wrap gap-6">
+					<label class="flex items-center gap-2 cursor-pointer">
+						<input type="checkbox" bind:checked={presetPreferSeasonPacks} class="w-4 h-4 rounded bg-bg-elevated border-white/20 text-cyan-400 focus:ring-cyan-400" />
+						<span class="text-sm text-text-secondary">Prefer season packs for TV</span>
+					</label>
+					<label class="flex items-center gap-2 cursor-pointer">
+						<input type="checkbox" bind:checked={presetAutoUpgrade} class="w-4 h-4 rounded bg-bg-elevated border-white/20 text-cyan-400 focus:ring-cyan-400" />
+						<span class="text-sm text-text-secondary">Auto-upgrade when better quality found</span>
+					</label>
 				</div>
 
 				<div class="flex gap-2">
 					<button type="submit" class="liquid-btn">
-						{editingProfile ? 'Update Profile' : 'Add Profile'}
+						{editingPreset ? 'Update Preset' : 'Add Preset'}
 					</button>
-					{#if editingProfile}
-						<button type="button" class="liquid-btn !bg-white/5 !border-t-white/10 text-text-secondary hover:text-white" onclick={resetProfileForm}>
+					{#if editingPreset}
+						<button type="button" class="liquid-btn !bg-white/5 !border-t-white/10 text-text-secondary hover:text-white" onclick={resetPresetForm}>
 							Cancel
 						</button>
 					{/if}
@@ -1062,43 +1378,61 @@
 			</form>
 		{/if}
 
-		{#if qualityProfiles.length === 0}
-			<p class="text-text-muted py-4">No quality profiles configured. Add one to control release quality preferences.</p>
+		{#if qualityPresets.length === 0}
+			<p class="text-text-muted py-4">No quality presets configured. Built-in presets will be added on first use.</p>
 		{:else}
 			<div class="space-y-2">
-				{#each qualityProfiles as profile}
-					<div class="p-4 bg-bg-elevated/50 rounded-xl border border-white/5">
+				{#each qualityPresets as preset}
+					<div class="p-4 bg-bg-elevated/50 rounded-xl border border-white/5 {preset.isDefault ? 'ring-1 ring-cyan-500/50' : ''}">
 						<div class="flex items-center justify-between">
 							<div>
 								<div class="flex items-center gap-2 flex-wrap">
-									<h3 class="font-medium text-text-primary">{profile.name}</h3>
-									{#if profile.upgradeAllowed}
-										<span class="px-2 py-0.5 text-xs rounded-lg bg-green-900/50 text-green-300">Upgrades</span>
+									<h3 class="font-medium text-text-primary">{preset.name}</h3>
+									<span class="px-2 py-0.5 text-xs rounded-lg {getResolutionColor(preset.resolution)} text-white">
+										{preset.resolution.toUpperCase()}
+									</span>
+									{#if preset.isBuiltIn}
+										<span class="px-2 py-0.5 text-xs rounded-lg bg-bg-card text-text-muted">Built-in</span>
+									{/if}
+									{#if preset.isDefault}
+										<span class="px-2 py-0.5 text-xs rounded-lg bg-cyan-900/50 text-cyan-300">Default</span>
+									{/if}
+									{#if preset.autoUpgrade}
+										<span class="px-2 py-0.5 text-xs rounded-lg bg-green-900/50 text-green-300">Auto-upgrade</span>
 									{/if}
 								</div>
 								<p class="text-sm text-text-secondary mt-1">
-									{formatProfileQualities(profile.qualities)}
+									{getPresetDescription(preset)}
 								</p>
-								<p class="text-xs text-text-muted mt-1">
-									Min: {profile.minFormatScore} | Cutoff: {profile.cutoffFormatScore}
-									{#if profile.upgradeAllowed}
-										| Until: {profile.upgradeUntilScore}
-									{/if}
-								</p>
+								{#if preset.audioFormats && preset.audioFormats.length > 0}
+									<p class="text-xs text-text-muted mt-1">
+										Audio: {preset.audioFormats.map(a => a.toUpperCase()).join(', ')}
+									</p>
+								{/if}
 							</div>
 							<div class="flex gap-2">
-								<button
-									class="liquid-btn-sm"
-									onclick={() => startEditProfile(profile)}
-								>
-									Edit
-								</button>
-								<button
-									class="liquid-btn-sm !bg-white/5 !border-t-white/10 text-text-secondary hover:text-white"
-									onclick={() => handleDeleteProfile(profile.id)}
-								>
-									Delete
-								</button>
+								{#if !preset.isDefault}
+									<button
+										class="liquid-btn-sm"
+										onclick={() => handleSetDefaultPreset(preset.id)}
+									>
+										Set Default
+									</button>
+								{/if}
+								{#if !preset.isBuiltIn}
+									<button
+										class="liquid-btn-sm"
+										onclick={() => startEditPreset(preset)}
+									>
+										Edit
+									</button>
+									<button
+										class="liquid-btn-sm !bg-white/5 !border-t-white/10 text-text-secondary hover:text-white"
+										onclick={() => handleDeletePreset(preset.id)}
+									>
+										Delete
+									</button>
+								{/if}
 							</div>
 						</div>
 					</div>
@@ -1106,4 +1440,152 @@
 			</div>
 		{/if}
 	</section>
+
+	{/if}
+
+	<!-- ============================================ -->
+	<!-- AUTOMATION TAB -->
+	<!-- ============================================ -->
+	{#if currentTab === 'automation'}
+
+	<!-- Storage Management -->
+	<section class="glass-card p-6 space-y-4">
+		<div class="flex items-center gap-3">
+			<div class="w-10 h-10 rounded-xl bg-orange-600/20 flex items-center justify-center">
+				<svg class="w-5 h-5 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
+				</svg>
+			</div>
+			<div>
+				<h2 class="text-lg font-semibold text-text-primary">Storage</h2>
+				<p class="text-sm text-text-secondary">Server disk space and media usage</p>
+			</div>
+		</div>
+
+		{#if storageStatus}
+			{@const formatSize = (bytes: number) => {
+				if (bytes === 0) return '0 B';
+				const gb = bytes / (1024 * 1024 * 1024);
+				if (gb >= 1000) return (gb / 1024).toFixed(1) + ' TB';
+				if (gb >= 1) return gb.toFixed(1) + ' GB';
+				const mb = bytes / (1024 * 1024);
+				return mb.toFixed(0) + ' MB';
+			}}
+			{@const totalMedia = storageStatus.moviesSize + storageStatus.tvSize + storageStatus.musicSize + storageStatus.booksSize}
+
+			<!-- Media Usage Breakdown -->
+			<div class="grid grid-cols-2 gap-3">
+				{#if storageStatus.moviesSize > 0}
+					<div class="p-4 bg-bg-elevated/50 rounded-xl border border-white/5">
+						<div class="flex items-center gap-3">
+							<div class="w-8 h-8 rounded-lg bg-blue-500/20 flex items-center justify-center">
+								<svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z" />
+								</svg>
+							</div>
+							<div>
+								<p class="text-xs text-text-muted uppercase tracking-wide">Movies</p>
+								<p class="text-lg font-semibold text-text-primary">{formatSize(storageStatus.moviesSize)}</p>
+							</div>
+						</div>
+					</div>
+				{/if}
+				{#if storageStatus.tvSize > 0}
+					<div class="p-4 bg-bg-elevated/50 rounded-xl border border-white/5">
+						<div class="flex items-center gap-3">
+							<div class="w-8 h-8 rounded-lg bg-purple-500/20 flex items-center justify-center">
+								<svg class="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+								</svg>
+							</div>
+							<div>
+								<p class="text-xs text-text-muted uppercase tracking-wide">TV Shows</p>
+								<p class="text-lg font-semibold text-text-primary">{formatSize(storageStatus.tvSize)}</p>
+							</div>
+						</div>
+					</div>
+				{/if}
+				{#if storageStatus.musicSize > 0}
+					<div class="p-4 bg-bg-elevated/50 rounded-xl border border-white/5">
+						<div class="flex items-center gap-3">
+							<div class="w-8 h-8 rounded-lg bg-green-500/20 flex items-center justify-center">
+								<svg class="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+								</svg>
+							</div>
+							<div>
+								<p class="text-xs text-text-muted uppercase tracking-wide">Music</p>
+								<p class="text-lg font-semibold text-text-primary">{formatSize(storageStatus.musicSize)}</p>
+							</div>
+						</div>
+					</div>
+				{/if}
+				{#if storageStatus.booksSize > 0}
+					<div class="p-4 bg-bg-elevated/50 rounded-xl border border-white/5">
+						<div class="flex items-center gap-3">
+							<div class="w-8 h-8 rounded-lg bg-amber-500/20 flex items-center justify-center">
+								<svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+								</svg>
+							</div>
+							<div>
+								<p class="text-xs text-text-muted uppercase tracking-wide">Books</p>
+								<p class="text-lg font-semibold text-text-primary">{formatSize(storageStatus.booksSize)}</p>
+							</div>
+						</div>
+					</div>
+				{/if}
+			</div>
+
+			<!-- Total Media -->
+			{#if totalMedia > 0}
+				<div class="text-sm text-text-secondary">
+					Total media: <span class="text-text-primary font-medium">{formatSize(totalMedia)}</span>
+				</div>
+			{/if}
+
+			<!-- Disk Space -->
+			{#if storageStatus.diskUsage}
+				{@const disk = storageStatus.diskUsage}
+				{@const totalGb = Math.round(disk.total / (1024 * 1024 * 1024))}
+				{@const freeGb = Math.round(disk.free / (1024 * 1024 * 1024))}
+				{@const usedGb = Math.round(disk.used / (1024 * 1024 * 1024))}
+				<div class="p-4 bg-bg-elevated/50 rounded-xl border border-white/5">
+					<div class="flex items-center justify-between mb-3">
+						<span class="font-medium text-text-primary">Disk Space</span>
+						<span class="text-sm {freeGb < storageStatus.thresholdGb ? 'text-red-400' : 'text-text-secondary'}">
+							{freeGb} GB free of {totalGb} GB
+						</span>
+					</div>
+					<div class="w-full bg-bg-card rounded-full h-3 overflow-hidden">
+						<div
+							class="{getStorageBarColor(disk.usedPercent, freeGb, storageStatus.thresholdGb)} h-full transition-all duration-300"
+							style="width: {disk.usedPercent}%"
+						></div>
+					</div>
+					<div class="flex justify-between mt-2 text-sm text-text-muted">
+						<span>{usedGb} GB used</span>
+						<span>{disk.usedPercent.toFixed(1)}%</span>
+					</div>
+					{#if freeGb < storageStatus.thresholdGb}
+						<div class="mt-3 flex items-center gap-2 text-sm text-red-400">
+							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+							</svg>
+							Below threshold ({storageStatus.thresholdGb} GB) - downloads may pause
+						</div>
+					{/if}
+				</div>
+			{:else}
+				<p class="text-text-muted text-sm">Disk usage information not available.</p>
+			{/if}
+		{:else}
+			<div class="flex items-center gap-3 py-4">
+				<div class="w-5 h-5 border-2 border-orange-400 border-t-transparent rounded-full animate-spin"></div>
+				<span class="text-text-secondary">Loading storage status...</span>
+			</div>
+		{/if}
+	</section>
+
+	{/if}
 </div>

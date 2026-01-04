@@ -132,6 +132,23 @@
 					Wanted
 				</span>
 			</a>
+
+			<!-- Activity -->
+			<a
+				href="/activity"
+				class="group relative flex items-center justify-center w-11 h-11 mx-auto rounded-xl transition-all duration-200
+					{isActive('/activity')
+						? 'liquid-glass text-[#F5E6C8]'
+						: 'text-[#666666] hover:text-white hover:bg-white/6'}"
+				title="Activity"
+			>
+				<svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+				</svg>
+				<span class="absolute left-full ml-3 px-3 py-1.5 text-xs font-medium bg-[#111111] backdrop-blur-md border border-white/10 rounded-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all whitespace-nowrap z-50 text-white shadow-lg">
+					Activity
+				</span>
+			</a>
 		{/if}
 	</nav>
 

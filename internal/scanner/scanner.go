@@ -2,12 +2,17 @@ package scanner
 
 import (
 	"database/sql"
+	"encoding/json"
+	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/outpost/outpost/internal/database"
 	"github.com/outpost/outpost/internal/metadata"
@@ -40,12 +45,139 @@ var tvPattern = regexp.MustCompile(`(?i)^(.+?)[\.\s\-_]*S(\d{1,2})E(\d{1,2})`)
 var tvAltPattern = regexp.MustCompile(`(?i)^(.+?)[\.\s\-_]*(\d{1,2})x(\d{1,2})`)
 
 type Scanner struct {
-	db   *database.Database
-	meta *metadata.Service
+	db       *database.Database
+	meta     *metadata.Service
+	cacheDir string
+
+	// Progress tracking
+	scanning     bool
+	scanLibrary  string
+	scanTotal    int
+	scanCurrent  int
+	scanPhase    string // "counting", "scanning", "extracting"
+	mu           sync.RWMutex
+
+	// Result tracking (persists after scan completes)
+	lastLibrary string
+	lastAdded   int
+	lastSkipped int
+	lastErrors  int
+	lastScanAt  time.Time
 }
 
-func New(db *database.Database, meta *metadata.Service) *Scanner {
-	return &Scanner{db: db, meta: meta}
+type ScanProgress struct {
+	Scanning    bool   `json:"scanning"`
+	Library     string `json:"library"`
+	Phase       string `json:"phase"`
+	Current     int    `json:"current"`
+	Total       int    `json:"total"`
+	Percent     int    `json:"percent"`
+	// Result of last scan
+	LastLibrary string `json:"lastLibrary,omitempty"`
+	LastAdded   int    `json:"lastAdded"`
+	LastSkipped int    `json:"lastSkipped"`
+	LastErrors  int    `json:"lastErrors"`
+	LastScanAt  string `json:"lastScanAt,omitempty"`
+}
+
+func New(db *database.Database, meta *metadata.Service, cacheDir string) *Scanner {
+	// Create subtitle cache directory
+	subtitleDir := filepath.Join(cacheDir, "subtitles")
+	os.MkdirAll(subtitleDir, 0755)
+
+	s := &Scanner{db: db, meta: meta, cacheDir: cacheDir}
+
+	// Fix any episodes/movies with missing sizes
+	go s.FixMissingSizes()
+
+	return s
+}
+
+// FixMissingSizes updates file sizes for any episodes that have size=0
+func (s *Scanner) FixMissingSizes() {
+	episodes, err := s.db.GetEpisodesWithMissingSize()
+	if err != nil {
+		log.Printf("Failed to get episodes with missing sizes: %v", err)
+		return
+	}
+
+	if len(episodes) == 0 {
+		return
+	}
+
+	log.Printf("Fixing file sizes for %d episodes...", len(episodes))
+	fixed := 0
+	for _, ep := range episodes {
+		info, err := os.Stat(ep.Path)
+		if err != nil {
+			continue
+		}
+		if err := s.db.UpdateEpisodeSize(ep.ID, info.Size()); err == nil {
+			fixed++
+		}
+	}
+	if fixed > 0 {
+		log.Printf("Fixed file sizes for %d episodes", fixed)
+	}
+}
+
+func (s *Scanner) GetProgress() ScanProgress {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	percent := 0
+	if s.scanTotal > 0 {
+		percent = (s.scanCurrent * 100) / s.scanTotal
+	}
+
+	lastScanAt := ""
+	if !s.lastScanAt.IsZero() {
+		lastScanAt = s.lastScanAt.Format(time.RFC3339)
+	}
+
+	return ScanProgress{
+		Scanning:    s.scanning,
+		Library:     s.scanLibrary,
+		Phase:       s.scanPhase,
+		Current:     s.scanCurrent,
+		Total:       s.scanTotal,
+		Percent:     percent,
+		LastLibrary: s.lastLibrary,
+		LastAdded:   s.lastAdded,
+		LastSkipped: s.lastSkipped,
+		LastErrors:  s.lastErrors,
+		LastScanAt:  lastScanAt,
+	}
+}
+
+func (s *Scanner) setProgress(library, phase string, current, total int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.scanning = true
+	s.scanLibrary = library
+	s.scanPhase = phase
+	s.scanCurrent = current
+	s.scanTotal = total
+}
+
+func (s *Scanner) clearProgress() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.scanning = false
+	s.scanLibrary = ""
+	s.scanPhase = ""
+	s.scanCurrent = 0
+	s.scanTotal = 0
+}
+
+func (s *Scanner) setResult(library string, added, skipped, errors int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lastLibrary = library
+	s.lastAdded = added
+	s.lastSkipped = skipped
+	s.lastErrors = errors
+	s.lastScanAt = time.Now()
 }
 
 func (s *Scanner) ScanLibrary(lib *database.Library) error {
@@ -67,26 +199,45 @@ func (s *Scanner) ScanLibrary(lib *database.Library) error {
 }
 
 func (s *Scanner) scanMovies(lib *database.Library) error {
-	return filepath.Walk(lib.Path, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil // Skip files we can't access
-		}
+	defer s.clearProgress()
 
-		if info.IsDir() {
+	var added, skipped, errors int
+
+	// Phase 1: Count video files
+	s.setProgress(lib.Name, "counting", 0, 0)
+	var videoFiles []string
+	filepath.Walk(lib.Path, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
 			return nil
 		}
-
 		ext := strings.ToLower(filepath.Ext(path))
-		if !videoExtensions[ext] {
-			return nil
+		if videoExtensions[ext] {
+			videoFiles = append(videoFiles, path)
+		}
+		return nil
+	})
+
+	total := len(videoFiles)
+	log.Printf("Found %d video files in %s", total, lib.Name)
+
+	// Phase 2: Process each file
+	for i, path := range videoFiles {
+		s.setProgress(lib.Name, "scanning", i+1, total)
+
+		info, err := os.Stat(path)
+		if err != nil {
+			errors++
+			continue
 		}
 
 		// Check if already in database
 		if _, err := s.db.GetMovieByPath(path); err == nil {
-			return nil // Already exists
+			skipped++
+			continue // Already exists
 		}
 
 		// Parse filename
+		ext := filepath.Ext(path)
 		filename := strings.TrimSuffix(filepath.Base(path), ext)
 		title, year := parseMovieFilename(filename)
 
@@ -100,7 +251,9 @@ func (s *Scanner) scanMovies(lib *database.Library) error {
 
 		if err := s.db.CreateMovie(movie); err != nil {
 			log.Printf("Failed to add movie %s: %v", path, err)
+			errors++
 		} else {
+			added++
 			log.Printf("Added movie: %s (%d)", title, year)
 			// Fetch metadata from TMDB
 			if s.meta != nil {
@@ -108,39 +261,62 @@ func (s *Scanner) scanMovies(lib *database.Library) error {
 					log.Printf("Failed to fetch metadata for %s: %v", title, err)
 				}
 			}
+			// Organize folder and extract subtitles in background
+			go s.OrganizeAndExtractSubtitles(movie, lib.Path)
 		}
+	}
 
-		return nil
-	})
+	s.setResult(lib.Name, added, skipped, errors)
+	return nil
 }
 
 func (s *Scanner) scanTV(lib *database.Library) error {
-	return filepath.Walk(lib.Path, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
+	defer s.clearProgress()
+
+	var added, skipped, errors int
+
+	// Phase 1: Count video files
+	s.setProgress(lib.Name, "counting", 0, 0)
+	var videoFiles []string
+	filepath.Walk(lib.Path, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
 			return nil
 		}
-
-		if info.IsDir() {
-			return nil
-		}
-
 		ext := strings.ToLower(filepath.Ext(path))
-		if !videoExtensions[ext] {
-			return nil
+		if videoExtensions[ext] {
+			videoFiles = append(videoFiles, path)
+		}
+		return nil
+	})
+
+	total := len(videoFiles)
+	log.Printf("Found %d video files in %s", total, lib.Name)
+
+	// Phase 2: Process each file
+	for i, path := range videoFiles {
+		s.setProgress(lib.Name, "scanning", i+1, total)
+
+		info, err := os.Stat(path)
+		if err != nil {
+			errors++
+			continue
 		}
 
 		// Check if already in database
 		if _, err := s.db.GetEpisodeByPath(path); err == nil {
-			return nil
+			skipped++
+			continue
 		}
 
 		// Parse filename
+		ext := filepath.Ext(path)
 		filename := strings.TrimSuffix(filepath.Base(path), ext)
 		showTitle, seasonNum, episodeNum := parseTVFilename(filename)
 
 		if showTitle == "" || seasonNum == 0 {
 			log.Printf("Could not parse TV filename: %s", filename)
-			return nil
+			errors++
+			continue
 		}
 
 		// Get or create show
@@ -162,12 +338,14 @@ func (s *Scanner) scanTV(lib *database.Library) error {
 			}
 			if err := s.db.CreateShow(show); err != nil {
 				log.Printf("Failed to create show %s: %v", showTitle, err)
-				return nil
+				errors++
+				continue
 			}
 			log.Printf("Added show: %s", showTitle)
 			isNewShow = true
 		} else if err != nil {
-			return nil
+			errors++
+			continue
 		}
 
 		// Get or create season
@@ -179,10 +357,12 @@ func (s *Scanner) scanTV(lib *database.Library) error {
 			}
 			if err := s.db.CreateSeason(season); err != nil {
 				log.Printf("Failed to create season %d: %v", seasonNum, err)
-				return nil
+				errors++
+				continue
 			}
 		} else if err != nil {
-			return nil
+			errors++
+			continue
 		}
 
 		// Create episode
@@ -196,8 +376,12 @@ func (s *Scanner) scanTV(lib *database.Library) error {
 
 		if err := s.db.CreateEpisode(episode); err != nil {
 			log.Printf("Failed to add episode: %v", err)
+			errors++
 		} else {
+			added++
 			log.Printf("Added episode: %s S%02dE%02d", showTitle, seasonNum, episodeNum)
+			// Extract subtitles in background
+			go s.ExtractSubtitles(path)
 		}
 
 		// Fetch show metadata if this is a new show
@@ -206,9 +390,10 @@ func (s *Scanner) scanTV(lib *database.Library) error {
 				log.Printf("Failed to fetch metadata for %s: %v", showTitle, err)
 			}
 		}
+	}
 
-		return nil
-	})
+	s.setResult(lib.Name, added, skipped, errors)
+	return nil
 }
 
 func (s *Scanner) scanMusic(lib *database.Library) error {
@@ -469,4 +654,267 @@ func extractYearFromPath(path string) int {
 		return year
 	}
 	return 0
+}
+
+// OrganizeAndExtractSubtitles renames folder to proper format and extracts subtitles
+func (s *Scanner) OrganizeAndExtractSubtitles(movie *database.Movie, libraryPath string) {
+	videoPath := movie.Path
+	videoDir := filepath.Dir(videoPath)
+	videoFile := filepath.Base(videoPath)
+	ext := filepath.Ext(videoFile)
+
+	// Build expected folder name: "Title (Year)"
+	expectedFolder := movie.Title
+	if movie.Year > 0 {
+		expectedFolder = fmt.Sprintf("%s (%d)", movie.Title, movie.Year)
+	}
+	// Clean folder name of invalid characters
+	expectedFolder = cleanFolderName(expectedFolder)
+
+	expectedPath := filepath.Join(libraryPath, expectedFolder)
+	currentFolder := filepath.Base(videoDir)
+
+	// Case 1: Video is directly in library root - create folder and move it
+	if videoDir == libraryPath {
+		// Check if expected folder already exists
+		if _, err := os.Stat(expectedPath); os.IsNotExist(err) {
+			log.Printf("Creating folder for movie at library root: %s", expectedFolder)
+			if err := os.MkdirAll(expectedPath, 0755); err != nil {
+				log.Printf("Failed to create folder: %v", err)
+			} else {
+				// Move video file into the new folder
+				expectedVideoName := expectedFolder + ext
+				newVideoPath := filepath.Join(expectedPath, expectedVideoName)
+				if err := os.Rename(videoPath, newVideoPath); err != nil {
+					log.Printf("Failed to move video file: %v", err)
+				} else {
+					log.Printf("Moved video to: %s", newVideoPath)
+					movie.Path = newVideoPath
+					videoPath = newVideoPath
+					videoDir = expectedPath
+
+					// Update path in database
+					if err := s.db.UpdateMoviePath(movie.ID, newVideoPath); err != nil {
+						log.Printf("Failed to update movie path in database: %v", err)
+					}
+				}
+			}
+		}
+	} else if currentFolder != expectedFolder {
+		// Case 2: Video is in a folder but folder name doesn't match - rename folder
+		// Check if expected folder already exists
+		if _, err := os.Stat(expectedPath); os.IsNotExist(err) {
+			log.Printf("Renaming folder: %s -> %s", currentFolder, expectedFolder)
+			if err := os.Rename(videoDir, expectedPath); err != nil {
+				log.Printf("Failed to rename folder: %v", err)
+			} else {
+				// Update video path
+				newVideoPath := filepath.Join(expectedPath, videoFile)
+				movie.Path = newVideoPath
+				videoPath = newVideoPath
+				videoDir = expectedPath
+
+				// Update path in database
+				if err := s.db.UpdateMoviePath(movie.ID, newVideoPath); err != nil {
+					log.Printf("Failed to update movie path in database: %v", err)
+				}
+
+				// Rename video file to match folder
+				expectedVideoName := expectedFolder + ext
+				if videoFile != expectedVideoName {
+					finalVideoPath := filepath.Join(expectedPath, expectedVideoName)
+					if err := os.Rename(newVideoPath, finalVideoPath); err != nil {
+						log.Printf("Failed to rename video file: %v", err)
+					} else {
+						movie.Path = finalVideoPath
+						videoPath = finalVideoPath
+						if err := s.db.UpdateMoviePath(movie.ID, finalVideoPath); err != nil {
+							log.Printf("Failed to update movie path in database: %v", err)
+						}
+					}
+				}
+			}
+		}
+	} else {
+		// Case 3: Folder name matches but video file might not - rename video file only
+		expectedVideoName := expectedFolder + ext
+		if videoFile != expectedVideoName {
+			finalVideoPath := filepath.Join(videoDir, expectedVideoName)
+			// Check if target doesn't already exist
+			if _, err := os.Stat(finalVideoPath); os.IsNotExist(err) {
+				log.Printf("Renaming video file: %s -> %s", videoFile, expectedVideoName)
+				if err := os.Rename(videoPath, finalVideoPath); err != nil {
+					log.Printf("Failed to rename video file: %v", err)
+				} else {
+					movie.Path = finalVideoPath
+					videoPath = finalVideoPath
+					if err := s.db.UpdateMoviePath(movie.ID, finalVideoPath); err != nil {
+						log.Printf("Failed to update movie path in database: %v", err)
+					}
+				}
+			}
+		}
+	}
+
+	// Create subtitles subfolder
+	subtitleDir := filepath.Join(filepath.Dir(videoPath), "subtitles")
+	if err := os.MkdirAll(subtitleDir, 0755); err != nil {
+		log.Printf("Failed to create subtitles directory: %v", err)
+		return
+	}
+
+	// Extract subtitles to the subfolder
+	s.extractSubtitlesToDir(videoPath, subtitleDir)
+}
+
+// cleanFolderName removes characters that are invalid in folder names
+func cleanFolderName(name string) string {
+	// Remove characters invalid on Windows/Linux
+	invalid := []string{"<", ">", ":", "\"", "/", "\\", "|", "?", "*"}
+	result := name
+	for _, char := range invalid {
+		result = strings.ReplaceAll(result, char, "")
+	}
+	return strings.TrimSpace(result)
+}
+
+// extractSubtitlesToDir extracts all subtitle tracks to a specific directory
+func (s *Scanner) extractSubtitlesToDir(videoPath, subtitleDir string) {
+	baseName := filepath.Base(videoPath)
+	baseNameNoExt := strings.TrimSuffix(baseName, filepath.Ext(baseName))
+
+	// Get subtitle track info using ffprobe
+	cmd := exec.Command("ffprobe",
+		"-v", "quiet",
+		"-print_format", "json",
+		"-show_streams",
+		"-select_streams", "s",
+		videoPath,
+	)
+	output, err := cmd.Output()
+	if err != nil {
+		log.Printf("Failed to probe subtitles for %s: %v", baseName, err)
+		return
+	}
+
+	var probeResult struct {
+		Streams []struct {
+			Index int               `json:"index"`
+			Tags  map[string]string `json:"tags"`
+		} `json:"streams"`
+	}
+	if err := json.Unmarshal(output, &probeResult); err != nil {
+		log.Printf("Failed to parse ffprobe output for %s: %v", baseName, err)
+		return
+	}
+
+	if len(probeResult.Streams) == 0 {
+		log.Printf("No subtitles found in %s", baseName)
+		return
+	}
+
+	log.Printf("Extracting %d subtitle tracks from %s", len(probeResult.Streams), baseName)
+
+	// Extract each subtitle track
+	for i, stream := range probeResult.Streams {
+		// Get language tag if available
+		lang := "und"
+		if l, ok := stream.Tags["language"]; ok && l != "" {
+			lang = l
+		}
+
+		subtitleFile := filepath.Join(subtitleDir, fmt.Sprintf("%s.%d.%s.vtt", baseNameNoExt, i, lang))
+
+		// Skip if already extracted
+		if _, err := os.Stat(subtitleFile); err == nil {
+			continue
+		}
+
+		// Extract subtitle using ffmpeg
+		cmd := exec.Command("ffmpeg",
+			"-i", videoPath,
+			"-map", fmt.Sprintf("0:s:%d", i),
+			"-an", "-vn",
+			"-c:s", "webvtt",
+			"-f", "webvtt",
+			subtitleFile,
+			"-y",
+		)
+		if err := cmd.Run(); err != nil {
+			log.Printf("Failed to extract subtitle track %d from %s: %v", i, baseName, err)
+			continue
+		}
+		log.Printf("Extracted subtitle: %s", filepath.Base(subtitleFile))
+	}
+
+	log.Printf("Finished extracting subtitles from %s", baseName)
+}
+
+// ExtractSubtitles extracts all subtitle tracks from a video file to the cache directory
+func (s *Scanner) ExtractSubtitles(videoPath string) {
+	if s.cacheDir == "" {
+		return
+	}
+
+	subtitleDir := filepath.Join(s.cacheDir, "subtitles")
+	baseName := filepath.Base(videoPath)
+
+	// Get subtitle track count using ffprobe
+	cmd := exec.Command("ffprobe",
+		"-v", "quiet",
+		"-print_format", "json",
+		"-show_streams",
+		"-select_streams", "s",
+		videoPath,
+	)
+	output, err := cmd.Output()
+	if err != nil {
+		log.Printf("Failed to probe subtitles for %s: %v", baseName, err)
+		return
+	}
+
+	var probeResult struct {
+		Streams []struct {
+			Index int `json:"index"`
+		} `json:"streams"`
+	}
+	if err := json.Unmarshal(output, &probeResult); err != nil {
+		log.Printf("Failed to parse ffprobe output for %s: %v", baseName, err)
+		return
+	}
+
+	if len(probeResult.Streams) == 0 {
+		log.Printf("No subtitles found in %s", baseName)
+		return
+	}
+
+	log.Printf("Extracting %d subtitle tracks from %s in background", len(probeResult.Streams), baseName)
+
+	// Extract each subtitle track
+	for i := range probeResult.Streams {
+		cacheFile := filepath.Join(subtitleDir, fmt.Sprintf("%s.track%d.vtt", baseName, i))
+
+		// Skip if already extracted
+		if _, err := os.Stat(cacheFile); err == nil {
+			continue
+		}
+
+		// Extract subtitle using ffmpeg
+		cmd := exec.Command("ffmpeg",
+			"-i", videoPath,
+			"-map", fmt.Sprintf("0:s:%d", i),
+			"-an", "-vn",
+			"-c:s", "webvtt",
+			"-f", "webvtt",
+			cacheFile,
+			"-y",
+		)
+		if err := cmd.Run(); err != nil {
+			log.Printf("Failed to extract subtitle track %d from %s: %v", i, baseName, err)
+			continue
+		}
+		log.Printf("Extracted subtitle track %d from %s", i, baseName)
+	}
+
+	log.Printf("Finished extracting subtitles from %s", baseName)
 }

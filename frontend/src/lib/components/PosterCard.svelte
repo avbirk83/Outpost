@@ -10,6 +10,7 @@
 		progress?: number;
 		badge?: string;
 		badgeColor?: string;
+		size?: 'sm' | 'md' | 'lg' | 'xl' | 'fill';
 		// New Phase 11 props
 		mediaType?: 'movie' | 'series' | 'anime';
 		inLibrary?: boolean;
@@ -34,6 +35,7 @@
 		progress,
 		badge,
 		badgeColor = 'bg-black/70',
+		size = 'md',
 		mediaType,
 		inLibrary,
 		requested,
@@ -45,6 +47,14 @@
 		totalEpisodes,
 		onRequest
 	}: Props = $props();
+
+	const sizeWidths: Record<string, string> = {
+		sm: '140px',
+		md: '200px',
+		lg: '250px',
+		xl: '350px',
+		fill: '100%'
+	};
 
 	// Compute episode progress string if not directly provided
 	const computedEpisodeProgress = $derived(() => {
@@ -61,6 +71,7 @@
 <a
 	{href}
 	class="group block poster-card hover-lift"
+	style="width: {sizeWidths[size]}"
 >
 	<!-- Poster image -->
 	<div class="relative w-full aspect-[2/3] bg-bg-card overflow-hidden rounded-lg">

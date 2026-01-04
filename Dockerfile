@@ -18,12 +18,12 @@ COPY go.mod ./
 COPY go.sum* ./
 COPY . .
 RUN go mod tidy && go mod download
-RUN CGO_ENABLED=0 GOOS=linux go build -o outpost .
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o outpost .
 
 # Stage 3: Final image
-FROM alpine:3.19
+FROM alpine:3.20
 
-RUN apk --no-cache add ca-certificates ffmpeg
+RUN apk add --no-cache ca-certificates ffmpeg mkvtoolnix
 
 WORKDIR /app
 

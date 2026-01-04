@@ -5,9 +5,10 @@
 		title: string;
 		children: Snippet;
 		class?: string;
+		padding?: string;
 	}
 
-	let { title, children, class: className = '' }: Props = $props();
+	let { title, children, class: className = '', padding = 'px-6' }: Props = $props();
 
 	let scrollContainer: HTMLElement;
 	let canScrollLeft = $state(false);
@@ -30,14 +31,14 @@
 	}
 </script>
 
-<section class="px-6 {className}">
+<section class="{padding} {className}">
 	<div class="flex items-center justify-between mb-3">
 		<h2 class="text-lg font-semibold text-text-primary">{title}</h2>
 		<div class="flex gap-1">
 			<button
 				onclick={() => scroll('left')}
 				disabled={!canScrollLeft}
-				class="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+				class="liquid-btn-icon !w-8 !h-8 !rounded-full disabled:opacity-30 disabled:cursor-not-allowed"
 				aria-label="Scroll left"
 			>
 				<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -47,7 +48,7 @@
 			<button
 				onclick={() => scroll('right')}
 				disabled={!canScrollRight}
-				class="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+				class="liquid-btn-icon !w-8 !h-8 !rounded-full disabled:opacity-30 disabled:cursor-not-allowed"
 				aria-label="Scroll right"
 			>
 				<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

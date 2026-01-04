@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { getUsers, createUser, updateUser, deleteUser, type User } from '$lib/api';
+	import Select from '$lib/components/ui/Select.svelte';
 
 	let users: User[] = $state([]);
 	let loading = $state(true);
@@ -199,11 +200,15 @@
 				</div>
 				<div>
 					<label for="role" class={labelClass}>Role</label>
-					<select id="role" bind:value={role} class={selectClass}>
-						<option value="user">User</option>
-						<option value="admin">Admin</option>
-						<option value="kid">Kid</option>
-					</select>
+					<Select
+						id="role"
+						bind:value={role}
+						options={[
+							{ value: 'user', label: 'User' },
+							{ value: 'admin', label: 'Admin' },
+							{ value: 'kid', label: 'Kid' }
+						]}
+					/>
 				</div>
 			</div>
 			<div class="flex gap-3 pt-2">
@@ -253,11 +258,15 @@
 				</div>
 				<div>
 					<label for="edit-role" class={labelClass}>Role</label>
-					<select id="edit-role" bind:value={role} class={selectClass}>
-						<option value="user">User</option>
-						<option value="admin">Admin</option>
-						<option value="kid">Kid</option>
-					</select>
+					<Select
+						id="edit-role"
+						bind:value={role}
+						options={[
+							{ value: 'user', label: 'User' },
+							{ value: 'admin', label: 'Admin' },
+							{ value: 'kid', label: 'Kid' }
+						]}
+					/>
 				</div>
 			</div>
 			<div class="flex gap-3 pt-2">

@@ -86,7 +86,10 @@ export interface CrewMember {
  */
 export function parseGenres(g?: string): string[] {
 	if (!g) return [];
-	try { return JSON.parse(g); } catch { return []; }
+	try {
+		const parsed = JSON.parse(g);
+		return Array.isArray(parsed) ? parsed : [];
+	} catch { return []; }
 }
 
 /**
@@ -94,7 +97,10 @@ export function parseGenres(g?: string): string[] {
  */
 export function parseCast(c?: string): CastMember[] {
 	if (!c) return [];
-	try { return JSON.parse(c); } catch { return []; }
+	try {
+		const parsed = JSON.parse(c);
+		return Array.isArray(parsed) ? parsed : [];
+	} catch { return []; }
 }
 
 /**
@@ -102,7 +108,10 @@ export function parseCast(c?: string): CastMember[] {
  */
 export function parseCrew(c?: string): CrewMember[] {
 	if (!c) return [];
-	try { return JSON.parse(c); } catch { return []; }
+	try {
+		const parsed = JSON.parse(c);
+		return Array.isArray(parsed) ? parsed : [];
+	} catch { return []; }
 }
 
 // ============================================

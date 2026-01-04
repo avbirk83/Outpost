@@ -3,6 +3,7 @@
 	import { getRequests, updateRequest, deleteRequest, getTmdbImageUrl, type Request } from '$lib/api';
 	import { auth } from '$lib/stores/auth';
 	import TypeBadge from '$lib/components/TypeBadge.svelte';
+	import Select from '$lib/components/ui/Select.svelte';
 
 	let requests: Request[] = $state([]);
 	let loading = $state(true);
@@ -110,15 +111,17 @@
 		<h1 class="text-2xl font-bold text-text-primary">Requests</h1>
 
 		{#if user?.role === 'admin'}
-			<div class="inline-flex items-center gap-2 p-1.5 rounded-xl bg-black/40 backdrop-blur-md border border-white/10">
-				<select bind:value={statusFilter} class="bg-transparent px-3 py-1.5 text-sm text-white/80 focus:outline-none cursor-pointer">
-					<option value="" class="bg-zinc-900">All Requests</option>
-					<option value="requested" class="bg-zinc-900">Pending</option>
-					<option value="approved" class="bg-zinc-900">Approved</option>
-					<option value="denied" class="bg-zinc-900">Denied</option>
-					<option value="available" class="bg-zinc-900">Available</option>
-				</select>
-			</div>
+			<Select
+				bind:value={statusFilter}
+				options={[
+					{ value: '', label: 'All Requests' },
+					{ value: 'requested', label: 'Pending' },
+					{ value: 'approved', label: 'Approved' },
+					{ value: 'denied', label: 'Denied' },
+					{ value: 'available', label: 'Available' }
+				]}
+				class="w-40"
+			/>
 		{/if}
 	</div>
 
@@ -182,7 +185,16 @@
 									</h3>
 									<div class="flex items-center gap-2 mt-1.5 text-sm flex-wrap">
 										<TypeBadge type={request.type} />
-										<span class="liquid-badge-sm {request.status === 'approved' ? '!bg-green-500/20 !border-t-green-400/40 text-green-400' : request.status === 'denied' ? '!bg-white/5 text-text-secondary' : '!bg-white-500/20 !border-t-white-400/40 text-white-400'}">
+										<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium {request.status === 'approved' ? 'bg-green-600 text-white' : request.status === 'denied' ? 'bg-white/10 text-text-secondary' : 'bg-amber-500 text-black'}">
+											{#if request.status === 'approved'}
+												<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+													<path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" />
+												</svg>
+											{:else if request.status === 'requested'}
+												<svg class="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
+													<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67V7z" />
+												</svg>
+											{/if}
 											{request.status.charAt(0).toUpperCase() + request.status.slice(1)}
 										</span>
 									</div>
@@ -206,14 +218,14 @@
 										<button
 											onclick={() => handleApprove(request.id)}
 											disabled={processingIds.has(request.id)}
-											class="liquid-btn-sm !bg-green-500/20 !border-t-green-400/40 text-green-400 hover:!bg-green-500/30 disabled:opacity-50"
+											class="px-3 py-1.5 rounded-lg text-sm font-medium bg-green-600 text-white hover:bg-green-500 disabled:opacity-50 transition-colors"
 										>
 											{processingIds.has(request.id) ? '...' : 'Approve'}
 										</button>
 										<button
 											onclick={() => handleDeny(request.id)}
 											disabled={processingIds.has(request.id)}
-											class="liquid-btn-sm !bg-white/5 !border-t-white/10 text-text-secondary hover:text-white disabled:opacity-50"
+											class="px-3 py-1.5 rounded-lg text-sm font-medium bg-white/10 text-text-secondary hover:bg-white/20 hover:text-white disabled:opacity-50 transition-colors"
 										>
 											{processingIds.has(request.id) ? '...' : 'Deny'}
 										</button>
@@ -222,7 +234,7 @@
 										<button
 											onclick={() => handleDelete(request.id)}
 											disabled={processingIds.has(request.id)}
-											class="liquid-btn-sm !bg-white/5 !border-t-white/10 text-text-secondary hover:text-white disabled:opacity-50"
+											class="px-3 py-1.5 rounded-lg text-sm font-medium bg-white/10 text-text-secondary hover:bg-white/20 hover:text-white disabled:opacity-50 transition-colors"
 										>
 											Delete
 										</button>

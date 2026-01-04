@@ -3,6 +3,8 @@ package metadata
 import (
 	"log"
 	"path/filepath"
+	"strconv"
+
 	"github.com/outpost/outpost/internal/database"
 	"github.com/outpost/outpost/internal/tmdb"
 )
@@ -134,6 +136,19 @@ func (s *Service) FetchMovieMetadata(movie *database.Movie) error {
 	if details.OriginalLanguage != "" {
 		movie.OriginalLanguage = &details.OriginalLanguage
 	}
+	// Extract release dates
+	theatrical, digital := tmdb.GetUSReleaseDates(details.ReleaseDates)
+	if theatrical != "" {
+		movie.TheatricalRelease = &theatrical
+	}
+	if digital != "" {
+		movie.DigitalRelease = &digital
+	}
+	// Extract studios
+	studios := tmdb.GetStudios(details.ProductionCompanies)
+	if studios != "" {
+		movie.Studios = &studios
+	}
 	trailers := tmdb.TrailersToJSON(details.Videos)
 	if trailers != "" {
 		movie.Trailers = &trailers
@@ -229,6 +244,19 @@ func (s *Service) FetchMovieMetadataByTmdbID(movie *database.Movie, tmdbID int64
 	if details.OriginalLanguage != "" {
 		movie.OriginalLanguage = &details.OriginalLanguage
 	}
+	// Extract release dates
+	theatrical2, digital2 := tmdb.GetUSReleaseDates(details.ReleaseDates)
+	if theatrical2 != "" {
+		movie.TheatricalRelease = &theatrical2
+	}
+	if digital2 != "" {
+		movie.DigitalRelease = &digital2
+	}
+	// Extract studios
+	studios2 := tmdb.GetStudios(details.ProductionCompanies)
+	if studios2 != "" {
+		movie.Studios = &studios2
+	}
 	trailers := tmdb.TrailersToJSON(details.Videos)
 	if trailers != "" {
 		movie.Trailers = &trailers
@@ -289,6 +317,12 @@ func (s *Service) FetchShowMetadata(show *database.Show) error {
 	}
 	if details.OriginalName != "" && details.OriginalName != details.Name {
 		show.OriginalTitle = &details.OriginalName
+	}
+	if details.FirstAirDate != "" && len(details.FirstAirDate) >= 4 {
+		year, _ := strconv.Atoi(details.FirstAirDate[:4])
+		if year > 0 {
+			show.Year = year
+		}
 	}
 	if details.Overview != "" {
 		show.Overview = &details.Overview
@@ -360,6 +394,12 @@ func (s *Service) FetchShowMetadataByTmdbID(show *database.Show, tmdbID int64) e
 	}
 	if details.OriginalName != "" && details.OriginalName != details.Name {
 		show.OriginalTitle = &details.OriginalName
+	}
+	if details.FirstAirDate != "" && len(details.FirstAirDate) >= 4 {
+		year, _ := strconv.Atoi(details.FirstAirDate[:4])
+		if year > 0 {
+			show.Year = year
+		}
 	}
 	if details.Overview != "" {
 		show.Overview = &details.Overview
@@ -579,6 +619,24 @@ func (s *Service) GetUpcomingMovies(page int) (*DiscoverResult, error) {
 	return s.convertMovieResults(result), nil
 }
 
+// GetTheatricalReleases returns upcoming theatrical releases with date filtering
+func (s *Service) GetTheatricalReleases(region string, page int) (*DiscoverResult, error) {
+	result, err := s.tmdb.DiscoverTheatricalReleases(region, page)
+	if err != nil {
+		return nil, err
+	}
+	return s.convertMovieResults(result), nil
+}
+
+// GetUpcomingTV returns upcoming TV shows
+func (s *Service) GetUpcomingTV(page int) (*DiscoverResult, error) {
+	result, err := s.tmdb.DiscoverUpcomingTV(page)
+	if err != nil {
+		return nil, err
+	}
+	return s.convertTVResults(result), nil
+}
+
 // GetTopRatedMovies returns top rated movies
 func (s *Service) GetTopRatedMovies(page int) (*DiscoverResult, error) {
 	result, err := s.tmdb.GetTopRatedMovies(page)
@@ -673,40 +731,78 @@ func (s *Service) convertTVResults(result *tmdb.DiscoverTVResult) *DiscoverResul
 
 // DiscoverMovieDetail contains detailed info for a movie from TMDB
 type DiscoverMovieDetail struct {
-	ID           int64        `json:"id"`
-	Title        string       `json:"title"`
-	Overview     string       `json:"overview"`
-	Tagline      string       `json:"tagline"`
-	ReleaseDate  string       `json:"releaseDate"`
-	Runtime      int          `json:"runtime"`
-	Rating       float64      `json:"rating"`
-	PosterPath   string       `json:"posterPath"`
-	BackdropPath string       `json:"backdropPath"`
-	Genres       []string     `json:"genres"`
-	Cast         []CastMember `json:"cast"`
-	Director     string       `json:"director"`
+	ID                  int64              `json:"id"`
+	Title               string             `json:"title"`
+	Overview            string             `json:"overview"`
+	Tagline             string             `json:"tagline"`
+	ReleaseDate         string             `json:"releaseDate"`
+	Runtime             int                `json:"runtime"`
+	Rating              float64            `json:"rating"`
+	ContentRating       string             `json:"contentRating,omitempty"`
+	PosterPath          string             `json:"posterPath"`
+	BackdropPath        string             `json:"backdropPath"`
+	Genres              []string           `json:"genres"`
+	Cast                []CastMember       `json:"cast"`
+	Crew                []CrewMember       `json:"crew"`
+	Director            string             `json:"director"`
+	IMDbID              string             `json:"imdbId,omitempty"`
+	Status              string             `json:"status"`
+	Budget              int64              `json:"budget,omitempty"`
+	Revenue             int64              `json:"revenue,omitempty"`
+	OriginalLanguage    string             `json:"originalLanguage,omitempty"`
+	ProductionCountries []string           `json:"productionCountries,omitempty"`
+	ProductionCompanies []string           `json:"productionCompanies,omitempty"`
+	TrailerKey          string             `json:"trailerKey,omitempty"`
+	Recommendations     []RecommendedItem  `json:"recommendations,omitempty"`
 }
 
 // DiscoverShowDetail contains detailed info for a TV show from TMDB
 type DiscoverShowDetail struct {
-	ID           int64        `json:"id"`
-	Title        string       `json:"title"`
-	Overview     string       `json:"overview"`
-	FirstAirDate string       `json:"firstAirDate"`
-	Status       string       `json:"status"`
-	Rating       float64      `json:"rating"`
-	PosterPath   string       `json:"posterPath"`
-	BackdropPath string       `json:"backdropPath"`
-	Genres       []string     `json:"genres"`
-	Networks     []string     `json:"networks"`
-	Seasons      int          `json:"seasons"`
-	Cast         []CastMember `json:"cast"`
+	ID                  int64              `json:"id"`
+	Title               string             `json:"title"`
+	Overview            string             `json:"overview"`
+	FirstAirDate        string             `json:"firstAirDate"`
+	Status              string             `json:"status"`
+	Rating              float64            `json:"rating"`
+	ContentRating       string             `json:"contentRating,omitempty"`
+	PosterPath          string             `json:"posterPath"`
+	BackdropPath        string             `json:"backdropPath"`
+	Genres              []string           `json:"genres"`
+	Networks            []string           `json:"networks"`
+	Seasons             int                `json:"seasons"`
+	Episodes            int                `json:"episodes"`
+	Cast                []CastMember       `json:"cast"`
+	Crew                []CrewMember       `json:"crew"`
+	IMDbID              string             `json:"imdbId,omitempty"`
+	OriginalLanguage    string             `json:"originalLanguage,omitempty"`
+	ProductionCountries []string           `json:"productionCountries,omitempty"`
+	TrailerKey          string             `json:"trailerKey,omitempty"`
+	Recommendations     []RecommendedItem  `json:"recommendations,omitempty"`
 }
 
 type CastMember struct {
+	ID        int64  `json:"id"`
 	Name      string `json:"name"`
 	Character string `json:"character"`
 	Photo     string `json:"photo"`
+}
+
+type CrewMember struct {
+	ID    int64  `json:"id"`
+	Name  string `json:"name"`
+	Job   string `json:"job"`
+	Photo string `json:"photo"`
+}
+
+type RecommendedItem struct {
+	ID            int64   `json:"id"`
+	Title         string  `json:"title"`
+	PosterPath    string  `json:"posterPath"`
+	ReleaseDate   string  `json:"releaseDate"`
+	Rating        float64 `json:"rating"`
+	MediaType     string  `json:"mediaType"`
+	Runtime       int     `json:"runtime,omitempty"`
+	ContentRating string  `json:"contentRating,omitempty"`
 }
 
 // GetMovieDetail gets detailed info for a movie from TMDB
@@ -722,11 +818,9 @@ func (s *Service) GetMovieDetail(tmdbID int64) (*DiscoverMovieDetail, error) {
 	}
 
 	cast := make([]CastMember, 0)
-	for i, c := range details.Credits.Cast {
-		if i >= 10 { // Limit to top 10 cast
-			break
-		}
+	for _, c := range details.Credits.Cast {
 		cast = append(cast, CastMember{
+			ID:        c.ID,
 			Name:      c.Name,
 			Character: c.Character,
 			Photo:     c.ProfilePath,
@@ -734,26 +828,91 @@ func (s *Service) GetMovieDetail(tmdbID int64) (*DiscoverMovieDetail, error) {
 	}
 
 	director := ""
+	crew := make([]CrewMember, 0)
+	importantJobs := map[string]bool{
+		"Director": true, "Producer": true, "Executive Producer": true,
+		"Writer": true, "Screenplay": true, "Director of Photography": true,
+		"Original Music Composer": true, "Editor": true, "Cinematographer": true,
+		"Costume Design": true, "Production Design": true, "Composer": true,
+	}
 	for _, c := range details.Credits.Crew {
-		if c.Job == "Director" {
+		if c.Job == "Director" && director == "" {
 			director = c.Name
+		}
+		if importantJobs[c.Job] {
+			crew = append(crew, CrewMember{
+				ID:    c.ID,
+				Name:  c.Name,
+				Job:   c.Job,
+				Photo: c.ProfilePath,
+			})
+		}
+	}
+
+	// Production countries
+	countries := make([]string, len(details.ProductionCountries))
+	for i, c := range details.ProductionCountries {
+		countries[i] = c.ISO31661
+	}
+
+	// Production companies
+	companies := make([]string, 0)
+	for i, c := range details.ProductionCompanies {
+		if i >= 3 {
+			break
+		}
+		companies = append(companies, c.Name)
+	}
+
+	// Get trailer
+	trailerKey := ""
+	for _, v := range details.Videos.Results {
+		if v.Type == "Trailer" && v.Site == "YouTube" {
+			trailerKey = v.Key
 			break
 		}
 	}
 
+	// Get content rating
+	contentRating, _ := s.tmdb.GetMovieContentRating(tmdbID)
+
+	// Get recommendations from embedded response (basic info only)
+	recommendations := make([]RecommendedItem, 0)
+	for _, r := range details.Recommendations.Results {
+		recommendations = append(recommendations, RecommendedItem{
+			ID:          r.ID,
+			Title:       r.Title,
+			PosterPath:  r.PosterPath,
+			ReleaseDate: r.ReleaseDate,
+			Rating:      r.VoteAverage,
+			MediaType:   "movie",
+		})
+	}
+
 	return &DiscoverMovieDetail{
-		ID:           details.ID,
-		Title:        details.Title,
-		Overview:     details.Overview,
-		Tagline:      details.Tagline,
-		ReleaseDate:  details.ReleaseDate,
-		Runtime:      details.Runtime,
-		Rating:       details.VoteAverage,
-		PosterPath:   details.PosterPath,
-		BackdropPath: details.BackdropPath,
-		Genres:       genres,
-		Cast:         cast,
-		Director:     director,
+		ID:                  details.ID,
+		Title:               details.Title,
+		Overview:            details.Overview,
+		Tagline:             details.Tagline,
+		ReleaseDate:         details.ReleaseDate,
+		Runtime:             details.Runtime,
+		Rating:              details.VoteAverage,
+		ContentRating:       contentRating,
+		PosterPath:          details.PosterPath,
+		BackdropPath:        details.BackdropPath,
+		Genres:              genres,
+		Cast:                cast,
+		Crew:                crew,
+		Director:            director,
+		IMDbID:              details.ImdbID,
+		Status:              details.Status,
+		Budget:              details.Budget,
+		Revenue:             details.Revenue,
+		OriginalLanguage:    details.OriginalLanguage,
+		ProductionCountries: countries,
+		ProductionCompanies: companies,
+		TrailerKey:          trailerKey,
+		Recommendations:     recommendations,
 	}, nil
 }
 
@@ -775,29 +934,91 @@ func (s *Service) GetShowDetail(tmdbID int64) (*DiscoverShowDetail, error) {
 	}
 
 	cast := make([]CastMember, 0)
-	for i, c := range details.Credits.Cast {
-		if i >= 10 { // Limit to top 10 cast
-			break
-		}
+	for _, c := range details.Credits.Cast {
 		cast = append(cast, CastMember{
+			ID:        c.ID,
 			Name:      c.Name,
 			Character: c.Character,
 			Photo:     c.ProfilePath,
 		})
 	}
 
+	// Crew
+	crew := make([]CrewMember, 0)
+	importantJobs := map[string]bool{
+		"Creator": true, "Executive Producer": true, "Producer": true,
+		"Director": true, "Writer": true, "Showrunner": true,
+		"Director of Photography": true, "Original Music Composer": true,
+		"Editor": true, "Cinematographer": true, "Composer": true,
+	}
+	for _, c := range details.Credits.Crew {
+		if importantJobs[c.Job] {
+			crew = append(crew, CrewMember{
+				ID:    c.ID,
+				Name:  c.Name,
+				Job:   c.Job,
+				Photo: c.ProfilePath,
+			})
+		}
+	}
+
+	// Production countries
+	countries := make([]string, len(details.ProductionCountries))
+	for i, c := range details.ProductionCountries {
+		countries[i] = c.ISO31661
+	}
+
+	// Get trailer
+	trailerKey := ""
+	for _, v := range details.Videos.Results {
+		if v.Type == "Trailer" && v.Site == "YouTube" {
+			trailerKey = v.Key
+			break
+		}
+	}
+
+	// Get content rating
+	contentRating, _ := s.tmdb.GetTVContentRating(tmdbID)
+
+	// Get recommendations from embedded response (basic info only)
+	recommendations := make([]RecommendedItem, 0)
+	for _, r := range details.Recommendations.Results {
+		recommendations = append(recommendations, RecommendedItem{
+			ID:          r.ID,
+			Title:       r.Name,
+			PosterPath:  r.PosterPath,
+			ReleaseDate: r.FirstAirDate,
+			Rating:      r.VoteAverage,
+			MediaType:   "tv",
+		})
+	}
+
+	// Count total episodes
+	totalEpisodes := 0
+	for _, s := range details.Seasons {
+		totalEpisodes += s.EpisodeCount
+	}
+
 	return &DiscoverShowDetail{
-		ID:           details.ID,
-		Title:        details.Name,
-		Overview:     details.Overview,
-		FirstAirDate: details.FirstAirDate,
-		Status:       details.Status,
-		Rating:       details.VoteAverage,
-		PosterPath:   details.PosterPath,
-		BackdropPath: details.BackdropPath,
-		Genres:       genres,
-		Networks:     networks,
-		Seasons:      len(details.Seasons),
-		Cast:         cast,
+		ID:                  details.ID,
+		Title:               details.Name,
+		Overview:            details.Overview,
+		FirstAirDate:        details.FirstAirDate,
+		Status:              details.Status,
+		Rating:              details.VoteAverage,
+		ContentRating:       contentRating,
+		PosterPath:          details.PosterPath,
+		BackdropPath:        details.BackdropPath,
+		Genres:              genres,
+		Networks:            networks,
+		Seasons:             len(details.Seasons),
+		Episodes:            totalEpisodes,
+		Cast:                cast,
+		Crew:                crew,
+		IMDbID:              details.ExternalIDs.ImdbID,
+		OriginalLanguage:    details.OriginalLanguage,
+		ProductionCountries: countries,
+		TrailerKey:          trailerKey,
+		Recommendations:     recommendations,
 	}, nil
 }

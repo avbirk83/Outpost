@@ -3,18 +3,17 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import {
-		getShow, refreshShowMetadata, getImageUrl, getTmdbImageUrl, createWantedItem,
+		getShow, refreshShowMetadata, getImageUrl,
 		getQualityProfiles, getWatchStatus, markAsWatched, markAsUnwatched,
-		getMediaInfo, getShowSuggestions, addToWatchlist, removeFromWatchlist, isInWatchlist,
-		type ShowDetail, type QualityProfile, type MediaInfo, type TMDBShowResult
+		getShowSuggestions, addToWatchlist, removeFromWatchlist, isInWatchlist,
+		deleteEpisode,
+		type ShowDetail, type QualityProfile, type TMDBShowResult
 	} from '$lib/api';
 	import { auth } from '$lib/stores/auth';
-	import { toast } from '$lib/stores/toast';
-	import { formatRuntime, getOfficialTrailer } from '$lib/utils';
-	import Dropdown from '$lib/components/Dropdown.svelte';
-	import PersonModal from '$lib/components/PersonModal.svelte';
+	import { getOfficialTrailer, parseGenres, parseCast, parseCrew } from '$lib/utils';
 	import TrailerModal from '$lib/components/TrailerModal.svelte';
 	import IconButton from '$lib/components/IconButton.svelte';
+	import MediaDetail from '$lib/components/MediaDetail.svelte';
 
 	let show: ShowDetail | null = $state(null);
 	let loading = $state(true);
@@ -30,77 +29,6 @@
 	let showTrailerModal = $state(false);
 	let selectedSeasonIndex = $state(0);
 	let recommendations: TMDBShowResult[] = $state([]);
-	let castScrollContainer: HTMLElement;
-	let canScrollLeft = $state(false);
-	let canScrollRight = $state(true);
-	let crewScrollContainer: HTMLElement;
-	let canScrollCrewLeft = $state(false);
-	let canScrollCrewRight = $state(true);
-	let recsScrollContainer: HTMLElement;
-	let canScrollRecsLeft = $state(false);
-	let canScrollRecsRight = $state(true);
-	let selectedPersonId = $state<number | null>(null);
-	let selectedPersonName = $state<string>('');
-
-	function updateCastScrollState() {
-		if (!castScrollContainer) return;
-		canScrollLeft = castScrollContainer.scrollLeft > 0;
-		canScrollRight = castScrollContainer.scrollLeft < castScrollContainer.scrollWidth - castScrollContainer.clientWidth - 10;
-	}
-
-	function scrollCast(direction: 'left' | 'right') {
-		if (!castScrollContainer) return;
-		const scrollAmount = 300;
-		castScrollContainer.scrollBy({
-			left: direction === 'left' ? -scrollAmount : scrollAmount,
-			behavior: 'smooth'
-		});
-		setTimeout(updateCastScrollState, 350);
-	}
-
-	function updateCrewScrollState() {
-		if (!crewScrollContainer) return;
-		canScrollCrewLeft = crewScrollContainer.scrollLeft > 0;
-		canScrollCrewRight = crewScrollContainer.scrollLeft < crewScrollContainer.scrollWidth - crewScrollContainer.clientWidth - 10;
-	}
-
-	function scrollCrew(direction: 'left' | 'right') {
-		if (!crewScrollContainer) return;
-		const scrollAmount = 300;
-		crewScrollContainer.scrollBy({
-			left: direction === 'left' ? -scrollAmount : scrollAmount,
-			behavior: 'smooth'
-		});
-		setTimeout(updateCrewScrollState, 350);
-	}
-
-	function updateRecsScrollState() {
-		if (!recsScrollContainer) return;
-		canScrollRecsLeft = recsScrollContainer.scrollLeft > 0;
-		canScrollRecsRight = recsScrollContainer.scrollLeft < recsScrollContainer.scrollWidth - recsScrollContainer.clientWidth - 10;
-	}
-
-	function scrollRecs(direction: 'left' | 'right') {
-		if (!recsScrollContainer) return;
-		const scrollAmount = 300;
-		recsScrollContainer.scrollBy({
-			left: direction === 'left' ? -scrollAmount : scrollAmount,
-			behavior: 'smooth'
-		});
-		setTimeout(updateRecsScrollState, 350);
-	}
-
-	function handlePersonClick(person: { id?: number; name: string }) {
-		if (person.id) {
-			selectedPersonId = person.id;
-			selectedPersonName = person.name;
-		}
-	}
-
-	function closePersonModal() {
-		selectedPersonId = null;
-		selectedPersonName = '';
-	}
 
 	auth.subscribe((value) => {
 		user = value;
@@ -162,7 +90,8 @@
 		}
 	}
 
-	async function handleToggleEpisodeWatched(episodeId: number, runtime?: number) {
+	async function handleToggleEpisodeWatched(episodeId: number, runtime?: number, e?: Event) {
+		e?.stopPropagation();
 		togglingEpisode = episodeId;
 		try {
 			if (watchedEpisodes.has(episodeId)) {
@@ -178,6 +107,25 @@
 			error = err instanceof Error ? err.message : 'Failed to update watch status';
 		} finally {
 			togglingEpisode = null;
+		}
+	}
+
+	let deletingEpisode: number | null = $state(null);
+
+	async function handleDeleteEpisode(episodeId: number, e: Event) {
+		e.stopPropagation();
+		if (!confirm('Are you sure you want to delete this episode? This will also delete the file.')) return;
+		deletingEpisode = episodeId;
+		try {
+			await deleteEpisode(episodeId);
+			// Refresh show data to update the episode list
+			if (show) {
+				show = await getShow(show.id);
+			}
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'Failed to delete episode';
+		} finally {
+			deletingEpisode = null;
 		}
 	}
 
@@ -217,60 +165,6 @@
 		if (!show?.seasons) return 0;
 		return show.seasons.reduce((sum, s) => sum + (s.episodes?.length || 0), 0);
 	});
-
-	function parseGenres(g?: string): string[] {
-		if (!g) return [];
-		try { return JSON.parse(g) || []; } catch { return []; }
-	}
-
-	function parseCast(c?: string): Array<{ name: string; character: string; profile_path?: string }> {
-		if (!c) return [];
-		try { return JSON.parse(c) || []; } catch { return []; }
-	}
-
-	function parseCrew(c?: string): Array<{ name: string; job: string; department: string; profile_path?: string }> {
-		if (!c) return [];
-		try { return JSON.parse(c) || []; } catch { return []; }
-	}
-
-	function getLanguageName(code?: string): string {
-		if (!code || code === 'und') return 'Unknown';
-		try {
-			const displayNames = new Intl.DisplayNames(['en'], { type: 'language' });
-			return displayNames.of(code) || code;
-		} catch {
-			return code;
-		}
-	}
-
-	function getStatusColor(status?: string): string {
-		switch (status?.toLowerCase()) {
-			case 'returning series':
-			case 'in production':
-				return 'text-green-400';
-			case 'ended':
-				return 'text-yellow-400';
-			case 'canceled':
-				return 'text-red-400';
-			default:
-				return 'text-text-secondary';
-		}
-	}
-
-	function getCountryFlag(code?: string): string {
-		if (!code || code.length !== 2) return '';
-		return code.toUpperCase().split('').map(c => String.fromCodePoint(127397 + c.charCodeAt(0))).join('');
-	}
-
-	function getCountryName(code?: string): string {
-		if (!code) return '';
-		try {
-			const displayNames = new Intl.DisplayNames(['en'], { type: 'region' });
-			return displayNames.of(code.toUpperCase()) || code;
-		} catch {
-			return code;
-		}
-	}
 
 	function getTotalRuntime(): string {
 		if (!show?.seasons) return '-';
@@ -327,9 +221,32 @@
 		}
 	}
 
-	function getTags(): string[] {
-		return parseGenres(show?.genres);
-	}
+	// Get tags from genres
+	const tags = $derived(parseGenres(show?.genres));
+
+	// Transform cast/crew for MediaDetail
+	const castList = $derived(parseCast(show?.cast).map(c => ({
+		id: c.id,
+		name: c.name,
+		character: c.character,
+		profile_path: c.profile_path
+	})));
+
+	const crewList = $derived(parseCrew(show?.crew).map(c => ({
+		id: c.id,
+		name: c.name,
+		job: c.job,
+		profile_path: c.profile_path
+	})));
+
+	// Transform recommendations for MediaDetail
+	const recsList = $derived(recommendations.map(r => ({
+		id: r.id,
+		title: r.name,
+		poster_path: r.poster_path,
+		release_date: r.first_air_date,
+		vote_average: r.vote_average
+	})));
 </script>
 
 <svelte:head>
@@ -349,625 +266,279 @@
 		<button class="ml-2 underline" onclick={() => error = null}>Dismiss</button>
 	</div>
 {:else if show}
-	<div class="space-y-6 -mt-22 -mx-6">
-		<!-- ============================================
-		     1. HERO SECTION
-		     ============================================ -->
-		<section class="relative min-h-[500px]">
-			<!-- Backdrop -->
-			{#if show.backdropPath}
-				<img
-					src={getImageUrl(show.backdropPath)}
-					alt=""
-					class="absolute inset-0 w-full h-full object-cover pointer-events-none"
-					style="object-position: center 25%;"
-					draggable="false"
-				/>
-				<div class="absolute inset-0 bg-gradient-to-r from-bg-primary via-bg-primary/80 to-transparent pointer-events-none"></div>
-				<div class="absolute inset-0 bg-gradient-to-t from-bg-primary via-transparent to-bg-primary/30 pointer-events-none"></div>
+	<MediaDetail
+		title={show.title}
+		year={show.year}
+		overview={show.overview}
+		tagline={show.tagline}
+		posterPath={show.posterPath}
+		backdropPath={show.backdropPath}
+		genres={tags}
+		tmdbId={show.tmdbId}
+		imdbId={show.imdbId}
+		mediaType="tv"
+		source="library"
+		seasons={show.seasons?.length || 0}
+		episodes={totalEpisodes()}
+		networks={show.network ? [show.network] : []}
+		status={show.status}
+		contentRating={show.contentRating}
+		originalLanguage={show.originalLanguage}
+		country={show.country}
+		rating={show.rating}
+		cast={castList}
+		crew={crewList}
+		recommendations={recsList}
+		addedAt={show.addedAt}
+		useLocalImages={true}
+		posterClickable={true}
+		onPosterClick={handlePlayNext}
+		trailersJson={show.trailers}
+	>
+		{#snippet actionButtons()}
+			<IconButton
+				onclick={handleToggleWatchlist}
+				disabled={watchlistLoading}
+				active={inWatchlist}
+				title="{inWatchlist ? 'Remove from' : 'Add to'} Watchlist"
+			>
+				{#if inWatchlist}
+					<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+					</svg>
+				{:else}
+					<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+					</svg>
+				{/if}
+			</IconButton>
+
+			<IconButton
+				onclick={handlePlayNext}
+				variant="yellow"
+				title="Play {nextEpisode() ? `S${nextEpisode()?.season} E${nextEpisode()?.episode}` : 'S1 E1'}"
+			>
+				<svg class="w-5 h-5 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+					<path d="M8 5v14l11-7z" />
+				</svg>
+			</IconButton>
+
+			{#if getOfficialTrailer(show?.trailers)}
+				<IconButton
+					onclick={() => showTrailerModal = true}
+					title="Watch Trailer"
+				>
+					<svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+						<path d="M18 4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V4h-4z"/>
+					</svg>
+				</IconButton>
 			{/if}
 
-			<!-- Hero Content: 3 columns -->
-			<div class="relative z-10 px-6 pt-32 pb-8 flex gap-6">
-				<!-- LEFT: Poster Card -->
-				<div class="flex-shrink-0 w-64 mt-8">
-					<div class="liquid-card overflow-hidden">
-						<!-- Poster -->
-						<div class="relative aspect-[2/3] bg-bg-card">
-							{#if show.posterPath}
-								<img
-									src={getImageUrl(show.posterPath)}
-									alt={show.title}
-									class="w-full h-full object-cover"
-								/>
-							{:else}
-								<div class="w-full h-full flex items-center justify-center bg-bg-elevated">
-									<svg class="w-16 h-16 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-									</svg>
-								</div>
-							{/if}
-							<!-- Status Badge -->
-							<div class="absolute top-3 right-3">
-								<div class="w-6 h-6 rounded-full bg-green-600 flex items-center justify-center" title="In Library">
-									<svg class="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" />
-									</svg>
-								</div>
-							</div>
-						</div>
-						<!-- Ratings Row -->
-						<div class="p-3 flex justify-around items-center border-t border-white/10">
-							{#if show.rating}
-								<a href="https://www.themoviedb.org/tv/{show.tmdbId}" target="_blank" class="flex items-center gap-1.5 hover:opacity-80 transition-opacity" title="TMDB Rating">
-									<img src="/icons/tmdb.svg" alt="TMDB" class="w-6 h-6 rounded" />
-									<span class="text-base font-bold text-white">{show.rating.toFixed(1)}</span>
-								</a>
-							{/if}
-							<div class="flex items-center gap-1.5 opacity-40" title="Rotten Tomatoes (coming soon)">
-								<img src="/icons/rottentomatoes.svg" alt="Rotten Tomatoes" class="w-6 h-6" />
-								<span class="text-base font-bold">--</span>
-							</div>
-							<div class="flex items-center gap-1.5 opacity-40" title="Metacritic (coming soon)">
-								<img src="/icons/metacritic.svg" alt="Metacritic" class="w-6 h-6 rounded" />
-								<span class="text-base font-bold">--</span>
-							</div>
-						</div>
-					</div>
-				</div>
-
-				<!-- CENTER: Title, Tags, Overview, Controls -->
-				<div class="flex-1 min-w-0 py-4">
-					<!-- Title -->
-					<h1 class="text-4xl md:text-5xl font-bold text-white mb-2">
-						{show.title}
-						{#if show.year}
-							<span class="text-text-secondary font-normal">({show.year})</span>
-						{/if}
-					</h1>
-
-					<!-- Meta line -->
-					<div class="flex items-center gap-2 text-text-secondary mb-4">
-						{#if show.contentRating}
-							<span class="px-2 py-0.5 border border-white/30 text-xs font-medium">{show.contentRating}</span>
-						{/if}
-						<span>{show.seasons?.length || 0} Seasons</span>
-						<span>•</span>
-						<span>{totalEpisodes()} Episodes</span>
-						{#if getTags().length > 0}
-							<span>•</span>
-							<span>{getTags().join(', ')}</span>
-						{/if}
-					</div>
-
-					<!-- Tags (clickable pills) -->
-					{#if getTags().length > 0}
-						<div class="flex flex-wrap gap-2 mb-4">
-							{#each getTags() as tag}
-								<a href="/discover/show?genre={encodeURIComponent(tag)}" class="liquid-tag text-sm">
-									{tag}
-								</a>
-							{/each}
-						</div>
-					{/if}
-
-					<!-- Tagline -->
-					{#if show.tagline}
-						<p class="text-text-secondary italic mb-4">"{show.tagline}"</p>
-					{/if}
-
-					<!-- Overview -->
-					{#if show.overview}
-						<p class="text-text-secondary leading-relaxed max-w-2xl mb-5">
-							{show.overview}
-						</p>
-					{/if}
-
-					<!-- Icon bubble controls -->
-					<div class="flex items-center gap-3 mb-5">
-						<!-- Play button -->
+			<!-- Manage dropdown -->
+			<div class="relative">
+				<IconButton
+					onclick={() => showManageMenu = !showManageMenu}
+					title="More options"
+				>
+					<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
+					</svg>
+				</IconButton>
+				{#if showManageMenu}
+					<button
+						type="button"
+						class="fixed inset-0 z-[55] cursor-default"
+						onclick={() => showManageMenu = false}
+						aria-label="Close menu"
+					></button>
+					<div class="absolute left-1/2 -translate-x-1/2 mt-2 w-48 py-1 z-[60] bg-[#141416] border border-white/10 rounded-2xl shadow-xl overflow-hidden">
 						<button
-							onclick={handlePlayNext}
-							class="h-12 px-6 rounded-xl bg-white text-black font-semibold flex items-center gap-2 hover:bg-white/90 transition-all"
+							onclick={() => { handleRefresh(); showManageMenu = false; }}
+							class="w-full text-left px-4 py-2.5 text-sm text-white/80 hover:bg-white/10 hover:text-white transition-colors"
 						>
-							<svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-								<path d="M8 5v14l11-7z" />
-							</svg>
-							{#if nextEpisode()}
-								Play S{nextEpisode()?.season} E{nextEpisode()?.episode}
-							{:else}
-								Play S1 E1
-							{/if}
+							{refreshing ? 'Refreshing...' : 'Refresh Metadata'}
 						</button>
-
-						<IconButton
-							onclick={handleToggleWatchlist}
-							disabled={watchlistLoading}
-							active={inWatchlist}
-							title="{inWatchlist ? 'Remove from' : 'Add to'} Watchlist"
-						>
-							{#if inWatchlist}
-								<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-								</svg>
-							{:else}
-								<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-								</svg>
-							{/if}
-						</IconButton>
-
-						{#if getOfficialTrailer(show?.trailers)}
-							<IconButton
-								onclick={() => showTrailerModal = true}
-								variant="red"
-								title="Watch Trailer"
-							>
-								<svg class="w-5 h-5 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
-									<path d="M8 5v14l11-7z" />
-								</svg>
-							</IconButton>
-						{/if}
-
-						<!-- Manage dropdown -->
-						<div class="relative">
-							<IconButton
-								onclick={() => showManageMenu = !showManageMenu}
-								title="Manage"
-							>
-								<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
-								</svg>
-							</IconButton>
-							{#if showManageMenu}
-								<button
-									type="button"
-									class="fixed inset-0 z-[55] cursor-default"
-									onclick={() => showManageMenu = false}
-									aria-label="Close menu"
-								></button>
-								<div class="absolute left-0 mt-2 w-48 py-1 z-[60] bg-[#141416] border border-white/10 rounded-2xl shadow-xl overflow-hidden">
-									<button
-										onclick={handleRefresh}
-										class="w-full text-left px-4 py-2.5 text-sm text-white/80 hover:bg-white/10 hover:text-white transition-colors"
-									>
-										{refreshing ? 'Refreshing...' : 'Refresh Metadata'}
-									</button>
-									<button class="w-full text-left px-4 py-2.5 text-sm text-white/80 hover:bg-white/10 hover:text-white transition-colors" onclick={() => showManageMenu = false}>Edit Metadata</button>
-									<button class="w-full text-left px-4 py-2.5 text-sm text-white/80 hover:bg-white/10 hover:text-white transition-colors" onclick={() => showManageMenu = false}>Fix Match</button>
-									<button class="w-full text-left px-4 py-2.5 text-sm text-white/80 hover:bg-white/10 hover:text-white transition-colors" onclick={() => showManageMenu = false}>Edit Images</button>
-									<div class="border-t border-white/10 my-1"></div>
-									<button class="w-full text-left px-4 py-2.5 text-sm text-red-400 hover:bg-white/10 hover:text-red-300 transition-colors" onclick={() => showManageMenu = false}>Delete</button>
-								</div>
-							{/if}
-						</div>
+						<button class="w-full text-left px-4 py-2.5 text-sm text-white/80 hover:bg-white/10 hover:text-white transition-colors" onclick={() => showManageMenu = false}>Edit Metadata</button>
+						<button class="w-full text-left px-4 py-2.5 text-sm text-white/80 hover:bg-white/10 hover:text-white transition-colors" onclick={() => showManageMenu = false}>Fix Match</button>
+						<div class="border-t border-white/10 my-1"></div>
+						<button class="w-full text-left px-4 py-2.5 text-sm text-red-400 hover:bg-white/10 hover:text-red-300 transition-colors" onclick={() => showManageMenu = false}>Delete</button>
 					</div>
-				</div>
-
-				<!-- RIGHT: Info Panel Card -->
-				<div class="flex-shrink-0 w-72 mt-8">
-					<div class="liquid-card p-4 space-y-3 text-sm">
-						<!-- Status -->
-						<div class="flex justify-between">
-							<span class="text-text-muted">Status</span>
-							<span class="{getStatusColor(show.status)} font-medium">{show.status || 'Unknown'}</span>
-						</div>
-
-						<!-- Network -->
-						{#if show.network}
-							<div class="flex justify-between">
-								<span class="text-text-muted">Network</span>
-								<span>{show.network}</span>
-							</div>
-						{/if}
-
-						<!-- Created By -->
-						{#if getCreators().length > 0}
-							<div class="flex justify-between">
-								<span class="text-text-muted">Created By</span>
-								<span class="text-right max-w-[180px] truncate" title={getCreators().join(', ')}>{getCreators().join(', ')}</span>
-							</div>
-						{/if}
-
-						<!-- Next Air Date -->
-						{#if getNextAirDate()}
-							<div class="flex justify-between">
-								<span class="text-text-muted">Next Episode</span>
-								<span class="text-green-400">{formatDate(getNextAirDate())}</span>
-							</div>
-						{/if}
-
-						<!-- Year -->
-						{#if show.year}
-							<div class="flex justify-between">
-								<span class="text-text-muted">Year</span>
-								<span>{show.year}</span>
-							</div>
-						{/if}
-
-						<!-- Seasons -->
-						<div class="flex justify-between">
-							<span class="text-text-muted">Seasons</span>
-							<span>{show.seasons?.length || 0}</span>
-						</div>
-
-						<!-- Episodes -->
-						<div class="flex justify-between">
-							<span class="text-text-muted">Episodes</span>
-							<span>{totalEpisodes()}</span>
-						</div>
-
-						<!-- Total Runtime -->
-						<div class="flex justify-between">
-							<span class="text-text-muted">Total Runtime</span>
-							<span>{getTotalRuntime()}</span>
-						</div>
-
-						<!-- Language -->
-						{#if show.originalLanguage}
-							<div class="flex justify-between">
-								<span class="text-text-muted">Language</span>
-								<span>{getLanguageName(show.originalLanguage)}</span>
-							</div>
-						{/if}
-
-						<!-- Country -->
-						{#if show.country}
-							<div class="flex justify-between">
-								<span class="text-text-muted">Country</span>
-								<span>{getCountryFlag(show.country)} {getCountryName(show.country)}</span>
-							</div>
-						{/if}
-
-						<div class="border-t border-white/10 my-2"></div>
-
-						<!-- Parental -->
-						{#if show.contentRating}
-							<div class="flex justify-between items-center">
-								<span class="text-text-muted">Parental</span>
-								<span class="flex items-center gap-2">
-									<span class="px-1.5 py-0.5 bg-white/10 rounded text-xs font-medium">{show.contentRating}</span>
-									{#if show.imdbId}
-										<a href="https://www.imdb.com/title/{show.imdbId}/parentalguide" target="_blank" class="text-sky-400 hover:text-sky-300 text-xs">
-											View ↗
-										</a>
-									{/if}
-								</span>
-							</div>
-						{/if}
-
-						<!-- Added date -->
-						{#if show.addedAt}
-							<div class="flex justify-between">
-								<span class="text-text-muted">Added</span>
-								<span class="text-xs">{new Date(show.addedAt).toLocaleDateString()}</span>
-							</div>
-						{/if}
-
-						<div class="border-t border-white/10 my-2"></div>
-
-						<!-- External Links -->
-						<div class="flex justify-center gap-3">
-							{#if show.tmdbId}
-								<a href="https://www.themoviedb.org/tv/{show.tmdbId}" target="_blank"
-								   class="w-9 h-9 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors overflow-hidden" title="View on TMDB">
-									<img src="/icons/tmdb.svg" alt="TMDB" class="w-7 h-7" />
-								</a>
-							{/if}
-							{#if show.imdbId}
-								<a href="https://www.imdb.com/title/{show.imdbId}" target="_blank"
-								   class="w-9 h-9 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors overflow-hidden" title="View on IMDb">
-									<img src="/icons/imdb.svg" alt="IMDb" class="w-7 h-7" />
-								</a>
-							{/if}
-							<a href="https://trakt.tv/search/tmdb/{show.tmdbId}?id_type=show" target="_blank"
-							   class="w-9 h-9 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors overflow-hidden" title="View on Trakt">
-								<img src="/icons/trakt.svg" alt="Trakt" class="w-7 h-7" />
-							</a>
-						</div>
-					</div>
-				</div>
-			</div>
-		</section>
-
-		<!-- ============================================
-		     2. EPISODES SECTION
-		     ============================================ -->
-		<section class="px-6">
-			<div class="flex items-center justify-between mb-4">
-				<h2 class="text-lg font-semibold text-text-primary">Episodes</h2>
-				{#if show.seasons && show.seasons.length > 0}
-					<Dropdown
-						options={show.seasons.map((season, i) => ({ value: i, label: `Season ${season.seasonNumber}` }))}
-						value={selectedSeasonIndex}
-						onchange={(v) => selectedSeasonIndex = v as number}
-					/>
 				{/if}
 			</div>
+		{/snippet}
 
-			{#if selectedSeason?.episodes && selectedSeason.episodes.length > 0}
-				<div class="flex gap-4 overflow-x-auto pb-2 scrollbar-thin">
-					{#each selectedSeason.episodes as episode}
-						<button
-							onclick={() => goto(`/watch/episode/${episode.id}`)}
-							class="group relative text-left flex-shrink-0 w-64"
-						>
-							<div class="relative aspect-video bg-bg-card overflow-hidden rounded-xl">
-								<!-- Episode still/backdrop -->
-								{#if episode.stillPath}
-									<img
-										src={getImageUrl(episode.stillPath)}
-										alt={episode.title}
-										class="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-									/>
-								{:else if show.backdropPath}
-									<img
-										src={getImageUrl(show.backdropPath)}
-										alt={episode.title}
-										class="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105 opacity-50"
-									/>
-								{:else}
-									<div class="w-full h-full flex items-center justify-center bg-bg-elevated">
-										<svg class="w-10 h-10 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-										</svg>
-									</div>
-								{/if}
+		{#snippet extraInfoRows()}
+			<!-- Created By -->
+			{#if getCreators().length > 0}
+				<div class="flex justify-between">
+					<span class="text-text-muted">Created By</span>
+					<span class="text-right max-w-[180px] truncate" title={getCreators().join(', ')}>{getCreators().join(', ')}</span>
+				</div>
+			{/if}
 
-								<!-- Gradient overlay -->
-								<div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>
+			<!-- Next Air Date -->
+			{#if getNextAirDate()}
+				<div class="flex justify-between">
+					<span class="text-text-muted">Next Episode</span>
+					<span class="text-green-400">{formatDate(getNextAirDate() || '')}</span>
+				</div>
+			{/if}
 
-								<!-- Play button on hover -->
-								<div class="absolute inset-0 flex items-center justify-center">
-									<div class="w-12 h-12 rounded-full bg-white/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transform scale-75 group-hover:scale-100 transition-all duration-300 border border-white/30">
-										<svg class="w-6 h-6 text-white ml-1" fill="currentColor" viewBox="0 0 24 24">
-											<path d="M8 5v14l11-7z" />
-										</svg>
-									</div>
-								</div>
+			<!-- Total Runtime -->
+			<div class="flex justify-between">
+				<span class="text-text-muted">Total Runtime</span>
+				<span>{getTotalRuntime()}</span>
+			</div>
 
-								<!-- Episode number badge -->
-								<div class="absolute top-1 left-1">
-									<div class="px-2 py-0.5 rounded bg-black/70 text-white text-xs font-medium">
-										E{episode.episodeNumber}
-									</div>
-								</div>
+			<!-- Added date -->
+			{#if show.addedAt}
+				<div class="flex justify-between">
+					<span class="text-text-muted">Added</span>
+					<span class="text-xs">{new Date(show.addedAt).toLocaleDateString()}</span>
+				</div>
+			{/if}
+		{/snippet}
 
-								<!-- Watched indicator -->
-								{#if watchedEpisodes.has(episode.id)}
-									<div class="absolute top-1 right-1">
-										<div class="w-5 h-5 rounded-full bg-green-600 flex items-center justify-center">
-											<svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-												<path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" />
+		{#snippet extraSections()}
+			<!-- Episodes Section -->
+			<section class="px-[60px]">
+				<h2 class="text-lg font-semibold text-text-primary mb-4">Episodes</h2>
+
+				<!-- Season Pills -->
+				{#if show.seasons && show.seasons.length > 1}
+					<div class="flex gap-2 mb-4 overflow-x-auto pb-2 scrollbar-thin">
+						{#each show.seasons as season, i}
+							<button
+								onclick={() => selectedSeasonIndex = i}
+								class="flex-shrink-0 px-4 py-2 rounded-full text-sm font-medium transition-all {selectedSeasonIndex === i
+									? 'bg-[#f5f5dc] text-black'
+									: 'bg-glass border border-border-subtle text-text-secondary hover:bg-glass-hover hover:text-text-primary'}"
+							>
+								Season {season.seasonNumber}
+							</button>
+						{/each}
+					</div>
+				{/if}
+
+				{#if selectedSeason?.episodes && selectedSeason.episodes.length > 0}
+					<div class="flex gap-3 overflow-x-auto pb-2 scrollbar-thin">
+						{#each selectedSeason.episodes as episode}
+							<div
+								class="group flex-shrink-0 w-64 rounded-xl overflow-hidden bg-bg-elevated cursor-pointer transition-all duration-300 hover:translate-y-[-6px] hover:shadow-lg"
+							>
+								<!-- Image container -->
+								<button
+									onclick={() => goto(`/watch/episode/${episode.id}`)}
+									class="relative aspect-video bg-gradient-to-br from-[#1a1a2e] to-[#2d2d44] w-full"
+								>
+									{#if episode.stillPath}
+										<img
+											src={getImageUrl(episode.stillPath)}
+											alt={episode.title}
+											class="w-full h-full object-cover"
+										/>
+									{:else if show.backdropPath}
+										<img
+											src={getImageUrl(show.backdropPath)}
+											alt={episode.title}
+											class="w-full h-full object-cover opacity-50"
+										/>
+									{/if}
+
+									<!-- Watched badge -->
+									{#if watchedEpisodes.has(episode.id)}
+										<div class="absolute top-2 right-2 px-2 py-1 rounded text-[10px] font-bold uppercase bg-green-500 text-black">
+											Watched
+										</div>
+									{/if}
+
+									<!-- Play overlay on hover -->
+									<div class="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+										<div class="w-12 h-12 rounded-full bg-glass border border-border-subtle backdrop-blur-xl flex items-center justify-center">
+											<svg class="w-6 h-6 text-text-primary ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+												<path d="M8 5v14l11-7z" />
 											</svg>
 										</div>
 									</div>
-								{/if}
+								</button>
 
-								<!-- Episode title at bottom -->
-								<div class="absolute bottom-0 left-0 right-0 p-3">
-									<p class="text-sm font-medium text-white truncate">{episode.title || `Episode ${episode.episodeNumber}`}</p>
-									{#if episode.runtime}
-										<p class="text-xs text-white/60">{episode.runtime}m</p>
-									{/if}
+								<!-- Info section -->
+								<div class="p-3">
+									<div class="flex items-center gap-2 mb-1">
+										<span class="text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded bg-white/10 text-text-secondary">
+											S{selectedSeason.seasonNumber} E{episode.episodeNumber}
+										</span>
+										{#if episode.runtime}
+											<span class="text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded bg-white/10 text-text-secondary">
+												{episode.runtime}m
+											</span>
+										{/if}
+										{#if show.contentRating}
+											<span class="text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded bg-white/10 text-text-secondary">
+												{show.contentRating}
+											</span>
+										{/if}
+									</div>
+									<div class="flex items-center justify-between gap-2">
+										<h3 class="text-sm font-semibold text-text-primary truncate flex-1">
+											{episode.title || `Episode ${episode.episodeNumber}`}
+										</h3>
+										<!-- Episode actions -->
+										<div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+											<button
+												onclick={(e) => handleToggleEpisodeWatched(episode.id, episode.runtime, e)}
+												disabled={togglingEpisode === episode.id}
+												class="p-1.5 rounded-full transition-colors {watchedEpisodes.has(episode.id) ? 'text-green-400 hover:bg-green-500/20' : 'text-text-muted hover:bg-white/10 hover:text-white'}"
+												title={watchedEpisodes.has(episode.id) ? 'Mark as unwatched' : 'Mark as watched'}
+											>
+												{#if togglingEpisode === episode.id}
+													<div class="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
+												{:else if watchedEpisodes.has(episode.id)}
+													<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+														<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+													</svg>
+												{:else}
+													<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+														<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+														<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+													</svg>
+												{/if}
+											</button>
+											{#if user?.role === 'admin'}
+												<button
+													onclick={(e) => handleDeleteEpisode(episode.id, e)}
+													disabled={deletingEpisode === episode.id}
+													class="p-1.5 rounded-full text-text-muted hover:bg-red-500/20 hover:text-red-400 transition-colors"
+													title="Delete episode"
+												>
+													{#if deletingEpisode === episode.id}
+														<div class="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
+													{:else}
+														<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+															<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+														</svg>
+													{/if}
+												</button>
+											{/if}
+										</div>
+									</div>
 								</div>
 							</div>
-						</button>
-					{/each}
-				</div>
-			{:else}
-				<div class="text-center py-12 text-text-muted">
-					<p>No episodes found for this season.</p>
-				</div>
-			{/if}
-		</section>
-
-		<!-- ============================================
-		     3. CAST
-		     ============================================ -->
-		{#if parseCast(show.cast).length > 0}
-			<section class="px-6">
-				<div class="flex items-center justify-between mb-3">
-					<h2 class="text-lg font-semibold text-text-primary">Cast</h2>
-					<div class="flex gap-1">
-						<button
-							onclick={() => scrollCast('left')}
-							disabled={!canScrollLeft}
-							class="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-							aria-label="Scroll left"
-						>
-							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
-							</svg>
-						</button>
-						<button
-							onclick={() => scrollCast('right')}
-							disabled={!canScrollRight}
-							class="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-							aria-label="Scroll right"
-						>
-							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
-							</svg>
-						</button>
+						{/each}
 					</div>
-				</div>
-				<div
-					bind:this={castScrollContainer}
-					onscroll={updateCastScrollState}
-					class="flex gap-5 overflow-x-auto pt-1 pl-1 pb-2 -ml-1 scrollbar-thin"
-				>
-					{#each parseCast(show.cast) as actor}
-						<button
-							onclick={() => handlePersonClick(actor)}
-							class="flex-shrink-0 w-28 text-center cursor-pointer group"
-						>
-							<div class="w-28 h-28 rounded-full bg-bg-elevated overflow-hidden mx-auto ring-2 ring-white/10 group-hover:ring-white/30 transition-all">
-								{#if actor.profile_path}
-									<img
-										src={getTmdbImageUrl(actor.profile_path, 'w185')}
-										alt={actor.name}
-										class="w-full h-full object-cover"
-									/>
-								{:else}
-									<div class="w-full h-full flex items-center justify-center text-3xl text-text-muted bg-gradient-to-br from-bg-card to-bg-elevated">
-										{actor.name.charAt(0)}
-									</div>
-								{/if}
-							</div>
-							<p class="mt-2 text-sm font-medium text-text-primary truncate group-hover:text-white transition-colors">{actor.name}</p>
-							<p class="text-xs text-text-muted truncate">{actor.character}</p>
-						</button>
-					{/each}
-				</div>
-			</section>
-		{/if}
-
-		<!-- ============================================
-		     4. CREW
-		     ============================================ -->
-		{#if parseCrew(show.crew).length > 0}
-			<section class="px-6">
-				<div class="flex items-center justify-between mb-3">
-					<h2 class="text-lg font-semibold text-text-primary">Crew</h2>
-					<div class="flex gap-1">
-						<button
-							onclick={() => scrollCrew('left')}
-							disabled={!canScrollCrewLeft}
-							class="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-							aria-label="Scroll left"
-						>
-							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
-							</svg>
-						</button>
-						<button
-							onclick={() => scrollCrew('right')}
-							disabled={!canScrollCrewRight}
-							class="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-							aria-label="Scroll right"
-						>
-							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
-							</svg>
-						</button>
-					</div>
-				</div>
-				<div
-					bind:this={crewScrollContainer}
-					onscroll={updateCrewScrollState}
-					class="flex gap-5 overflow-x-auto pt-1 pl-1 pb-2 -ml-1 scrollbar-thin"
-				>
-					{#each parseCrew(show.crew) as member}
-						<button
-							onclick={() => handlePersonClick(member)}
-							class="flex-shrink-0 w-28 text-center cursor-pointer group"
-						>
-							<div class="w-28 h-28 rounded-full bg-bg-elevated overflow-hidden mx-auto ring-2 ring-white/10 group-hover:ring-white/30 transition-all">
-								{#if member.profile_path}
-									<img
-										src={getTmdbImageUrl(member.profile_path, 'w185')}
-										alt={member.name}
-										class="w-full h-full object-cover"
-									/>
-								{:else}
-									<div class="w-full h-full flex items-center justify-center text-3xl text-text-muted bg-gradient-to-br from-bg-card to-bg-elevated">
-										{member.name.charAt(0)}
-									</div>
-								{/if}
-							</div>
-							<p class="mt-2 text-sm font-medium text-text-primary truncate group-hover:text-white transition-colors">{member.name}</p>
-							<p class="text-xs text-text-muted truncate">{member.job}</p>
-						</button>
-					{/each}
-				</div>
-			</section>
-		{/if}
-
-		<!-- ============================================
-		     5. SUGGESTIONS ROW
-		     ============================================ -->
-		<section class="px-6 pb-8">
-			<div class="flex items-center justify-between mb-3">
-				<h2 class="text-lg font-semibold text-text-primary">More Like This</h2>
-				{#if recommendations.length > 0}
-					<div class="flex gap-1">
-						<button
-							onclick={() => scrollRecs('left')}
-							disabled={!canScrollRecsLeft}
-							class="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-							aria-label="Scroll left"
-						>
-							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
-							</svg>
-						</button>
-						<button
-							onclick={() => scrollRecs('right')}
-							disabled={!canScrollRecsRight}
-							class="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-							aria-label="Scroll right"
-						>
-							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
-							</svg>
-						</button>
+				{:else}
+					<div class="text-center py-12 text-text-muted">
+						<p>No episodes found for this season.</p>
 					</div>
 				{/if}
-			</div>
-			{#if recommendations.length > 0}
-				<div
-					bind:this={recsScrollContainer}
-					onscroll={updateRecsScrollState}
-					class="flex gap-4 overflow-x-auto pb-2 scrollbar-thin"
-				>
-					{#each recommendations as rec}
-						<a href="/discover/show/{rec.id}" class="flex-shrink-0 w-32 group">
-							<div class="relative aspect-[2/3] rounded-lg overflow-hidden bg-bg-card">
-								{#if rec.poster_path}
-									<img
-										src={getTmdbImageUrl(rec.poster_path, 'w342')}
-										alt={rec.name}
-										class="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-									/>
-								{:else}
-									<div class="w-full h-full flex items-center justify-center bg-bg-elevated">
-										<svg class="w-10 h-10 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-										</svg>
-									</div>
-								{/if}
-								<div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-							</div>
-							<p class="mt-2 text-xs text-text-primary truncate">{rec.name}</p>
-							<p class="text-[10px] text-text-muted">{rec.first_air_date?.split('-')[0] || ''}</p>
-						</a>
-					{/each}
-				</div>
-			{:else}
-				<div class="flex gap-2">
-					{#each getTags().slice(0, 3) as genre}
-						<a href="/discover/show?genre={encodeURIComponent(genre)}" class="liquid-btn-sm">
-							Browse {genre} →
-						</a>
-					{/each}
-				</div>
-			{/if}
-		</section>
-	</div>
+			</section>
+		{/snippet}
+	</MediaDetail>
 
 	<!-- Trailer Modal -->
 	<TrailerModal
 		bind:open={showTrailerModal}
 		trailersJson={show?.trailers}
 		title={show?.title}
-	/>
-
-	<!-- Person Modal -->
-	<PersonModal
-		personId={selectedPersonId}
-		personName={selectedPersonName}
-		onClose={closePersonModal}
 	/>
 {/if}
