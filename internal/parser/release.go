@@ -13,9 +13,10 @@ type ParsedRelease struct {
 	Year  int
 
 	// TV specific
-	Season       int  // 0 if movie
-	Episode      int  // 0 if movie or season pack
-	EpisodeEnd   int  // For multi-episode (S01E01E02)
+	Season       int    // 0 if movie
+	Episode      int    // 0 if movie or season pack
+	EpisodeEnd   int    // For multi-episode (S01E01E02)
+	EpisodeTitle string // Episode title if extractable from release name
 	IsSeasonPack bool
 	IsDailyShow  bool
 	AirDate      string // For daily shows: "2024-01-15"

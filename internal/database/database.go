@@ -371,6 +371,9 @@ type Download struct {
 	DownloadPath     *string    `json:"downloadPath"`
 	ImportedPath     *string    `json:"importedPath"`
 	Error            *string    `json:"error"`
+	LastError        *string    `json:"lastError"`
+	FailedAt         *time.Time `json:"failedAt"`
+	RetryCount       *int       `json:"retryCount"`
 	CreatedAt        time.Time  `json:"createdAt"`
 	UpdatedAt        time.Time  `json:"updatedAt"`
 }
@@ -1095,6 +1098,19 @@ func (d *Database) migrate() error {
 	);
 	CREATE INDEX IF NOT EXISTS idx_task_history_task_id ON task_history(task_id);
 	CREATE INDEX IF NOT EXISTS idx_task_history_started_at ON task_history(started_at);
+
+	-- Performance indexes for frequently queried columns
+	CREATE INDEX IF NOT EXISTS idx_movies_tmdb_id ON movies(tmdb_id);
+	CREATE INDEX IF NOT EXISTS idx_movies_library_id ON movies(library_id);
+	CREATE INDEX IF NOT EXISTS idx_shows_tmdb_id ON shows(tmdb_id);
+	CREATE INDEX IF NOT EXISTS idx_shows_library_id ON shows(library_id);
+	CREATE INDEX IF NOT EXISTS idx_episodes_season_id ON episodes(season_id);
+	CREATE INDEX IF NOT EXISTS idx_downloads_status ON downloads(status);
+	CREATE INDEX IF NOT EXISTS idx_downloads_media ON downloads(media_type, media_id);
+	CREATE INDEX IF NOT EXISTS idx_requests_status ON requests(status);
+	CREATE INDEX IF NOT EXISTS idx_requests_user_id ON requests(user_id);
+	CREATE INDEX IF NOT EXISTS idx_requests_tmdb_id ON requests(type, tmdb_id);
+	CREATE INDEX IF NOT EXISTS idx_wanted_tmdb_id ON wanted(type, tmdb_id);
 	`
 	_, err := d.db.Exec(schema)
 	if err != nil {

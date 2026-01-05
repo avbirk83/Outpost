@@ -192,10 +192,10 @@ func (s *Service) handleNewDownload(dl downloadclient.Download) {
 
 	// Create download record
 	download := &database.Download{
-		DownloadClientID: dl.ClientID,
+		DownloadClientID: &dl.ClientID,
 		ExternalID:       dl.ID,
 		Title:            dl.Name,
-		Size:             &dl.Size,
+		Size:             dl.Size,
 		Status:           mapStatus(dl.Status),
 		Progress:         dl.Progress,
 		DownloadPath:     &dl.SavePath,
@@ -203,7 +203,7 @@ func (s *Service) handleNewDownload(dl downloadclient.Download) {
 
 	if wanted != nil {
 		download.MediaID = &wanted.TmdbID
-		download.MediaType = &wanted.ItemType
+		download.MediaType = &wanted.Type
 	}
 
 	if err := s.db.CreateDownload(download); err != nil {
@@ -222,10 +222,10 @@ func (s *Service) matchToWanted(parsed *parser.ParsedRelease) (*database.WantedI
 		// Compare title (simplified matching)
 		if strings.EqualFold(normalizeTitle(parsed.Title), normalizeTitle(w.Title)) {
 			// Check year if available
-			if parsed.Year > 0 && w.Year != nil && parsed.Year == *w.Year {
+			if parsed.Year > 0 && w.Year > 0 && parsed.Year == w.Year {
 				return &w, nil
 			}
-			if parsed.Year == 0 || w.Year == nil {
+			if parsed.Year == 0 || w.Year == 0 {
 				return &w, nil
 			}
 		}
