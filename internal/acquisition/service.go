@@ -419,7 +419,10 @@ func (s *Service) handleFailedDownload(download *database.Download, reason strin
 
 // deleteFromClient removes a download from the client
 func (s *Service) deleteFromClient(download *database.Download) {
-	clientConfig, err := s.db.GetDownloadClient(download.DownloadClientID)
+	if download.DownloadClientID == nil {
+		return
+	}
+	clientConfig, err := s.db.GetDownloadClient(*download.DownloadClientID)
 	if err != nil {
 		return
 	}
@@ -591,15 +594,10 @@ func (s *Service) checkStalledDownloads() {
 		}
 
 		// Check if stalled (no progress for threshold time)
-		if dl.UpdatedAt != nil {
-			timeSinceUpdate := time.Since(*dl.UpdatedAt)
+		if !dl.UpdatedAt.IsZero() {
+			timeSinceUpdate := time.Since(dl.UpdatedAt)
 			if timeSinceUpdate > s.stalledThreshold {
-				if dl.StalledNotified == nil || !*dl.StalledNotified {
-					log.Printf("Download stalled: %s (no progress for %v)", dl.Title, timeSinceUpdate)
-					notified := true
-					dl.StalledNotified = &notified
-					s.db.UpdateDownload(&dl)
-				}
+				log.Printf("Download stalled: %s (no progress for %v)", dl.Title, timeSinceUpdate)
 			}
 		}
 	}
@@ -700,18 +698,17 @@ func (s *Service) updateQualityStatus(mediaID int64, mediaType string, parsed *p
 		CurrentAudio:      &parsed.AudioFormat,
 	}
 
-	// Check if target is met
+	// Check if target is met using the preset's resolution and source as cutoffs
 	preset, err := s.db.GetDefaultQualityPreset()
 	if err == nil && preset != nil {
 		targetMet := quality.MeetsCutoff(parsed, &quality.Preset{
-			CutoffResolution: preset.CutoffResolution,
-			CutoffSource:     preset.CutoffSource,
+			CutoffResolution: preset.Resolution,
+			CutoffSource:     preset.Source,
 		})
-		status.TargetMet = &targetMet
+		status.TargetMet = targetMet
 	}
 
-	now := time.Now()
-	status.UpdatedAt = &now
+	status.UpdatedAt = time.Now()
 
 	if err := s.db.UpsertMediaQualityStatus(status); err != nil {
 		log.Printf("Error updating quality status: %v", err)
@@ -739,7 +736,7 @@ func (s *Service) ShouldPauseDownloads() bool {
 	thresholdGB := int64(100)
 	if val, ok := settings["storage_threshold_gb"]; ok {
 		var parsed int64
-		if _, err := json.Unmarshal([]byte(val), &parsed); err == nil {
+		if err := json.Unmarshal([]byte(val), &parsed); err == nil {
 			thresholdGB = parsed
 		}
 	}

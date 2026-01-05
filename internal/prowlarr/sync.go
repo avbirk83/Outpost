@@ -204,6 +204,12 @@ func (s *SyncService) SyncAll() (int, error) {
 			}
 		}
 
+		// Sync category IDs for filtering
+		categoryIDs := collectCategoryIDs(pi.Capabilities.Categories)
+		if err := s.db.SetIndexerCategories(indexerID, categoryIDs); err != nil {
+			log.Printf("Failed to set categories for indexer %s: %v", pi.Name, err)
+		}
+
 		syncedCount++
 	}
 
@@ -249,6 +255,17 @@ func hasCategory(categories []Category, targetID int) bool {
 		}
 	}
 	return false
+}
+
+// collectCategoryIDs extracts all category IDs from the Prowlarr category tree
+func collectCategoryIDs(categories []Category) []int {
+	var ids []int
+	for _, cat := range categories {
+		ids = append(ids, cat.ID)
+		// Also collect subcategories
+		ids = append(ids, collectCategoryIDs(cat.SubCategories)...)
+	}
+	return ids
 }
 
 func containsParam(params []string, target string) bool {

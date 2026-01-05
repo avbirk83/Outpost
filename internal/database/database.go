@@ -768,6 +768,14 @@ func (d *Database) migrate() error {
 		FOREIGN KEY (tag_id) REFERENCES indexer_tags(id) ON DELETE CASCADE
 	);
 
+	-- Indexer category IDs (from Prowlarr)
+	CREATE TABLE IF NOT EXISTS indexer_categories (
+		indexer_id INTEGER NOT NULL,
+		category_id INTEGER NOT NULL,
+		PRIMARY KEY (indexer_id, category_id),
+		FOREIGN KEY (indexer_id) REFERENCES indexers(id) ON DELETE CASCADE
+	);
+
 	CREATE TABLE IF NOT EXISTS quality_profiles (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		name TEXT NOT NULL UNIQUE,

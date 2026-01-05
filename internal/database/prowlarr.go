@@ -363,3 +363,254 @@ func (d *Database) SetLibraryIndexerTags(libraryID int64, tagIDs []int64) error 
 
 	return tx.Commit()
 }
+
+// Indexer Category operations
+
+// ClearIndexerCategories removes all category associations for an indexer
+func (d *Database) ClearIndexerCategories(indexerID int64) error {
+	_, err := d.db.Exec("DELETE FROM indexer_categories WHERE indexer_id = ?", indexerID)
+	return err
+}
+
+// AddIndexerCategory associates a category ID with an indexer
+func (d *Database) AddIndexerCategory(indexerID int64, categoryID int) error {
+	_, err := d.db.Exec(`
+		INSERT OR IGNORE INTO indexer_categories (indexer_id, category_id) VALUES (?, ?)`,
+		indexerID, categoryID)
+	return err
+}
+
+// SetIndexerCategories replaces all categories for an indexer
+func (d *Database) SetIndexerCategories(indexerID int64, categoryIDs []int) error {
+	tx, err := d.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Clear existing
+	_, err = tx.Exec("DELETE FROM indexer_categories WHERE indexer_id = ?", indexerID)
+	if err != nil {
+		return err
+	}
+
+	// Insert new
+	for _, catID := range categoryIDs {
+		_, err = tx.Exec("INSERT INTO indexer_categories (indexer_id, category_id) VALUES (?, ?)", indexerID, catID)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+// GetIndexerCategories returns all category IDs for an indexer
+func (d *Database) GetIndexerCategories(indexerID int64) ([]int, error) {
+	rows, err := d.db.Query("SELECT category_id FROM indexer_categories WHERE indexer_id = ?", indexerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var cats []int
+	for rows.Next() {
+		var catID int
+		if err := rows.Scan(&catID); err != nil {
+			return nil, err
+		}
+		cats = append(cats, catID)
+	}
+	return cats, nil
+}
+
+// CategoryToMediaType maps a Newznab category ID to a media type
+// Categories: 2000-2999=movie, 5000-5069=tv, 5070-5079/100000+=anime, 3000-3999=music, 7000-7999=books
+func CategoryToMediaType(categoryID int) string {
+	switch {
+	case categoryID >= 100000:
+		return "anime" // Custom anime categories (e.g., Nyaa uses 127720)
+	case categoryID >= 5070 && categoryID < 5080:
+		return "anime" // Standard anime category range
+	case categoryID >= 5000 && categoryID < 5070:
+		return "tv"
+	case categoryID >= 5080 && categoryID < 6000:
+		return "tv" // Other TV subcategories
+	case categoryID >= 2000 && categoryID < 3000:
+		return "movie"
+	case categoryID >= 3000 && categoryID < 4000:
+		return "music"
+	case categoryID >= 7000 && categoryID < 8000:
+		return "book"
+	default:
+		return ""
+	}
+}
+
+// GetCategoriesForMediaType returns the standard category IDs for a media type
+func GetCategoriesForMediaType(mediaType string) []int {
+	switch mediaType {
+	case "movie":
+		return []int{2000} // Movies (will match 2000-2999)
+	case "tv", "show":
+		return []int{5000} // TV (will match 5000-5069)
+	case "anime":
+		return []int{5070, 127720} // Anime categories
+	case "music":
+		return []int{3000}
+	case "book":
+		return []int{7000}
+	default:
+		return nil
+	}
+}
+
+// IsAnimeOnlyIndexer checks if an indexer only has anime categories
+func (d *Database) IsAnimeOnlyIndexer(indexerID int64) (bool, error) {
+	// Check if indexer has any non-anime categories
+	row := d.db.QueryRow(`
+		SELECT COUNT(*) FROM indexer_categories
+		WHERE indexer_id = ? AND category_id < 5070 AND category_id >= 2000`, indexerID)
+	var nonAnimeCount int
+	if err := row.Scan(&nonAnimeCount); err != nil {
+		return false, err
+	}
+	if nonAnimeCount > 0 {
+		return false, nil
+	}
+
+	// Check if it has any anime categories
+	row = d.db.QueryRow(`
+		SELECT COUNT(*) FROM indexer_categories
+		WHERE indexer_id = ? AND (category_id >= 5070 OR category_id >= 100000)`, indexerID)
+	var animeCount int
+	if err := row.Scan(&animeCount); err != nil {
+		return false, err
+	}
+
+	return animeCount > 0, nil
+}
+
+// GetIndexersWithCategories returns indexers that have specific category types
+func (d *Database) GetIndexersWithCategories(mediaType string) ([]Indexer, error) {
+	var categoryFilter string
+	switch mediaType {
+	case "anime":
+		// Anime: 5070-5079 or 100000+
+		categoryFilter = "(c.category_id >= 5070 AND c.category_id < 5080) OR c.category_id >= 100000"
+	case "tv", "show":
+		// TV but NOT anime-only: 5000-5069 or 5080+
+		categoryFilter = "(c.category_id >= 5000 AND c.category_id < 5070) OR (c.category_id >= 5080 AND c.category_id < 6000)"
+	case "movie":
+		categoryFilter = "c.category_id >= 2000 AND c.category_id < 3000"
+	case "music":
+		categoryFilter = "c.category_id >= 3000 AND c.category_id < 4000"
+	case "book":
+		categoryFilter = "c.category_id >= 7000 AND c.category_id < 8000"
+	default:
+		return d.GetEnabledIndexers()
+	}
+
+	query := `
+		SELECT DISTINCT i.id, i.name, i.type, i.url, i.api_key, COALESCE(i.categories, ''), i.priority, i.enabled,
+			COALESCE(i.prowlarr_id, 0), COALESCE(i.synced_from_prowlarr, 0), COALESCE(i.protocol, ''),
+			COALESCE(i.supports_movies, 1), COALESCE(i.supports_tv, 1), COALESCE(i.supports_music, 0),
+			COALESCE(i.supports_books, 0), COALESCE(i.supports_anime, 0), COALESCE(i.supports_imdb, 0),
+			COALESCE(i.supports_tmdb, 0), COALESCE(i.supports_tvdb, 0)
+		FROM indexers i
+		INNER JOIN indexer_categories c ON i.id = c.indexer_id
+		WHERE i.enabled = 1 AND (` + categoryFilter + `)
+		ORDER BY i.priority DESC, i.name`
+
+	rows, err := d.db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var indexers []Indexer
+	for rows.Next() {
+		var i Indexer
+		var prowlarrID int64
+		var syncedFromProwlarr int
+		if err := rows.Scan(&i.ID, &i.Name, &i.Type, &i.URL, &i.APIKey,
+			&i.Categories, &i.Priority, &i.Enabled,
+			&prowlarrID, &syncedFromProwlarr, &i.Protocol,
+			&i.SupportsMovies, &i.SupportsTV, &i.SupportsMusic,
+			&i.SupportsBooks, &i.SupportsAnime, &i.SupportsIMDB,
+			&i.SupportsTMDB, &i.SupportsTVDB); err != nil {
+			return nil, err
+		}
+		if prowlarrID > 0 {
+			i.ProwlarrID = &prowlarrID
+		}
+		i.SyncedFromProwlarr = syncedFromProwlarr == 1
+		indexers = append(indexers, i)
+	}
+	return indexers, nil
+}
+
+// GetIndexersExcludingAnimeOnly returns indexers for non-anime searches,
+// excluding indexers that ONLY have anime categories (like Nyaa)
+func (d *Database) GetIndexersExcludingAnimeOnly(mediaType string) ([]Indexer, error) {
+	var supportFilter string
+	switch mediaType {
+	case "movie":
+		supportFilter = "i.supports_movies = 1"
+	case "tv", "show":
+		supportFilter = "i.supports_tv = 1"
+	default:
+		supportFilter = "1=1"
+	}
+
+	// Get indexers that support the media type AND either:
+	// 1. Have no categories stored (legacy/manual indexers - use supports_* flags)
+	// 2. Have at least one non-anime category
+	query := `
+		SELECT DISTINCT i.id, i.name, i.type, i.url, i.api_key, COALESCE(i.categories, ''), i.priority, i.enabled,
+			COALESCE(i.prowlarr_id, 0), COALESCE(i.synced_from_prowlarr, 0), COALESCE(i.protocol, ''),
+			COALESCE(i.supports_movies, 1), COALESCE(i.supports_tv, 1), COALESCE(i.supports_music, 0),
+			COALESCE(i.supports_books, 0), COALESCE(i.supports_anime, 0), COALESCE(i.supports_imdb, 0),
+			COALESCE(i.supports_tmdb, 0), COALESCE(i.supports_tvdb, 0)
+		FROM indexers i
+		WHERE i.enabled = 1 AND ` + supportFilter + `
+		AND (
+			-- No categories stored (use supports_* flags)
+			NOT EXISTS (SELECT 1 FROM indexer_categories WHERE indexer_id = i.id)
+			OR
+			-- Has at least one non-anime category in the right range
+			EXISTS (
+				SELECT 1 FROM indexer_categories c
+				WHERE c.indexer_id = i.id
+				AND ((c.category_id >= 2000 AND c.category_id < 5070) OR (c.category_id >= 5080 AND c.category_id < 100000))
+			)
+		)
+		ORDER BY i.priority DESC, i.name`
+
+	rows, err := d.db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var indexers []Indexer
+	for rows.Next() {
+		var i Indexer
+		var prowlarrID int64
+		var syncedFromProwlarr int
+		if err := rows.Scan(&i.ID, &i.Name, &i.Type, &i.URL, &i.APIKey,
+			&i.Categories, &i.Priority, &i.Enabled,
+			&prowlarrID, &syncedFromProwlarr, &i.Protocol,
+			&i.SupportsMovies, &i.SupportsTV, &i.SupportsMusic,
+			&i.SupportsBooks, &i.SupportsAnime, &i.SupportsIMDB,
+			&i.SupportsTMDB, &i.SupportsTVDB); err != nil {
+			return nil, err
+		}
+		if prowlarrID > 0 {
+			i.ProwlarrID = &prowlarrID
+		}
+		i.SyncedFromProwlarr = syncedFromProwlarr == 1
+		indexers = append(indexers, i)
+	}
+	return indexers, nil
+}
