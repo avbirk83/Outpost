@@ -127,7 +127,7 @@
 
 	{#if loading}
 		<div class="flex items-center justify-center py-12">
-			<div class="w-8 h-8 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
+			<div class="spinner-xl text-blue-400"></div>
 		</div>
 	{:else}
 		<!-- Downloading -->
@@ -181,7 +181,7 @@
 					{#each importing as dl}
 						<div class="p-4 bg-bg-elevated/50 rounded-xl border border-white/5">
 							<div class="flex items-center gap-3">
-								<div class="w-5 h-5 border-2 border-yellow-400 border-t-transparent rounded-full animate-spin"></div>
+								<div class="spinner-md text-amber"></div>
 								<span class="font-medium text-text-primary">{dl.title}</span>
 							</div>
 						</div>

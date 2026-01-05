@@ -397,7 +397,7 @@
 					class="flex-1 bg-transparent text-text-primary placeholder-text-muted text-sm [outline:none] [border:none] focus:[outline:none] focus:[box-shadow:none]"
 				/>
 				{#if loading}
-					<div class="w-4 h-4 border-2 border-text-muted border-t-transparent rounded-full animate-spin"></div>
+					<div class="spinner-sm text-text-muted"></div>
 				{/if}
 			</div>
 
@@ -424,7 +424,7 @@
 					<div class="search-results max-h-[60vh] overflow-y-auto">
 						{#if loading}
 							<div class="p-6 flex items-center justify-center gap-2">
-								<div class="w-5 h-5 border-2 border-text-muted border-t-transparent rounded-full animate-spin"></div>
+								<div class="spinner-md text-text-muted"></div>
 								<span class="text-sm text-text-secondary">Searching...</span>
 							</div>
 						{:else if !query.trim()}
@@ -524,11 +524,7 @@
 											{#if item.requested}
 												<span class="text-xs text-text-muted">Requested</span>
 											{:else}
-												<button
-													onclick={(e) => handleInlineRequest(e, item)}
-													class="w-8 h-8 rounded-full bg-cream/10 flex items-center justify-center text-text-muted hover:text-cream hover:bg-cream/20 transition-all"
-													title="Request"
-												>
+												<button onclick={(e) => handleInlineRequest(e, item)} class="btn-icon-circle-sm" title="Request">
 													<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 														<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
 													</svg>
@@ -558,10 +554,10 @@
 		<!-- Activity Indicator -->
 		{#if systemStatus && systemStatus.runningTasks.length > 0}
 			<div
-				class="w-10 h-10 rounded-full bg-cream/10 flex items-center justify-center text-blue-400"
+				class="btn-icon-circle !text-blue-400"
 				title={"Running: " + systemStatus.runningTasks.join(", ")}
 			>
-				<div class="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
+				<div class="spinner-sm text-blue-400"></div>
 			</div>
 		{/if}
 
@@ -569,7 +565,7 @@
 		{#if isAdmin}
 			<a
 				href="/downloads"
-				class="relative w-10 h-10 rounded-full bg-cream/10 flex items-center justify-center text-text-secondary hover:text-cream hover:bg-cream/20 transition-all"
+				class="btn-icon-circle relative"
 				title="Downloads"
 			>
 				<svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -585,7 +581,7 @@
 			<!-- Wanted (admin only) -->
 			<a
 				href="/wanted"
-				class="relative w-10 h-10 rounded-full bg-cream/10 flex items-center justify-center text-text-secondary hover:text-cream hover:bg-cream/20 transition-all"
+				class="btn-icon-circle relative"
 				title="Wanted"
 			>
 				<svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -602,7 +598,7 @@
 		<!-- Requests -->
 		<a
 			href="/requests"
-			class="relative w-10 h-10 rounded-full bg-cream/10 flex items-center justify-center text-text-secondary hover:text-cream hover:bg-cream/20 transition-all"
+			class="btn-icon-circle relative"
 			title="Requests"
 		>
 			<svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -619,7 +615,7 @@
 		{#if isAdmin}
 			<a
 				href="/settings"
-				class="w-10 h-10 rounded-full bg-cream/10 flex items-center justify-center text-text-secondary hover:text-cream hover:bg-cream/20 transition-all"
+				class="btn-icon-circle"
 				title="Settings"
 			>
 				<svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -634,7 +630,7 @@
 			href="https://github.com/sponsors/avbirk83"
 			target="_blank"
 			rel="noopener noreferrer"
-			class="w-10 h-10 rounded-full bg-cream/10 flex items-center justify-center text-text-secondary hover:text-pink-400 hover:bg-pink-500/20 transition-all group"
+			class="btn-icon-circle hover:!text-pink-400 hover:!bg-pink-500/20 group"
 			title="Support Outpost"
 		>
 			<svg class="w-[18px] h-[18px] group-hover:fill-pink-400 transition-all" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -646,7 +642,7 @@
 		<div class="relative">
 			<button
 				onclick={toggleUserMenu}
-				class="w-10 h-10 rounded-full bg-cream/10 flex items-center justify-center text-text-primary hover:bg-cream/20 transition-all overflow-hidden"
+				class="btn-icon-circle !text-text-primary overflow-hidden"
 			>
 				<span class="text-sm font-semibold uppercase">
 					{username ? username.charAt(0) : 'U'}

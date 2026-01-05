@@ -223,7 +223,7 @@
 						class="flex-1 bg-transparent text-white placeholder-white/40 outline-none text-lg"
 					/>
 					{#if loading}
-						<div class="w-5 h-5 border-2 border-white/50 border-t-transparent rounded-full animate-spin"></div>
+						<div class="spinner-md text-cream"></div>
 					{:else}
 						<kbd class="liquid-badge-sm">ESC</kbd>
 					{/if}

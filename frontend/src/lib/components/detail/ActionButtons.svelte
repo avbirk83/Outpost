@@ -33,10 +33,7 @@
 	<button
 		onclick={onToggleWatchlist}
 		{disabled}
-		class="w-10 h-10 rounded-full flex items-center justify-center transition-all
-			{inLibrary || inWatchlist
-				? 'bg-green-500 border-green-500 text-black'
-				: 'bg-glass backdrop-blur-xl border border-border-subtle text-text-secondary hover:bg-glass-hover hover:text-text-primary'}"
+		class="{inLibrary || inWatchlist ? 'btn-action-success' : 'btn-action-glass'}"
 		title={inLibrary ? 'In Library' : inWatchlist ? 'In Watchlist' : 'Add to Watchlist'}
 	>
 		<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -48,10 +45,7 @@
 	<button
 		onclick={onToggleWatched}
 		{disabled}
-		class="w-10 h-10 rounded-full flex items-center justify-center transition-all
-			{watched
-				? 'bg-green-500 border-green-500 text-black'
-				: 'bg-glass backdrop-blur-xl border border-border-subtle text-text-secondary hover:bg-glass-hover hover:text-text-primary'}"
+		class="{watched ? 'btn-action-success' : 'btn-action-glass'}"
 		title={watched ? 'Watched' : 'Mark as Watched'}
 	>
 		<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
@@ -61,12 +55,7 @@
 
 	<!-- Play (larger, amber) -->
 	{#if onPlay}
-		<button
-			onclick={onPlay}
-			{disabled}
-			class="w-12 h-12 rounded-full bg-amber-400 border border-amber-400 text-black flex items-center justify-center hover:bg-amber-500 hover:border-amber-500 transition-all"
-			title="Play"
-		>
+		<button onclick={onPlay} {disabled} class="btn-action-primary" title="Play">
 			<svg class="w-5 h-5 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
 				<path d="M8 5v14l11-7z" />
 			</svg>
@@ -75,11 +64,7 @@
 
 	<!-- Trailer (red) -->
 	{#if hasTrailer && onTrailer}
-		<button
-			onclick={onTrailer}
-			class="w-10 h-10 rounded-full bg-red-500 border border-red-500 text-white flex items-center justify-center hover:bg-red-600 hover:border-red-600 transition-all"
-			title="Watch Trailer"
-		>
+		<button onclick={onTrailer} class="btn-action-trailer" title="Watch Trailer">
 			<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
 				<path d="M19.615 3.184c-3.604-.246-11.631-.245-15.23 0-3.897.266-4.356 2.62-4.385 8.816.029 6.185.484 8.549 4.385 8.816 3.6.245 11.626.246 15.23 0 3.897-.266 4.356-2.62 4.385-8.816-.029-6.185-.484-8.549-4.385-8.816zm-10.615 12.816v-8l8 3.993-8 4.007z"/>
 			</svg>
@@ -88,11 +73,7 @@
 
 	<!-- More options -->
 	{#if onMore}
-		<button
-			onclick={onMore}
-			class="w-10 h-10 rounded-full bg-glass backdrop-blur-xl border border-border-subtle text-text-secondary flex items-center justify-center hover:bg-glass-hover hover:text-text-primary transition-all"
-			title="More Options"
-		>
+		<button onclick={onMore} class="btn-action-glass" title="More Options">
 			<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
 				<path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/>
 			</svg>

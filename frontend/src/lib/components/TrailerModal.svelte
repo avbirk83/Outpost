@@ -88,7 +88,7 @@
 
 {#if open}
 	<div
-		class="fixed inset-0 z-[150] flex items-center justify-center bg-black/80 backdrop-blur-sm"
+		class="modal-overlay z-[150]"
 		onclick={handleBackdropClick}
 		role="dialog"
 		aria-modal="true"
@@ -98,7 +98,7 @@
 			{#if loading}
 				<div class="aspect-video bg-black/50 rounded-xl flex items-center justify-center">
 					<div class="flex items-center gap-3 text-white">
-						<div class="w-6 h-6 border-2 border-white/50 border-t-transparent rounded-full animate-spin"></div>
+						<div class="spinner-lg text-cream"></div>
 						<span>Loading trailer...</span>
 					</div>
 				</div>

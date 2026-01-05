@@ -45,8 +45,8 @@
 
 		<!-- Play overlay -->
 		<div class="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-			<div class="w-10 h-10 rounded-full bg-white/30 flex items-center justify-center">
-				<svg class="w-5 h-5 text-white ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+			<div class="btn-play-sm">
+				<svg class="w-5 h-5 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
 					<path d="M8 5v14l11-7z" />
 				</svg>
 			</div>
@@ -64,8 +64,8 @@
 
 		<!-- Watched badge -->
 		{#if watched}
-			<div class="absolute top-1 right-1 w-5 h-5 rounded-full bg-green-500 flex items-center justify-center">
-				<svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+			<div class="status-circle status-watched absolute top-1 right-1 !w-5 !h-5">
+				<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" />
 				</svg>
 			</div>

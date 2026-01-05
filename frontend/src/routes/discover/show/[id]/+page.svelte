@@ -108,7 +108,7 @@
 {#if loading}
 	<div class="flex items-center justify-center h-96">
 		<div class="flex items-center gap-3">
-			<div class="w-6 h-6 border-2 border-white/50 border-t-transparent rounded-full animate-spin"></div>
+			<div class="spinner-lg text-cream"></div>
 			<p class="text-text-secondary">Loading show...</p>
 		</div>
 	</div>
@@ -151,7 +151,7 @@
 				title={inWatchlist ? 'In Watchlist' : 'Add to Watchlist'}
 			>
 				{#if watchlistLoading}
-					<div class="w-5 h-5 border-2 border-white/50 border-t-transparent rounded-full animate-spin"></div>
+					<div class="spinner-md text-cream"></div>
 				{:else if inWatchlist}
 					<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
@@ -185,7 +185,7 @@
 			{:else}
 				<IconButton onclick={openRequestModal} disabled={requesting} title="Request">
 					{#if requesting}
-						<div class="w-5 h-5 border-2 border-white/50 border-t-transparent rounded-full animate-spin"></div>
+						<div class="spinner-md text-cream"></div>
 					{:else}
 						<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />

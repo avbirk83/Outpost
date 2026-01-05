@@ -65,7 +65,7 @@
 				title={isWatched ? 'Watched' : progress ? `${progress}% watched` : 'Not watched'}
 			>
 				{#if togglingEpisode === episode.id}
-					<div class="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
+					<div class="spinner-xs"></div>
 				{:else if isWatched}
 					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />

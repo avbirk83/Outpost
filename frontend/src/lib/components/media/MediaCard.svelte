@@ -114,26 +114,26 @@
 
 		<!-- Status indicator - bottom right (circular icons) -->
 		{#if watchState === 'watched'}
-			<div class="absolute bottom-2 right-2 w-6 h-6 rounded-full bg-green-600 flex items-center justify-center" title="Watched">
-				<svg class="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+			<div class="status-circle status-watched absolute bottom-2 right-2" title="Watched">
+				<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" />
 				</svg>
 			</div>
 		{:else if watchState === 'partial'}
-			<div class="absolute bottom-2 right-2 w-6 h-6 rounded-full bg-amber-500 flex items-center justify-center" title="In Progress">
-				<svg class="w-3.5 h-3.5 text-white" fill="currentColor" viewBox="0 0 24 24">
+			<div class="status-circle status-progress absolute bottom-2 right-2" title="In Progress">
+				<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
 					<path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z" />
 				</svg>
 			</div>
 		{:else if requestStatus === 'approved' || requestStatus === 'available' || inLibrary}
-			<div class="absolute bottom-2 right-2 w-6 h-6 rounded-full bg-green-600 flex items-center justify-center" title="Available">
-				<svg class="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+			<div class="status-circle status-watched absolute bottom-2 right-2" title="Available">
+				<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" />
 				</svg>
 			</div>
 		{:else if requestStatus === 'pending' || requested}
-			<div class="absolute bottom-2 right-2 w-6 h-6 rounded-full bg-amber-500 flex items-center justify-center" title="Requested">
-				<svg class="w-3.5 h-3.5 text-white" fill="currentColor" viewBox="0 0 24 24">
+			<div class="status-circle status-progress absolute bottom-2 right-2" title="Requested">
+				<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
 					<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67V7z" />
 				</svg>
 			</div>

@@ -255,7 +255,7 @@
 	{#if loading}
 		<div class="flex items-center justify-center h-96">
 			<div class="flex items-center gap-3">
-				<div class="w-6 h-6 border-2 border-white/50 border-t-transparent rounded-full animate-spin"></div>
+				<div class="spinner-lg text-cream"></div>
 				<p class="text-text-secondary">Loading discover content...</p>
 			</div>
 		</div>
@@ -309,7 +309,7 @@
 							<!-- Details -->
 							<a
 								href={activeTab === 'movies' ? `/discover/movie/${currentHero.id}` : `/discover/show/${currentHero.id}`}
-								class="w-11 h-11 rounded-full bg-glass border border-border-subtle text-text-primary flex items-center justify-center hover:bg-glass-hover transition-all"
+								class="btn-icon-glass-lg"
 								title="View Details"
 							>
 								<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -320,7 +320,7 @@
 							{#if currentHero.inLibrary}
 								<a
 									href={activeTab === 'movies' ? `/movies/${currentHero.libraryId}` : `/tv/${currentHero.libraryId}`}
-									class="w-11 h-11 rounded-full bg-green-600/80 border border-green-500/50 text-white flex items-center justify-center hover:bg-green-500/80 transition-all"
+									class="btn-hero-library"
 									title="In Library"
 								>
 									<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -328,11 +328,7 @@
 									</svg>
 								</a>
 							{:else if currentHero.requested || currentHero.requestStatus}
-								<button
-									class="w-11 h-11 rounded-full bg-yellow-600/80 border border-yellow-500/50 text-white flex items-center justify-center transition-all cursor-default"
-									title="Request Pending"
-									disabled
-								>
+								<button class="btn-hero-pending" title="Request Pending" disabled>
 									<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
 									</svg>
@@ -340,7 +336,7 @@
 							{:else}
 								<button
 									onclick={(e) => handleRequest(e, currentHero)}
-									class="w-11 h-11 rounded-full bg-glass border border-border-subtle text-text-primary flex items-center justify-center hover:bg-glass-hover transition-all"
+									class="btn-icon-glass-lg"
 									title="Request"
 								>
 									<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -353,11 +349,7 @@
 
 					<!-- Carousel navigation - center bottom with arrows -->
 					<div class="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-3">
-						<button
-							onclick={prevHero}
-							class="p-1.5 rounded-full bg-glass hover:bg-glass-hover text-text-primary transition-colors border border-border-subtle"
-							aria-label="Previous"
-						>
+						<button onclick={prevHero} class="carousel-nav" aria-label="Previous">
 							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
 							</svg>
@@ -366,16 +358,12 @@
 							{#each currentHeroes as _, i}
 								<button
 									onclick={() => goToHero(i)}
-									class="w-2 h-2 rounded-full transition-all {i === currentHeroIndex ? 'bg-text-primary w-6' : 'bg-text-muted hover:bg-text-secondary'}"
+									class="carousel-dot transition-all {i === currentHeroIndex ? '!bg-text-primary !w-6' : 'hover:bg-text-secondary'}"
 									aria-label="Go to slide {i + 1}"
 								></button>
 							{/each}
 						</div>
-						<button
-							onclick={nextHero}
-							class="p-1.5 rounded-full bg-glass hover:bg-glass-hover text-text-primary transition-colors border border-border-subtle"
-							aria-label="Next"
-						>
+						<button onclick={nextHero} class="carousel-nav" aria-label="Next">
 							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
 							</svg>

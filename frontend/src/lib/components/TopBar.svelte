@@ -408,7 +408,7 @@
 					class="flex-1 bg-transparent text-white placeholder-[#666666] outline-none text-sm"
 				/>
 				{#if loading}
-					<div class="w-4 h-4 border-2 border-white/50 border-t-transparent rounded-full animate-spin"></div>
+					<div class="spinner-sm text-cream"></div>
 				{/if}
 			</div>
 
@@ -437,7 +437,7 @@
 					<div class="search-results max-h-[60vh] overflow-y-auto">
 						{#if loading}
 							<div class="p-6 flex items-center justify-center gap-2">
-								<div class="w-5 h-5 border-2 border-white/50 border-t-transparent rounded-full animate-spin"></div>
+								<div class="spinner-md text-cream"></div>
 								<span class="text-sm text-text-secondary">Searching...</span>
 							</div>
 						{:else if !query.trim()}

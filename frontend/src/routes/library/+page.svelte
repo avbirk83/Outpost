@@ -550,9 +550,9 @@
 		<div class="space-y-6">
 			<!-- Controls -->
 			<div class="space-y-4">
-				<div class="flex flex-wrap items-center gap-3">
+				<div class="flex flex-wrap items-center gap-3 relative z-20">
 					{#if movieViewMode === 'grid'}
-						<div class="inline-flex items-center gap-2 p-1.5 rounded-full bg-glass backdrop-blur-xl border border-border-subtle">
+						<div class="inline-flex items-center gap-2 p-1.5 rounded-xl bg-bg-card border border-border-subtle">
 							<div class="relative">
 								<svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -677,7 +677,7 @@
 						{#if hasActiveMovieFilters()}
 							<button
 								onclick={clearMovieFilters}
-								class="text-sm text-white/70 hover:text-white transition-colors"
+								class="text-sm text-text-secondary hover:text-text-primary transition-colors"
 							>
 								Clear all filters
 							</button>
@@ -689,7 +689,7 @@
 			{#if loadingMovies}
 				<div class="flex items-center justify-center h-64">
 					<div class="flex items-center gap-3">
-						<div class="w-6 h-6 border-2 border-white/50 border-t-transparent rounded-full animate-spin"></div>
+						<div class="spinner-lg text-cream"></div>
 						<p class="text-text-secondary">Loading movies...</p>
 					</div>
 				</div>
@@ -710,7 +710,7 @@
 				{#if filteredMovies().length === 0}
 					<div class="glass-card p-8 text-center">
 						<p class="text-text-secondary">No movies match your search.</p>
-						<button onclick={() => (movieSearch = '')} class="mt-2 text-white/70 hover:text-white transition-colors">
+						<button onclick={() => (movieSearch = '')} class="mt-2 text-text-secondary hover:text-text-primary transition-colors">
 							Clear search
 						</button>
 					</div>
@@ -771,9 +771,9 @@
 		<div class="space-y-6">
 			<!-- Controls -->
 			<div class="space-y-4">
-				<div class="flex flex-wrap items-center gap-3">
+				<div class="flex flex-wrap items-center gap-3 relative z-20">
 					{#if showViewMode === 'grid'}
-						<div class="inline-flex items-center gap-2 p-1.5 rounded-full bg-glass backdrop-blur-xl border border-border-subtle">
+						<div class="inline-flex items-center gap-2 p-1.5 rounded-xl bg-bg-card border border-border-subtle">
 							<div class="relative">
 								<svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -886,7 +886,7 @@
 						{#if hasActiveShowFilters()}
 							<button
 								onclick={clearShowFilters}
-								class="text-sm text-white/70 hover:text-white transition-colors"
+								class="text-sm text-text-secondary hover:text-text-primary transition-colors"
 							>
 								Clear all filters
 							</button>
@@ -898,7 +898,7 @@
 			{#if loadingShows}
 				<div class="flex items-center justify-center h-64">
 					<div class="flex items-center gap-3">
-						<div class="w-6 h-6 border-2 border-white/50 border-t-transparent rounded-full animate-spin"></div>
+						<div class="spinner-lg text-cream"></div>
 						<p class="text-text-secondary">Loading shows...</p>
 					</div>
 				</div>
@@ -919,7 +919,7 @@
 				{#if filteredShows().length === 0}
 					<div class="glass-card p-8 text-center">
 						<p class="text-text-secondary">No shows match your filters.</p>
-						<button onclick={() => { showSearch = ''; showStatus = 'all'; }} class="mt-2 text-white/70 hover:text-white transition-colors">
+						<button onclick={() => { showSearch = ''; showStatus = 'all'; }} class="mt-2 text-text-secondary hover:text-text-primary transition-colors">
 							Clear filters
 						</button>
 					</div>

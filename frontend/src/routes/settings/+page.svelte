@@ -1178,7 +1178,7 @@
 
 		{#if loading}
 			<div class="flex items-center gap-3 py-4">
-				<div class="w-5 h-5 border-2 border-white-400 border-t-transparent rounded-full animate-spin"></div>
+				<div class="spinner-md text-cream"></div>
 				<span class="text-text-secondary">Loading libraries...</span>
 			</div>
 		{:else if libraries.length === 0}
@@ -1219,7 +1219,7 @@
 			<div class="p-4 bg-bg-elevated/50 rounded-xl border border-white/5 space-y-3">
 				<div class="flex items-center justify-between">
 					<div class="flex items-center gap-3">
-						<div class="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
+						<div class="spinner-md text-blue-400"></div>
 						<div>
 							<span class="text-text-primary font-medium">
 								{scanProgress.phase === 'counting' ? 'Counting files...' :
@@ -2073,7 +2073,7 @@
 									<div class="flex items-center gap-3">
 										<div class="w-8 h-8 rounded-lg flex-shrink-0 {task.isRunning ? 'bg-blue-500/20' : task.enabled ? 'bg-green-500/20' : 'bg-gray-500/20'} flex items-center justify-center">
 											{#if task.isRunning}
-												<div class="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
+												<div class="spinner-sm text-blue-400"></div>
 											{:else if task.enabled}
 												<svg class="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>
 											{:else}
@@ -2143,7 +2143,7 @@
 			</div>
 		{:else}
 			<div class="flex items-center gap-3 py-4">
-				<div class="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
+				<div class="spinner-md text-blue-400"></div>
 				<span class="text-text-secondary">Loading tasks...</span>
 			</div>
 		{/if}
@@ -2282,7 +2282,7 @@
 			{/if}
 		{:else}
 			<div class="flex items-center gap-3 py-4">
-				<div class="w-5 h-5 border-2 border-orange-400 border-t-transparent rounded-full animate-spin"></div>
+				<div class="spinner-md text-amber"></div>
 				<span class="text-text-secondary">Loading storage status...</span>
 			</div>
 		{/if}

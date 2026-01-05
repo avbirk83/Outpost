@@ -48,13 +48,13 @@
 <svelte:window onkeydown={handleKeydown} />
 
 <div
-	class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
+	class="modal-overlay"
 	onclick={handleBackdropClick}
 	role="dialog"
 	aria-modal="true"
 	aria-labelledby="modal-title"
 >
-	<div class="bg-bg-base border border-white/10 rounded-2xl shadow-2xl max-w-md w-full mx-4 overflow-hidden">
+	<div class="modal-container">
 		<!-- Header with poster -->
 		<div class="relative h-32 bg-gradient-to-b from-white/10 to-transparent">
 			{#if request.backdropPath}

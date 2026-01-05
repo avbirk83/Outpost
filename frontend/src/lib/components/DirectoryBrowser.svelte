@@ -97,12 +97,12 @@
 	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
-		class="fixed inset-0 z-[600] flex items-center justify-center bg-black/80 backdrop-blur-sm"
+		class="modal-overlay z-[600]"
 		onclick={handleBackdropClick}
 	>
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
-			class="relative w-full max-w-xl mx-4 bg-bg-elevated rounded-2xl border border-white/10 shadow-2xl overflow-hidden"
+			class="modal-container max-w-xl"
 			onclick={stopPropagation}
 		>
 			<!-- Header -->
@@ -145,7 +145,7 @@
 				{#if loading}
 					<div class="flex items-center justify-center py-12">
 						<div class="flex items-center gap-3 text-text-muted">
-							<div class="w-5 h-5 border-2 border-text-muted/50 border-t-transparent rounded-full animate-spin"></div>
+							<div class="spinner-md text-text-muted"></div>
 							<span>Loading...</span>
 						</div>
 					</div>

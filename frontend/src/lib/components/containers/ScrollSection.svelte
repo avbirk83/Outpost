@@ -36,7 +36,7 @@
 
 <section class="{className}">
 	<!-- Header -->
-	<div class="flex items-center justify-between mb-4 px-[60px]">
+	<div class="flex items-center justify-between mb-4 px-[60px] relative z-10">
 		<div class="flex items-center gap-4">
 			<h2 class="text-xl font-semibold text-text-primary">{title}</h2>
 			{#if meta}
@@ -59,22 +59,12 @@
 			{/if}
 
 			<div class="flex gap-1">
-				<button
-					onclick={() => scroll('left')}
-					disabled={!canScrollLeft}
-					class="w-7 h-7 rounded-full bg-glass border border-border-subtle flex items-center justify-center text-text-secondary hover:bg-glass-hover hover:text-text-primary transition-all disabled:opacity-30 disabled:cursor-not-allowed"
-					aria-label="Scroll left"
-				>
+				<button onclick={() => scroll('left')} disabled={!canScrollLeft} class="btn-icon-circle-xs" aria-label="Scroll left">
 					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
 					</svg>
 				</button>
-				<button
-					onclick={() => scroll('right')}
-					disabled={!canScrollRight}
-					class="w-7 h-7 rounded-full bg-glass border border-border-subtle flex items-center justify-center text-text-secondary hover:bg-glass-hover hover:text-text-primary transition-all disabled:opacity-30 disabled:cursor-not-allowed"
-					aria-label="Scroll right"
-				>
+				<button onclick={() => scroll('right')} disabled={!canScrollRight} class="btn-icon-circle-xs" aria-label="Scroll right">
 					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
 					</svg>

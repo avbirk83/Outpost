@@ -104,19 +104,15 @@
 		<div class="max-w-3xl mx-auto mt-[10vh] animate-slide-down px-4 max-h-[80vh] overflow-y-auto scrollbar-thin">
 			<div class="liquid-panel p-6 relative">
 				<!-- Close button -->
-				<button
-					onclick={onClose}
-					class="absolute top-4 right-4 w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 focus:bg-white/20 focus:ring-2 focus:ring-white/50 focus:outline-none flex items-center justify-center transition-colors"
-					aria-label="Close"
-				>
-					<svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<button onclick={onClose} class="btn-close absolute top-4 right-4" aria-label="Close">
+					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
 					</svg>
 				</button>
 
 				{#if loading}
 					<div class="flex items-center justify-center py-16">
-						<div class="w-8 h-8 border-2 border-white/50 border-t-transparent rounded-full animate-spin"></div>
+						<div class="spinner-xl text-cream"></div>
 					</div>
 				{:else if error}
 					<div class="text-center py-16 text-text-muted">

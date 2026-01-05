@@ -57,17 +57,17 @@
 	></button>
 {/if}
 
-<div class="relative {className}" style="z-index: 501;">
+<div class="relative {className}">
 	<button
 		bind:this={buttonRef}
 		type="button"
 		{id}
 		onclick={toggle}
 		{disabled}
-		class="w-full flex items-center justify-between gap-2 px-4 py-2.5 text-sm text-left
-			bg-[#1a1a1a] text-text-primary transition-all
-			disabled:opacity-50 disabled:cursor-not-allowed
-			{open ? 'rounded-t-xl' : 'rounded-xl'}"
+		class="w-full flex items-center justify-between gap-2 px-3 py-1.5 text-sm text-left
+			bg-transparent text-text-primary transition-all rounded-lg
+			hover:bg-white/5
+			disabled:opacity-50 disabled:cursor-not-allowed"
 	>
 		<span class="truncate">{selectedOption?.label || 'Select...'}</span>
 		<svg
@@ -82,8 +82,8 @@
 
 	{#if open}
 		<div
-			class="absolute left-0 right-0 top-full max-h-64 overflow-y-auto scrollbar-thin
-				bg-[#1a1a1a] rounded-b-xl border-t border-white/5 shadow-2xl"
+			class="absolute left-0 right-0 top-full mt-1 max-h-64 overflow-y-auto scrollbar-thin z-[100]
+				bg-bg-card rounded-xl border border-border-subtle shadow-2xl"
 		>
 			{#each options as opt}
 				<button

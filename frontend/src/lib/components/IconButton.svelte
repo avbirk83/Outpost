@@ -13,7 +13,7 @@
 
 	let { onclick, href, disabled = false, title = '', variant = 'default', active = false, children }: Props = $props();
 
-	const baseClasses = 'w-11 h-11 rounded-full flex items-center justify-center transition-all disabled:opacity-50';
+	const baseClasses = 'btn-icon-circle-lg disabled:opacity-50';
 
 	let classes = $derived.by(() => {
 		if (variant === 'default') {

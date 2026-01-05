@@ -37,22 +37,12 @@
 
 		{#if onScrollLeft && onScrollRight}
 			<div class="flex gap-1">
-				<button
-					onclick={onScrollLeft}
-					disabled={!canScrollLeft}
-					class="w-7 h-7 rounded-full bg-glass border border-border-subtle flex items-center justify-center text-text-secondary hover:bg-glass-hover hover:text-text-primary transition-all disabled:opacity-30 disabled:cursor-not-allowed"
-					aria-label="Scroll left"
-				>
+				<button onclick={onScrollLeft} disabled={!canScrollLeft} class="btn-icon-circle-xs" aria-label="Scroll left">
 					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
 					</svg>
 				</button>
-				<button
-					onclick={onScrollRight}
-					disabled={!canScrollRight}
-					class="w-7 h-7 rounded-full bg-glass border border-border-subtle flex items-center justify-center text-text-secondary hover:bg-glass-hover hover:text-text-primary transition-all disabled:opacity-30 disabled:cursor-not-allowed"
-					aria-label="Scroll right"
-				>
+				<button onclick={onScrollRight} disabled={!canScrollRight} class="btn-icon-circle-xs" aria-label="Scroll right">
 					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
 					</svg>

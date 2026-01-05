@@ -267,7 +267,7 @@
 {#if loading}
 	<div class="flex items-center justify-center h-96">
 		<div class="flex items-center gap-3">
-			<div class="w-6 h-6 border-2 border-white/50 border-t-transparent rounded-full animate-spin"></div>
+			<div class="spinner-lg text-cream"></div>
 			<p class="text-text-secondary">Loading show...</p>
 		</div>
 	</div>
@@ -503,7 +503,7 @@
 												title={watchedEpisodes.has(episode.id) ? 'Mark as unwatched' : 'Mark as watched'}
 											>
 												{#if togglingEpisode === episode.id}
-													<div class="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
+													<div class="spinner-sm"></div>
 												{:else if watchedEpisodes.has(episode.id)}
 													<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 														<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
@@ -525,7 +525,7 @@
 														title="Confirm delete"
 													>
 														{#if deletingEpisode === episode.id}
-															<div class="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
+															<div class="spinner-sm"></div>
 														{:else}
 															<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 																<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />

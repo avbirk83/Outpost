@@ -319,7 +319,7 @@
 	{#if loading}
 		<div class="flex items-center justify-center h-96">
 			<div class="flex items-center gap-3">
-				<div class="w-6 h-6 border-2 border-text-muted border-t-transparent rounded-full animate-spin"></div>
+				<div class="spinner-lg text-text-muted"></div>
 				<p class="text-text-secondary">Loading...</p>
 			</div>
 		</div>
@@ -376,7 +376,7 @@
 								<!-- Details -->
 								<a
 									href={hero.mediaType === 'movie' ? `/discover/movie/${hero.id}` : `/discover/show/${hero.id}`}
-									class="w-11 h-11 rounded-full bg-glass border border-border-subtle text-text-primary flex items-center justify-center hover:bg-glass-hover transition-all"
+									class="btn-icon-glass-lg"
 									title="View Details"
 								>
 									<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -386,21 +386,13 @@
 
 								<!-- Request -->
 								{#if hero.requestStatus === 'approved'}
-									<button
-										class="w-11 h-11 rounded-full bg-success text-black flex items-center justify-center cursor-default"
-										title="Available in Library"
-										disabled
-									>
+									<button class="btn-hero-success" title="Available in Library" disabled>
 										<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
 										</svg>
 									</button>
 								{:else if hero.requestStatus === 'pending'}
-									<button
-										class="w-11 h-11 rounded-full bg-amber-500 text-black flex items-center justify-center cursor-default"
-										title="Request Pending"
-										disabled
-									>
+									<button class="btn-hero-pending" title="Request Pending" disabled>
 										<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
 										</svg>
@@ -409,11 +401,11 @@
 									<button
 										onclick={handleHeroRequest}
 										disabled={requestingHero}
-										class="w-11 h-11 rounded-full bg-glass border border-border-subtle text-text-primary flex items-center justify-center hover:bg-glass-hover transition-all disabled:opacity-50"
+										class="btn-icon-glass-lg"
 										title="Request"
 									>
 										{#if requestingHero}
-											<div class="w-5 h-5 border-2 border-text-muted border-t-transparent rounded-full animate-spin"></div>
+											<div class="spinner-md text-text-muted"></div>
 										{:else}
 											<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 												<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
@@ -426,11 +418,11 @@
 								<button
 									onclick={handleHeroWatchlist}
 									disabled={togglingWatchlist}
-									class="w-11 h-11 rounded-full flex items-center justify-center transition-all disabled:opacity-50 {isHeroInWatchlist(hero) ? 'bg-success text-black' : 'bg-glass border border-border-subtle text-text-primary hover:bg-glass-hover'}"
+									class="{isHeroInWatchlist(hero) ? 'btn-hero-success' : 'btn-icon-glass-lg'}"
 									title={isHeroInWatchlist(hero) ? 'In Watchlist' : 'Add to Watchlist'}
 								>
 									{#if togglingWatchlist}
-										<div class="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
+										<div class="spinner-md"></div>
 									{:else if isHeroInWatchlist(hero)}
 										<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
@@ -453,11 +445,7 @@
 
 						<!-- Carousel navigation -->
 						<div class="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-3">
-							<button
-								onclick={prevHero}
-								class="p-1.5 rounded-full bg-glass hover:bg-glass-hover text-text-primary transition-colors border border-border-subtle"
-								aria-label="Previous"
-							>
+							<button onclick={prevHero} class="carousel-nav" aria-label="Previous">
 								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
 								</svg>
@@ -466,16 +454,12 @@
 								{#each heroItems as _, i}
 									<button
 										onclick={() => goToHero(i)}
-										class="w-2 h-2 rounded-full transition-all {i === heroIndex ? 'bg-text-primary w-6' : 'bg-text-muted hover:bg-text-secondary'}"
+										class="carousel-dot transition-all {i === heroIndex ? '!bg-text-primary !w-6' : 'hover:bg-text-secondary'}"
 										aria-label="Go to slide {i + 1}"
 									></button>
 								{/each}
 							</div>
-							<button
-								onclick={nextHero}
-								class="p-1.5 rounded-full bg-glass hover:bg-glass-hover text-text-primary transition-colors border border-border-subtle"
-								aria-label="Next"
-							>
+							<button onclick={nextHero} class="carousel-nav" aria-label="Next">
 								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
 								</svg>

@@ -187,7 +187,7 @@
 	{#if loading}
 		<div class="flex items-center justify-center py-12">
 			<div class="flex items-center gap-3">
-				<div class="w-6 h-6 border-2 border-white/50 border-t-transparent rounded-full animate-spin"></div>
+				<div class="spinner-lg text-cream"></div>
 				<p class="text-text-secondary">Loading wanted items...</p>
 			</div>
 		</div>

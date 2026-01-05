@@ -49,7 +49,7 @@
 		<div class="flex items-center gap-4">
 			{#if status.runningTasks.length > 0}
 				<div class="flex items-center gap-2 text-blue-400">
-					<div class="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
+					<div class="spinner-xs text-blue-400"></div>
 					<span>{status.runningTasks.join(', ')}</span>
 				</div>
 			{:else}
