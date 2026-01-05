@@ -1033,8 +1033,8 @@
 			onPathChange={(value) => path = value}
 			onTypeChange={(value) => type = value}
 			onAddLibrary={handleAddLibrary}
-			onDeleteLibrary={handleDeleteLibrary}
-			onScanLibrary={handleScanLibrary}
+			onDeleteLibrary={handleDelete}
+			onScanLibrary={handleScan}
 			onBrowse={() => showBrowser = true}
 		/>
 	{/if}
