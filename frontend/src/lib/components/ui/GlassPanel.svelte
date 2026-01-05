@@ -2,17 +2,24 @@
 	import type { Snippet } from 'svelte';
 
 	interface Props {
-		children: Snippet;
-		class?: string;
+		variant?: 'light' | 'medium' | 'heavy' | 'card';
 		sticky?: boolean;
+		class?: string;
+		children: Snippet;
 	}
 
-	let { children, class: className = '', sticky = false }: Props = $props();
+	let { variant = 'light', sticky = false, class: className = '', children }: Props = $props();
+
+	const variantClasses = {
+		light: 'bg-glass',
+		medium: 'bg-glass-hover',
+		heavy: 'bg-glass-focus',
+		card: 'liquid-card',
+	};
 </script>
 
 <div
-	class="bg-glass backdrop-blur-xl border border-border-subtle rounded-lg {sticky ? 'sticky top-24' : ''} {className}"
-	style="background: rgba(255, 255, 255, 0.06);"
+	class="backdrop-blur-xl border border-border-subtle rounded-lg {variantClasses[variant]} {sticky ? 'sticky top-24' : ''} {className}"
 >
 	{@render children()}
 </div>
