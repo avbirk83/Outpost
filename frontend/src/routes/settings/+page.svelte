@@ -2,6 +2,8 @@
 	import { onMount, onDestroy } from 'svelte';
 	import Select from '$lib/components/ui/Select.svelte';
 	import DirectoryBrowser from '$lib/components/DirectoryBrowser.svelte';
+	import AutomationTab from './_components/AutomationTab.svelte';
+	import GeneralTab from './_components/GeneralTab.svelte';
 	import {
 		getLibraries,
 		createLibrary,
@@ -975,307 +977,36 @@
 	<!-- GENERAL TAB -->
 	<!-- ============================================ -->
 	{#if currentTab === 'general'}
-
-	<!-- TMDB Settings -->
-	<section class="glass-card p-6 space-y-4">
-		<div class="flex items-center gap-3">
-			<div class="w-10 h-10 rounded-xl bg-white-600/20 flex items-center justify-center">
-				<svg class="w-5 h-5 text-white-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z" />
-				</svg>
-			</div>
-			<div>
-				<h2 class="text-lg font-semibold text-text-primary">Metadata</h2>
-				<p class="text-sm text-text-secondary">Configure metadata sources for your library</p>
-			</div>
-		</div>
-
-		<div class="pt-2">
-			<label for="tmdb-api-key" class={labelClass}>TMDB API Key</label>
-			<p class="text-xs text-text-muted mb-2">
-				Get a free API key from <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener" class="text-white-400 hover:underline">themoviedb.org</a>
-			</p>
-			<div class="flex gap-3">
-				<input
-					type="password"
-					id="tmdb-api-key"
-					bind:value={tmdbApiKey}
-					class={inputClass}
-					class:flex-1={true}
-					placeholder="Enter your TMDB API key"
-				/>
-				<button
-					class="liquid-btn disabled:opacity-50"
-					onclick={handleSaveSettings}
-					disabled={savingSettings}
-				>
-					{savingSettings ? 'Saving...' : 'Save'}
-				</button>
-			</div>
-			{#if settingsSaved}
-				<p class="text-green-400 text-sm mt-2 flex items-center gap-2">
-					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-					</svg>
-					Settings saved! Metadata will be fetched during next scan.
-				</p>
-			{/if}
-		</div>
-
-		<div class="pt-4 border-t border-border-subtle">
-			<label class={labelClass}>Refresh All Metadata</label>
-			<p class="text-xs text-text-muted mb-2">
-				Re-fetch metadata from TMDB for all movies and TV shows in your library
-			</p>
-			<button
-				class="liquid-btn disabled:opacity-50"
-				onclick={handleRefreshMetadata}
-				disabled={refreshingMetadata}
-			>
-				{#if refreshingMetadata}
-					<span class="flex items-center gap-2">
-						<svg class="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-						</svg>
-						Refreshing...
-					</span>
-				{:else}
-					Refresh All Metadata
-				{/if}
-			</button>
-			{#if refreshResult}
-				<p class="text-sm mt-2 flex items-center gap-2 {refreshResult.errors > 0 ? 'text-yellow-400' : 'text-green-400'}">
-					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-					</svg>
-					Refreshed {refreshResult.refreshed} of {refreshResult.total} items
-					{#if refreshResult.errors > 0}
-						({refreshResult.errors} errors)
-					{/if}
-				</p>
-			{/if}
-		</div>
-
-		<div class="pt-4 border-t border-border-subtle">
-			<label class={labelClass}>Clear Library Data</label>
-			<p class="text-xs text-text-muted mb-2">
-				Remove all movies, TV shows, and watch progress. Library folders will be kept but all scanned media will be deleted.
-			</p>
-			{#if showClearConfirm}
-				<div class="flex items-center gap-3">
-					<span class="text-sm text-yellow-400">Are you sure? This cannot be undone.</span>
-					<button
-						class="liquid-btn !bg-red-600 hover:!bg-red-700 disabled:opacity-50"
-						onclick={handleClearLibrary}
-						disabled={clearingLibrary}
-					>
-						{clearingLibrary ? 'Clearing...' : 'Yes, Clear All'}
-					</button>
-					<button
-						class="liquid-btn"
-						onclick={() => showClearConfirm = false}
-						disabled={clearingLibrary}
-					>
-						Cancel
-					</button>
-				</div>
-			{:else}
-				<button
-					class="liquid-btn !bg-red-600/20 !text-red-400 hover:!bg-red-600/30"
-					onclick={() => showClearConfirm = true}
-				>
-					Clear All Library Data
-				</button>
-			{/if}
-		</div>
-	</section>
-
-	<!-- Libraries -->
-	<section class="glass-card p-6 space-y-4">
-		<div class="flex items-center justify-between">
-			<div class="flex items-center gap-3">
-				<div class="w-10 h-10 rounded-xl bg-blue-600/20 flex items-center justify-center">
-					<svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-					</svg>
-				</div>
-				<div>
-					<h2 class="text-lg font-semibold text-text-primary">Libraries</h2>
-					<p class="text-sm text-text-secondary">Manage your media folders</p>
-				</div>
-			</div>
-			<button
-				class="liquid-btn-sm"
-				onclick={() => (showAddForm = !showAddForm)}
-			>
-				{showAddForm ? 'Cancel' : 'Add Library'}
-			</button>
-		</div>
-
-		{#if showAddForm}
-			<form
-				class="p-4 bg-bg-elevated/50 rounded-xl space-y-4 border border-white/5"
-				onsubmit={(e) => {
-					e.preventDefault();
-					handleAddLibrary();
-				}}
-			>
-				<div class="grid sm:grid-cols-2 gap-4">
-					<div>
-						<label for="lib-name" class={labelClass}>Name</label>
-						<input
-							type="text"
-							id="lib-name"
-							bind:value={name}
-							required
-							class={inputClass}
-							placeholder="Movies"
-						/>
-					</div>
-					<div>
-						<label for="lib-type" class={labelClass}>Type</label>
-						<Select
-							id="lib-type"
-							bind:value={type}
-							options={[
-								{ value: 'movies', label: 'Movies' },
-								{ value: 'tv', label: 'TV Shows' },
-								{ value: 'anime', label: 'Anime' },
-								{ value: 'music', label: 'Music' },
-								{ value: 'books', label: 'Books' }
-							]}
-						/>
-					</div>
-				</div>
-				<div>
-					<label for="lib-path" class={labelClass}>Path</label>
-					<div class="flex gap-2">
-						<input
-							type="text"
-							id="lib-path"
-							bind:value={path}
-							required
-							class="{inputClass} flex-1"
-							placeholder="/media/movies"
-						/>
-						<button
-							type="button"
-							onclick={() => showBrowser = true}
-							class="px-3 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-text-secondary hover:text-text-primary transition-colors"
-							title="Browse directories"
-						>
-							<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-							</svg>
-						</button>
-					</div>
-				</div>
-				<button type="submit" class="liquid-btn">
-					Add Library
-				</button>
-			</form>
-		{/if}
-
-		{#if loading}
-			<div class="flex items-center gap-3 py-4">
-				<div class="spinner-md text-cream"></div>
-				<span class="text-text-secondary">Loading libraries...</span>
-			</div>
-		{:else if libraries.length === 0}
-			<p class="text-text-muted py-4">No libraries configured. Add one to get started.</p>
-		{:else}
-			<div class="space-y-2">
-				{#each libraries as lib}
-					<div class="p-4 bg-bg-elevated/50 rounded-xl flex items-center justify-between border border-white/5">
-						<div>
-							<h3 class="font-medium text-text-primary">{lib.name}</h3>
-							<p class="text-sm text-text-secondary">{lib.path}</p>
-							<span class="inline-block mt-1 px-2 py-0.5 text-xs rounded-lg bg-bg-card text-text-muted capitalize">
-								{lib.type}
-							</span>
-						</div>
-						<div class="flex gap-2">
-							<button
-								class="liquid-btn-sm disabled:opacity-50"
-								onclick={() => handleScan(lib.id)}
-								disabled={scanning[lib.id] || scanProgress?.scanning}
-							>
-								{scanning[lib.id] || (scanProgress?.scanning && scanProgress.library === lib.name) ? 'Scanning...' : 'Scan'}
-							</button>
-							<button
-								class="liquid-btn-sm !bg-white/5 !border-t-white/10 text-text-secondary hover:text-text-primary"
-								onclick={() => handleDelete(lib.id)}
-							>
-								Delete
-							</button>
-						</div>
-					</div>
-				{/each}
-			</div>
-		{/if}
-
-		<!-- Scan Progress Bar -->
-		{#if scanProgress?.scanning}
-			<div class="p-4 bg-bg-elevated/50 rounded-xl border border-white/5 space-y-3">
-				<div class="flex items-center justify-between">
-					<div class="flex items-center gap-3">
-						<div class="spinner-md text-blue-400"></div>
-						<div>
-							<span class="text-text-primary font-medium">
-								{scanProgress.phase === 'counting' ? 'Counting files...' :
-								 scanProgress.phase === 'extracting' ? 'Extracting subtitles...' :
-								 `Scanning ${scanProgress.library}`}
-							</span>
-							{#if scanProgress.phase !== 'counting' && scanProgress.total > 0}
-								<span class="text-text-muted ml-2 text-sm">
-									{scanProgress.current} / {scanProgress.total}
-								</span>
-							{/if}
-						</div>
-					</div>
-					{#if scanProgress.percent > 0}
-						<span class="text-text-secondary text-sm font-medium">{scanProgress.percent}%</span>
-					{/if}
-				</div>
-				{#if scanProgress.total > 0}
-					<div class="w-full bg-bg-card rounded-full h-2 overflow-hidden">
-						<div
-							class="bg-blue-500 h-full transition-all duration-300 ease-out"
-							style="width: {scanProgress.percent}%"
-						></div>
-					</div>
-				{/if}
-			</div>
-		{:else if scanProgress?.lastLibrary}
-			<!-- Last Scan Result -->
-			<div class="p-4 bg-bg-elevated/50 rounded-xl border border-white/5">
-				<div class="flex items-center justify-between">
-					<div class="flex items-center gap-3">
-						<svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-						</svg>
-						<div>
-							<span class="text-text-primary font-medium">
-								Scan complete: {scanProgress.lastLibrary}
-							</span>
-							<div class="text-sm text-text-secondary mt-0.5">
-								<span class="text-green-400">{scanProgress.lastAdded} added</span>
-								{#if scanProgress.lastSkipped > 0}
-									<span class="mx-1">·</span>
-									<span>{scanProgress.lastSkipped} skipped</span>
-								{/if}
-								{#if scanProgress.lastErrors > 0}
-									<span class="mx-1">·</span>
-									<span class="text-red-400">{scanProgress.lastErrors} errors</span>
-								{/if}
-							</div>
-						</div>
-					</div>
-				</div>
-			</div>
-		{/if}
-	</section>
-
+		<GeneralTab
+			{tmdbApiKey}
+			{savingSettings}
+			{settingsSaved}
+			{refreshingMetadata}
+			{refreshResult}
+			{clearingLibrary}
+			{showClearConfirm}
+			{libraries}
+			{loading}
+			{showAddForm}
+			{name}
+			{path}
+			{type}
+			{scanning}
+			{scanProgress}
+			onTmdbKeyChange={(value) => tmdbApiKey = value}
+			onSaveSettings={handleSaveSettings}
+			onRefreshMetadata={handleRefreshMetadata}
+			onClearLibrary={handleClearLibrary}
+			onShowClearConfirm={(show) => showClearConfirm = show}
+			onShowAddForm={(show) => showAddForm = show}
+			onNameChange={(value) => name = value}
+			onPathChange={(value) => path = value}
+			onTypeChange={(value) => type = value}
+			onAddLibrary={handleAddLibrary}
+			onDeleteLibrary={handleDeleteLibrary}
+			onScanLibrary={handleScanLibrary}
+			onBrowse={() => showBrowser = true}
+		/>
 	{/if}
 
 	<!-- ============================================ -->
@@ -2037,257 +1768,17 @@
 	<!-- AUTOMATION TAB -->
 	<!-- ============================================ -->
 	{#if currentTab === 'automation'}
-
-	<!-- Scheduled Tasks -->
-	<section class="glass-card p-6 space-y-4">
-		<div class="flex items-center gap-3">
-			<div class="w-10 h-10 rounded-xl bg-blue-600/20 flex items-center justify-center">
-				<svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-				</svg>
-			</div>
-			<div>
-				<h2 class="text-lg font-semibold text-text-primary">Scheduled Tasks</h2>
-				<p class="text-sm text-text-secondary">Background jobs and automation</p>
-			</div>
-		</div>
-
-		{#if tasks && tasks.length > 0}
-			<div class="overflow-x-auto">
-				<table class="w-full text-sm">
-					<thead>
-						<tr class="text-xs text-text-muted uppercase tracking-wide border-b border-border-subtle">
-							<th class="text-left py-3 px-2 font-medium">Task</th>
-							<th class="text-center py-3 px-2 font-medium w-20">Last Run</th>
-							<th class="text-center py-3 px-2 font-medium w-20">Duration</th>
-							<th class="text-center py-3 px-2 font-medium w-20">Next Run</th>
-							<th class="text-center py-3 px-2 font-medium w-28">Interval</th>
-							<th class="text-center py-3 px-2 font-medium w-16">Enabled</th>
-							<th class="text-center py-3 px-2 font-medium w-20">Action</th>
-						</tr>
-					</thead>
-					<tbody class="divide-y divide-white/5">
-						{#each tasks as task (task.id)}
-							<tr class="hover:bg-glass transition-colors">
-								<td class="py-3 px-2">
-									<div class="flex items-center gap-3">
-										<div class="w-8 h-8 rounded-lg flex-shrink-0 {task.isRunning ? 'bg-blue-500/20' : task.enabled ? 'bg-green-500/20' : 'bg-gray-500/20'} flex items-center justify-center">
-											{#if task.isRunning}
-												<div class="spinner-sm text-blue-400"></div>
-											{:else if task.enabled}
-												<svg class="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>
-											{:else}
-												<svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
-											{/if}
-										</div>
-										<div class="flex-1">
-											<div class="font-medium text-text-primary">{task.name}</div>
-											{#if task.description}
-												<div class="text-xs text-text-muted">{task.description}</div>
-											{/if}
-											{#if task.lastStatus === 'failed'}
-												<span class="text-xs text-red-400">Failed</span>
-											{/if}
-										</div>
-									</div>
-								</td>
-								<td class="py-3 px-2 text-center text-text-secondary text-xs">{formatTimeAgo(task.lastRun)}</td>
-								<td class="py-3 px-2 text-center text-text-secondary text-xs">{formatDuration(task.lastDurationMs)}</td>
-								<td class="py-3 px-2 text-center text-text-secondary text-xs">{formatNextRun(task.nextRun)}</td>
-								<td class="py-3 px-2 text-center">
-									<div class="flex items-center gap-1 justify-center">
-										<input
-											type="number"
-											min="1"
-											class="liquid-input !w-16 !px-1 !py-1 text-xs text-center"
-											value={editingTaskInterval[task.id] ?? task.intervalMinutes}
-											oninput={(e) => editingTaskInterval[task.id] = parseInt((e.target as HTMLInputElement).value) || task.intervalMinutes}
-										/>
-										<span class="text-xs text-text-muted">min</span>
-										{#if editingTaskInterval[task.id] && editingTaskInterval[task.id] !== task.intervalMinutes}
-											<button
-												class="liquid-btn-sm !px-1.5 !py-0.5 text-xs"
-												disabled={savingTask[task.id]}
-												onclick={() => handleSaveTaskInterval(task)}
-											>
-												{#if savingTask[task.id]}
-													<span class="w-2 h-2 border border-white/50 border-t-white rounded-full animate-spin inline-block"></span>
-												{:else}
-													<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>
-												{/if}
-											</button>
-										{/if}
-									</div>
-								</td>
-								<td class="py-3 px-2 text-center">
-									<button class="relative w-10 h-5 rounded-full transition-colors mx-auto block {task.enabled ? 'bg-green-600' : 'bg-gray-600'}" onclick={() => handleUpdateTask(task, !task.enabled, task.intervalMinutes)}>
-										<span class="absolute left-0.5 top-0.5 w-4 h-4 bg-white rounded-full transition-transform duration-200 {task.enabled ? 'translate-x-5' : ''}"></span>
-									</button>
-								</td>
-								<td class="py-3 px-2 text-center">
-									<button class="liquid-btn-sm !px-3 !py-1 text-xs min-w-[60px]" disabled={task.isRunning || triggeringTask[task.id]} onclick={() => handleTriggerTask(task.id)}>
-										{#if task.isRunning || triggeringTask[task.id]}
-											<span class="w-3 h-3 border-2 border-white/50 border-t-white rounded-full animate-spin inline-block"></span>
-										{:else}
-											Run
-										{/if}
-									</button>
-								</td>
-							</tr>
-							{#if task.lastStatus === 'failed' && task.lastError}
-								<tr><td colspan="7" class="px-2 pb-3"><div class="p-2 bg-red-500/10 rounded border border-red-500/20 text-xs text-red-400">{task.lastError}</div></td></tr>
-							{/if}
-						{/each}
-					</tbody>
-				</table>
-			</div>
-		{:else}
-			<div class="flex items-center gap-3 py-4">
-				<div class="spinner-md text-blue-400"></div>
-				<span class="text-text-secondary">Loading tasks...</span>
-			</div>
-		{/if}
-	</section>
-
-	<!-- Storage Management -->
-	<section class="glass-card p-6 space-y-4">
-		<div class="flex items-center gap-3">
-			<div class="w-10 h-10 rounded-xl bg-orange-600/20 flex items-center justify-center">
-				<svg class="w-5 h-5 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
-				</svg>
-			</div>
-			<div>
-				<h2 class="text-lg font-semibold text-text-primary">Storage</h2>
-				<p class="text-sm text-text-secondary">Server disk space and media usage</p>
-			</div>
-		</div>
-
-		{#if storageStatus}
-			{@const formatSize = (bytes: number) => {
-				if (bytes === 0) return '0 B';
-				const gb = bytes / (1024 * 1024 * 1024);
-				if (gb >= 1000) return (gb / 1024).toFixed(1) + ' TB';
-				if (gb >= 1) return gb.toFixed(1) + ' GB';
-				const mb = bytes / (1024 * 1024);
-				return mb.toFixed(0) + ' MB';
-			}}
-			{@const totalMedia = storageStatus.moviesSize + storageStatus.tvSize + storageStatus.musicSize + storageStatus.booksSize}
-
-			<!-- Media Usage Breakdown -->
-			<div class="grid grid-cols-2 gap-3">
-				{#if storageStatus.moviesSize > 0}
-					<div class="p-4 bg-bg-elevated/50 rounded-xl border border-white/5">
-						<div class="flex items-center gap-3">
-							<div class="w-8 h-8 rounded-lg bg-blue-500/20 flex items-center justify-center">
-								<svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z" />
-								</svg>
-							</div>
-							<div>
-								<p class="text-xs text-text-muted uppercase tracking-wide">Movies</p>
-								<p class="text-lg font-semibold text-text-primary">{formatSize(storageStatus.moviesSize)}</p>
-							</div>
-						</div>
-					</div>
-				{/if}
-				{#if storageStatus.tvSize > 0}
-					<div class="p-4 bg-bg-elevated/50 rounded-xl border border-white/5">
-						<div class="flex items-center gap-3">
-							<div class="w-8 h-8 rounded-lg bg-purple-500/20 flex items-center justify-center">
-								<svg class="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-								</svg>
-							</div>
-							<div>
-								<p class="text-xs text-text-muted uppercase tracking-wide">TV Shows</p>
-								<p class="text-lg font-semibold text-text-primary">{formatSize(storageStatus.tvSize)}</p>
-							</div>
-						</div>
-					</div>
-				{/if}
-				{#if storageStatus.musicSize > 0}
-					<div class="p-4 bg-bg-elevated/50 rounded-xl border border-white/5">
-						<div class="flex items-center gap-3">
-							<div class="w-8 h-8 rounded-lg bg-green-500/20 flex items-center justify-center">
-								<svg class="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
-								</svg>
-							</div>
-							<div>
-								<p class="text-xs text-text-muted uppercase tracking-wide">Music</p>
-								<p class="text-lg font-semibold text-text-primary">{formatSize(storageStatus.musicSize)}</p>
-							</div>
-						</div>
-					</div>
-				{/if}
-				{#if storageStatus.booksSize > 0}
-					<div class="p-4 bg-bg-elevated/50 rounded-xl border border-white/5">
-						<div class="flex items-center gap-3">
-							<div class="w-8 h-8 rounded-lg bg-amber-500/20 flex items-center justify-center">
-								<svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-								</svg>
-							</div>
-							<div>
-								<p class="text-xs text-text-muted uppercase tracking-wide">Books</p>
-								<p class="text-lg font-semibold text-text-primary">{formatSize(storageStatus.booksSize)}</p>
-							</div>
-						</div>
-					</div>
-				{/if}
-			</div>
-
-			<!-- Total Media -->
-			{#if totalMedia > 0}
-				<div class="text-sm text-text-secondary">
-					Total media: <span class="text-text-primary font-medium">{formatSize(totalMedia)}</span>
-				</div>
-			{/if}
-
-			<!-- Disk Space -->
-			{#if storageStatus.diskUsage}
-				{@const disk = storageStatus.diskUsage}
-				{@const totalGb = Math.round(disk.total / (1024 * 1024 * 1024))}
-				{@const freeGb = Math.round(disk.free / (1024 * 1024 * 1024))}
-				{@const usedGb = Math.round(disk.used / (1024 * 1024 * 1024))}
-				<div class="p-4 bg-bg-elevated/50 rounded-xl border border-white/5">
-					<div class="flex items-center justify-between mb-3">
-						<span class="font-medium text-text-primary">Disk Space</span>
-						<span class="text-sm {freeGb < storageStatus.thresholdGb ? 'text-red-400' : 'text-text-secondary'}">
-							{freeGb} GB free of {totalGb} GB
-						</span>
-					</div>
-					<div class="w-full bg-bg-card rounded-full h-3 overflow-hidden">
-						<div
-							class="{getStorageBarColor(disk.usedPercent, freeGb, storageStatus.thresholdGb)} h-full transition-all duration-300"
-							style="width: {disk.usedPercent}%"
-						></div>
-					</div>
-					<div class="flex justify-between mt-2 text-sm text-text-muted">
-						<span>{usedGb} GB used</span>
-						<span>{disk.usedPercent.toFixed(1)}%</span>
-					</div>
-					{#if freeGb < storageStatus.thresholdGb}
-						<div class="mt-3 flex items-center gap-2 text-sm text-red-400">
-							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-							</svg>
-							Below threshold ({storageStatus.thresholdGb} GB) - downloads may pause
-						</div>
-					{/if}
-				</div>
-			{:else}
-				<p class="text-text-muted text-sm">Disk usage information not available.</p>
-			{/if}
-		{:else}
-			<div class="flex items-center gap-3 py-4">
-				<div class="spinner-md text-amber"></div>
-				<span class="text-text-secondary">Loading storage status...</span>
-			</div>
-		{/if}
-	</section>
-
+		<AutomationTab
+			{tasks}
+			{storageStatus}
+			{triggeringTask}
+			{editingTaskInterval}
+			{savingTask}
+			onTriggerTask={handleTriggerTask}
+			onUpdateTask={handleUpdateTask}
+			onSaveTaskInterval={handleSaveTaskInterval}
+			onEditInterval={(taskId, value) => editingTaskInterval[taskId] = value}
+		/>
 	{/if}
 </div>
 
