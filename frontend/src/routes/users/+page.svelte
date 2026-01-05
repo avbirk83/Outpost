@@ -139,7 +139,7 @@
 		{#if !showAddForm && !editingUser}
 			<div class="inline-flex items-center p-1.5 rounded-xl bg-black/40 backdrop-blur-md border border-white/10">
 				<button
-					class="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg text-white/60 hover:text-white hover:bg-white/5 transition-colors"
+					class="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg text-text-muted hover:text-text-primary hover:bg-white/5 transition-colors"
 					onclick={() => { showAddForm = true; editingUser = null; }}
 				>
 					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -152,7 +152,7 @@
 	</div>
 
 	{#if error}
-		<div class="bg-white/5 border border-white/10 text-text-secondary px-4 py-3 rounded-xl flex items-center justify-between">
+		<div class="bg-glass border border-border-subtle text-text-secondary px-4 py-3 rounded-xl flex items-center justify-between">
 			<span>{error}</span>
 			<button class="text-text-muted hover:text-text-secondary" onclick={() => (error = null)}>
 				<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -215,7 +215,7 @@
 				<button type="submit" class="liquid-btn">
 					Create User
 				</button>
-				<button type="button" onclick={cancelAdd} class="liquid-btn !bg-white/5 !border-t-white/10 text-text-secondary hover:text-white">
+				<button type="button" onclick={cancelAdd} class="liquid-btn !bg-white/5 !border-t-white/10 text-text-secondary hover:text-text-primary">
 					Cancel
 				</button>
 			</div>
@@ -273,7 +273,7 @@
 				<button type="submit" class="liquid-btn">
 					Save Changes
 				</button>
-				<button type="button" onclick={cancelEdit} class="liquid-btn !bg-white/5 !border-t-white/10 text-text-secondary hover:text-white">
+				<button type="button" onclick={cancelEdit} class="liquid-btn !bg-white/5 !border-t-white/10 text-text-secondary hover:text-text-primary">
 					Cancel
 				</button>
 			</div>
@@ -300,7 +300,7 @@
 	{:else}
 		<div class="glass-card overflow-hidden">
 			<table class="w-full">
-				<thead class="border-b border-white/10">
+				<thead class="border-b border-border-subtle">
 					<tr>
 						<th class="text-left px-4 py-3 text-sm font-medium text-text-muted">User</th>
 						<th class="text-left px-4 py-3 text-sm font-medium text-text-muted">Role</th>
@@ -335,7 +335,7 @@
 									</button>
 									<button
 										onclick={() => handleDeleteUser(user.id)}
-										class="liquid-btn-sm !bg-white/5 !border-t-white/10 text-text-secondary hover:text-white"
+										class="liquid-btn-sm !bg-white/5 !border-t-white/10 text-text-secondary hover:text-text-primary"
 									>
 										Delete
 									</button>

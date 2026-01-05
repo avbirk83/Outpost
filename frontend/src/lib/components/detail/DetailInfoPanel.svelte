@@ -32,7 +32,7 @@
 	};
 </script>
 
-<div class="bg-glass backdrop-blur-xl border border-border-subtle rounded-lg p-4 {className}" style="background: rgba(255, 255, 255, 0.06);">
+<div class="bg-glass backdrop-blur-xl border border-border-subtle rounded-lg p-4 {className}">
 	<!-- Critic Scores -->
 	{#if scores.length > 0}
 		<div class="flex justify-around py-2">

@@ -539,7 +539,7 @@
 		</div>
 
 		{#if error}
-		<div class="bg-white/5 border border-white/10 text-text-secondary px-4 py-3 rounded-lg">
+		<div class="bg-glass border border-border-subtle text-text-secondary px-4 py-3 rounded-lg">
 			{error}
 			<button class="ml-2 underline" onclick={() => (error = null)}>Dismiss</button>
 		</div>

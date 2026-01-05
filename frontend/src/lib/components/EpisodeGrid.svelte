@@ -47,7 +47,7 @@
 			<span class="w-6 text-center text-sm font-medium text-text-muted">{episode.episodeNumber}</span>
 
 			<!-- Title -->
-			<span class="flex-1 text-sm text-text-primary truncate group-hover:text-white transition-colors">
+			<span class="flex-1 text-sm text-text-primary truncate group-hover:text-cream transition-colors">
 				{episode.title || `Episode ${episode.episodeNumber}`}
 			</span>
 
@@ -61,7 +61,7 @@
 				onclick={(e) => handleToggle(e, episode.id, episode.runtime)}
 				disabled={togglingEpisode === episode.id}
 				class="w-6 h-6 flex items-center justify-center flex-shrink-0 rounded transition-colors
-					{isWatched ? 'text-green-400' : progress ? 'text-amber-400' : 'text-text-muted hover:text-white'}"
+					{isWatched ? 'text-green-400' : progress ? 'text-amber-400' : 'text-text-muted hover:text-text-primary'}"
 				title={isWatched ? 'Watched' : progress ? `${progress}% watched` : 'Not watched'}
 			>
 				{#if togglingEpisode === episode.id}

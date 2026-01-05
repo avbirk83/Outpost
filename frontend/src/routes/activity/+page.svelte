@@ -115,7 +115,7 @@
 	</div>
 
 	{#if error}
-		<div class="bg-white/5 border border-white/10 text-text-secondary px-4 py-3 rounded-xl flex items-center justify-between">
+		<div class="bg-glass border border-border-subtle text-text-secondary px-4 py-3 rounded-xl flex items-center justify-between">
 			<span>{error}</span>
 			<button class="text-text-muted hover:text-text-secondary" onclick={() => (error = null)}>
 				<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -222,7 +222,7 @@
 								</div>
 								<div class="flex gap-2 ml-4">
 									<button
-										class="liquid-btn-sm !bg-white/5 !border-t-white/10 text-text-secondary hover:text-white"
+										class="liquid-btn-sm !bg-white/5 !border-t-white/10 text-text-secondary hover:text-text-primary"
 										onclick={() => handleRemoveDownload(dl.id)}
 									>
 										Dismiss

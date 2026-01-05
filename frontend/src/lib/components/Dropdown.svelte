@@ -75,7 +75,7 @@
 				<button
 					type="button"
 					onclick={() => select(opt)}
-					class="w-full text-left flex items-center gap-2 px-4 py-2 text-sm transition-colors whitespace-nowrap {value === opt.value ? 'bg-white/10 text-white' : 'text-white/80 hover:bg-white/5 hover:text-white'}"
+					class="w-full text-left flex items-center gap-2 px-4 py-2 text-sm transition-colors whitespace-nowrap {value === opt.value ? 'bg-white/10 text-text-primary' : 'text-text-secondary hover:bg-white/5 hover:text-text-primary'}"
 				>
 					{#if value === opt.value}
 						<svg class="w-4 h-4 text-white flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">

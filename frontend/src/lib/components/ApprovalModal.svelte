@@ -128,10 +128,10 @@
 		</div>
 
 		<!-- Footer -->
-		<div class="flex items-center justify-end gap-3 p-4 border-t border-white/10">
+		<div class="flex items-center justify-end gap-3 p-4 border-t border-border-subtle">
 			<button
 				onclick={onCancel}
-				class="px-4 py-2 rounded-lg text-sm font-medium bg-white/10 text-text-secondary hover:bg-white/20 hover:text-white transition-colors"
+				class="px-4 py-2 rounded-lg text-sm font-medium bg-white/10 text-text-secondary hover:bg-white/20 hover:text-text-primary transition-colors"
 			>
 				Cancel
 			</button>

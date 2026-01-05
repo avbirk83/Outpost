@@ -66,9 +66,9 @@
 
 			<!-- Content overlay at bottom -->
 			<div class="absolute bottom-0 left-0 right-0 p-4">
-				<h3 class="text-base font-semibold text-white truncate">{title}</h3>
+				<h3 class="text-base font-semibold text-text-primary truncate">{title}</h3>
 				{#if subtitle}
-					<p class="text-sm text-white/70 truncate mt-0.5">{subtitle}</p>
+					<p class="text-sm text-text-secondary truncate mt-0.5">{subtitle}</p>
 				{/if}
 				<!-- Progress bar - only show if progress exists -->
 				{#if progress !== undefined && progress > 0}
@@ -80,7 +80,7 @@
 							></div>
 						</div>
 						{#if duration}
-							<span class="text-xs text-white/70 whitespace-nowrap">{duration}</span>
+							<span class="text-xs text-text-secondary whitespace-nowrap">{duration}</span>
 						{/if}
 					</div>
 				{/if}

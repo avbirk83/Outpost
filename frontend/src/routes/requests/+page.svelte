@@ -143,7 +143,7 @@
 	</div>
 
 	{#if error}
-		<div class="bg-white/5 border border-white/10 text-text-secondary px-4 py-3 rounded-xl flex items-center justify-between">
+		<div class="bg-glass border border-border-subtle text-text-secondary px-4 py-3 rounded-xl flex items-center justify-between">
 			<span>{error}</span>
 			<button class="text-text-muted hover:text-text-secondary" onclick={() => (error = null)}>
 				<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -242,7 +242,7 @@
 										<button
 											onclick={() => handleDeny(request.id)}
 											disabled={processingIds.has(request.id)}
-											class="px-3 py-1.5 rounded-lg text-sm font-medium bg-white/10 text-text-secondary hover:bg-white/20 hover:text-white disabled:opacity-50 transition-colors"
+											class="px-3 py-1.5 rounded-lg text-sm font-medium bg-white/10 text-text-secondary hover:bg-white/20 hover:text-text-primary disabled:opacity-50 transition-colors"
 										>
 											{processingIds.has(request.id) ? '...' : 'Deny'}
 										</button>
@@ -258,7 +258,7 @@
 											</button>
 											<button
 												onclick={cancelDelete}
-												class="px-3 py-1.5 rounded-lg text-sm font-medium bg-white/10 text-text-secondary hover:bg-white/20 hover:text-white transition-colors"
+												class="px-3 py-1.5 rounded-lg text-sm font-medium bg-white/10 text-text-secondary hover:bg-white/20 hover:text-text-primary transition-colors"
 											>
 												Cancel
 											</button>
@@ -266,7 +266,7 @@
 											<button
 												onclick={() => handleDeleteClick(request.id)}
 												disabled={processingIds.has(request.id)}
-												class="px-3 py-1.5 rounded-lg text-sm font-medium bg-white/10 text-text-secondary hover:bg-white/20 hover:text-white disabled:opacity-50 transition-colors"
+												class="px-3 py-1.5 rounded-lg text-sm font-medium bg-white/10 text-text-secondary hover:bg-white/20 hover:text-text-primary disabled:opacity-50 transition-colors"
 											>
 												Delete
 											</button>

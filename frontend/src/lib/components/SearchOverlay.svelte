@@ -220,7 +220,7 @@
 						onkeydown={handleKeydown}
 						type="text"
 						placeholder="Search your library..."
-						class="flex-1 bg-transparent text-white placeholder-white/40 outline-none text-lg"
+						class="flex-1 bg-transparent text-text-primary placeholder-text-muted outline-none text-lg"
 					/>
 					{#if loading}
 						<div class="spinner-md text-cream"></div>
@@ -272,7 +272,7 @@
 
 										<!-- Info -->
 										<div class="flex-1 text-left">
-											<p class="text-white font-medium">{item.title || item.name}</p>
+											<p class="text-text-primary font-medium">{item.title || item.name}</p>
 											<p class="text-sm text-text-secondary">
 												{item.type === 'movie' ? 'Movie' : 'TV Show'}
 												{#if item.release_date || item.first_air_date}
@@ -295,7 +295,7 @@
 
 						<!-- Discover results section (available to request) -->
 						{#if discoverResults.length > 0}
-							<div class="p-2 {libraryResults.length > 0 ? 'border-t border-white/10' : ''}">
+							<div class="p-2 {libraryResults.length > 0 ? 'border-t border-border-subtle' : ''}">
 								<p class="px-3 py-2 text-xs text-text-muted uppercase tracking-wider flex items-center gap-2">
 									<svg class="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
@@ -339,7 +339,7 @@
 
 										<!-- Info -->
 										<div class="flex-1 text-left">
-											<p class="text-white font-medium">{item.title || item.name}</p>
+											<p class="text-text-primary font-medium">{item.title || item.name}</p>
 											<p class="text-sm text-text-secondary">
 												{item.type === 'movie' ? 'Movie' : 'TV Show'}
 												{#if item.releaseDate}
@@ -351,7 +351,7 @@
 
 										<!-- Request button or requested indicator -->
 										{#if item.requested}
-											<span class="liquid-tag !py-1 !px-3 !text-xs !bg-white/10 !border-t-white/20 text-white">
+											<span class="liquid-tag !py-1 !px-3 !text-xs !bg-white/10 !border-t-white/20 text-text-primary">
 												Requested
 											</span>
 										{:else}
@@ -386,7 +386,7 @@
 									class="flex items-center gap-4 p-3 rounded-lg transition-all
 										{selectedIndex === i ? 'bg-white/10' : 'hover:bg-white/5'}"
 								>
-									<div class="liquid-btn-icon !rounded-lg text-white/70">
+									<div class="liquid-btn-icon !rounded-lg text-text-secondary">
 										{#if action.icon === 'film'}
 											<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 												<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z" />
@@ -405,7 +405,7 @@
 											</svg>
 										{/if}
 									</div>
-									<span class="text-white">{action.label}</span>
+									<span class="text-text-primary">{action.label}</span>
 									<svg class="ml-auto w-5 h-5 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
 									</svg>
@@ -417,7 +417,7 @@
 			</div>
 
 			<!-- Keyboard hints -->
-			<div class="flex items-center justify-center gap-6 mt-4 text-xs text-white/50">
+			<div class="flex items-center justify-center gap-6 mt-4 text-xs text-text-muted">
 				<span class="flex items-center gap-1">
 					<kbd class="liquid-badge-sm">↑</kbd>
 					<kbd class="liquid-badge-sm">↓</kbd>

@@ -293,7 +293,7 @@
 						{/if}
 					</div>
 					<!-- Action Buttons Row -->
-					<div class="p-3 flex justify-center gap-2 border-t border-white/10">
+					<div class="p-3 flex justify-center gap-2 border-t border-border-subtle">
 						{#if actionButtons}
 							{@render actionButtons()}
 						{/if}
@@ -304,7 +304,7 @@
 			<!-- CENTER: Title, Tags, Overview -->
 			<div class="flex-1 min-w-0">
 				<!-- Title -->
-				<h1 class="text-4xl md:text-5xl font-bold text-white mb-2">
+				<h1 class="text-4xl md:text-5xl font-bold text-text-primary mb-2">
 					{title}
 					{#if displayYear}
 						<span class="text-text-secondary font-normal">({displayYear})</span>
@@ -374,7 +374,7 @@
 							tmdbRating={rating}
 							{mediaType}
 						/>
-						<div class="border-t border-white/10 my-3"></div>
+						<div class="border-t border-border-subtle my-3"></div>
 					{/if}
 
 					<!-- Status -->
@@ -431,7 +431,7 @@
 						</div>
 					{/if}
 
-					<div class="border-t border-white/10 my-2"></div>
+					<div class="border-t border-border-subtle my-2"></div>
 
 					<!-- Director (movies) -->
 					{#if director}
@@ -466,7 +466,7 @@
 					{/if}
 
 					{#if budget || revenue}
-						<div class="border-t border-white/10 my-2"></div>
+						<div class="border-t border-border-subtle my-2"></div>
 					{/if}
 
 					<!-- Language -->
@@ -496,7 +496,7 @@
 						</div>
 					{/if}
 
-					<div class="border-t border-white/10 my-2"></div>
+					<div class="border-t border-border-subtle my-2"></div>
 
 					<!-- Content Rating / Parental -->
 					{#if contentRating}
@@ -518,7 +518,7 @@
 						{@render extraInfoRows()}
 					{/if}
 
-					<div class="border-t border-white/10 my-2"></div>
+					<div class="border-t border-border-subtle my-2"></div>
 
 					<!-- External Links -->
 					<ExternalLinks

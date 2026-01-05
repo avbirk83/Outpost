@@ -945,7 +945,7 @@
 	</div>
 
 	{#if error}
-		<div class="bg-white/5 border border-white/10 text-text-secondary px-4 py-3 rounded-xl flex items-center justify-between">
+		<div class="bg-glass border border-border-subtle text-text-secondary px-4 py-3 rounded-xl flex items-center justify-between">
 			<span>{error}</span>
 			<button class="text-text-muted hover:text-text-secondary" onclick={() => (error = null)}>
 				<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1022,7 +1022,7 @@
 			{/if}
 		</div>
 
-		<div class="pt-4 border-t border-white/10">
+		<div class="pt-4 border-t border-border-subtle">
 			<label class={labelClass}>Refresh All Metadata</label>
 			<p class="text-xs text-text-muted mb-2">
 				Re-fetch metadata from TMDB for all movies and TV shows in your library
@@ -1056,7 +1056,7 @@
 			{/if}
 		</div>
 
-		<div class="pt-4 border-t border-white/10">
+		<div class="pt-4 border-t border-border-subtle">
 			<label class={labelClass}>Clear Library Data</label>
 			<p class="text-xs text-text-muted mb-2">
 				Remove all movies, TV shows, and watch progress. Library folders will be kept but all scanned media will be deleted.
@@ -1203,7 +1203,7 @@
 								{scanning[lib.id] || (scanProgress?.scanning && scanProgress.library === lib.name) ? 'Scanning...' : 'Scan'}
 							</button>
 							<button
-								class="liquid-btn-sm !bg-white/5 !border-t-white/10 text-text-secondary hover:text-white"
+								class="liquid-btn-sm !bg-white/5 !border-t-white/10 text-text-secondary hover:text-text-primary"
 								onclick={() => handleDelete(lib.id)}
 							>
 								Delete
@@ -1417,7 +1417,7 @@
 									{testing[client.id] ? 'Testing...' : 'Test'}
 								</button>
 								<button
-									class="liquid-btn-sm !bg-white/5 !border-t-white/10 text-text-secondary hover:text-white"
+									class="liquid-btn-sm !bg-white/5 !border-t-white/10 text-text-secondary hover:text-text-primary"
 									onclick={() => handleEditClient(client)}
 								>
 									Edit
@@ -1682,7 +1682,7 @@
 									{testingIndexer[idx.id] ? 'Testing...' : 'Test'}
 								</button>
 								<button
-									class="liquid-btn-sm !bg-white/5 !border-t-white/10 text-text-secondary hover:text-white"
+									class="liquid-btn-sm !bg-white/5 !border-t-white/10 text-text-secondary hover:text-text-primary"
 									onclick={() => handleDeleteIndexer(idx.id)}
 								>
 									Delete
@@ -1861,7 +1861,7 @@
 						{editingPreset ? 'Update Preset' : 'Add Preset'}
 					</button>
 					{#if editingPreset}
-						<button type="button" class="liquid-btn !bg-white/5 !border-t-white/10 text-text-secondary hover:text-white" onclick={resetPresetForm}>
+						<button type="button" class="liquid-btn !bg-white/5 !border-t-white/10 text-text-secondary hover:text-text-primary" onclick={resetPresetForm}>
 							Cancel
 						</button>
 					{/if}
@@ -2017,7 +2017,7 @@
 										Edit
 									</button>
 									<button
-										class="liquid-btn-sm !bg-white/5 !border-t-white/10 text-text-secondary hover:text-white"
+										class="liquid-btn-sm !bg-white/5 !border-t-white/10 text-text-secondary hover:text-text-primary"
 										onclick={() => handleDeletePreset(preset.id)}
 									>
 										Delete
@@ -2056,7 +2056,7 @@
 			<div class="overflow-x-auto">
 				<table class="w-full text-sm">
 					<thead>
-						<tr class="text-xs text-text-muted uppercase tracking-wide border-b border-white/10">
+						<tr class="text-xs text-text-muted uppercase tracking-wide border-b border-border-subtle">
 							<th class="text-left py-3 px-2 font-medium">Task</th>
 							<th class="text-center py-3 px-2 font-medium w-20">Last Run</th>
 							<th class="text-center py-3 px-2 font-medium w-20">Duration</th>

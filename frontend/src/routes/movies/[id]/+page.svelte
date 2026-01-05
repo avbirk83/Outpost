@@ -167,7 +167,7 @@
 		</div>
 	</div>
 {:else if error}
-	<div class="bg-white/5 border border-white/10 text-text-secondary px-4 py-3 rounded-lg">
+	<div class="bg-glass border border-border-subtle text-text-secondary px-4 py-3 rounded-lg">
 		{error}
 		<button class="ml-2 underline" onclick={() => error = null}>Dismiss</button>
 	</div>
@@ -276,13 +276,13 @@
 					<div class="absolute left-1/2 -translate-x-1/2 mt-2 w-48 py-1 z-[60] bg-[#141416] border border-white/10 rounded-2xl shadow-xl overflow-hidden">
 						<button
 							onclick={() => { handleRefresh(); showManageMenu = false; }}
-							class="w-full text-left px-4 py-2.5 text-sm text-white/80 hover:bg-white/10 hover:text-white transition-colors"
+							class="w-full text-left px-4 py-2.5 text-sm text-text-secondary hover:bg-white/10 hover:text-text-primary transition-colors"
 						>
 							{refreshing ? 'Refreshing...' : 'Refresh Metadata'}
 						</button>
-						<button class="w-full text-left px-4 py-2.5 text-sm text-white/80 hover:bg-white/10 hover:text-white transition-colors" onclick={() => showManageMenu = false}>Edit Metadata</button>
-						<button class="w-full text-left px-4 py-2.5 text-sm text-white/80 hover:bg-white/10 hover:text-white transition-colors" onclick={() => showManageMenu = false}>Fix Match</button>
-						<div class="border-t border-white/10 my-1"></div>
+						<button class="w-full text-left px-4 py-2.5 text-sm text-text-secondary hover:bg-white/10 hover:text-text-primary transition-colors" onclick={() => showManageMenu = false}>Edit Metadata</button>
+						<button class="w-full text-left px-4 py-2.5 text-sm text-text-secondary hover:bg-white/10 hover:text-text-primary transition-colors" onclick={() => showManageMenu = false}>Fix Match</button>
+						<div class="border-t border-border-subtle my-1"></div>
 						<button class="w-full text-left px-4 py-2.5 text-sm text-red-400 hover:bg-white/10 hover:text-red-300 transition-colors" onclick={() => showManageMenu = false}>Delete</button>
 					</div>
 				{/if}
@@ -304,7 +304,7 @@
 						</div>
 					{/if}
 					{#if mediaInfo.videoStreams?.length && mediaInfo.audioStreams?.length}
-						<span class="text-white/20">|</span>
+						<span class="text-text-muted">|</span>
 					{/if}
 					{#if mediaInfo.audioStreams?.length}
 						<div class="w-[140px]">
@@ -318,7 +318,7 @@
 						</div>
 					{/if}
 					{#if (mediaInfo.videoStreams?.length || mediaInfo.audioStreams?.length)}
-						<span class="text-white/20">|</span>
+						<span class="text-text-muted">|</span>
 					{/if}
 					<div class="w-[110px]">
 						<Dropdown

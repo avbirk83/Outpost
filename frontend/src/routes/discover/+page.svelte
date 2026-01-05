@@ -291,12 +291,12 @@
 										{activeTab === 'movies' ? 'Movie' : 'TV Series'}
 									</span>
 								</div>
-								<h1 class="text-4xl md:text-5xl font-bold text-white mb-3">{currentHero.title || currentHero.name}</h1>
+								<h1 class="text-4xl md:text-5xl font-bold text-text-primary mb-3">{currentHero.title || currentHero.name}</h1>
 								<p class="text-text-secondary text-lg mb-2">
 									{currentHero.releaseDate?.substring(0, 4) || ''}
 									{#if currentHero.voteAverage}
 										<span class="mx-2">•</span>
-										<span class="text-white">{currentHero.voteAverage.toFixed(1)}</span>
+										<span class="text-text-primary">{currentHero.voteAverage.toFixed(1)}</span>
 									{/if}
 								</p>
 								{#if currentHero.overview}
@@ -376,7 +376,7 @@
 		<!-- Content sections -->
 		<div class="space-y-8 pb-8">
 			{#if error}
-				<div class="mx-[60px] bg-white/5 border border-white/10 text-text-secondary px-4 py-3 rounded-xl flex items-center justify-between">
+				<div class="mx-[60px] bg-glass border border-border-subtle text-text-secondary px-4 py-3 rounded-xl flex items-center justify-between">
 					<span>{error}</span>
 					<button class="text-text-muted hover:text-text-secondary" onclick={() => (error = null)} title="Dismiss">
 						<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

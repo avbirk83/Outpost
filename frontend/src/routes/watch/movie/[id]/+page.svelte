@@ -43,7 +43,7 @@
 	<div class="flex items-center justify-center h-screen bg-black">
 		<div class="text-center">
 			<p class="text-text-secondary mb-4">{error}</p>
-			<a href="/library" class="text-white/70 hover:text-white">Back to Library</a>
+			<a href="/library" class="text-text-secondary hover:text-text-primary">Back to Library</a>
 		</div>
 	</div>
 {:else if movie}

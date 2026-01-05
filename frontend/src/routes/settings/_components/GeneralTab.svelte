@@ -117,7 +117,7 @@
 		{/if}
 	</div>
 
-	<div class="pt-4 border-t border-white/10">
+	<div class="pt-4 border-t border-border-subtle">
 		<label class={labelClass}>Refresh All Metadata</label>
 		<p class="text-xs text-text-muted mb-2">
 			Re-fetch metadata from TMDB for all movies and TV shows in your library
@@ -151,7 +151,7 @@
 		{/if}
 	</div>
 
-	<div class="pt-4 border-t border-white/10">
+	<div class="pt-4 border-t border-border-subtle">
 		<label class={labelClass}>Clear Library Data</label>
 		<p class="text-xs text-text-muted mb-2">
 			Remove all movies, TV shows, and watch progress. Library folders will be kept but all scanned media will be deleted.
@@ -301,7 +301,7 @@
 							{scanning[lib.id] || (scanProgress?.scanning && scanProgress.library === lib.name) ? 'Scanning...' : 'Scan'}
 						</button>
 						<button
-							class="liquid-btn-sm !bg-white/5 !border-t-white/10 text-text-secondary hover:text-white"
+							class="liquid-btn-sm !bg-white/5 !border-t-white/10 text-text-secondary hover:text-text-primary"
 							onclick={() => onDeleteLibrary(lib.id)}
 						>
 							Delete

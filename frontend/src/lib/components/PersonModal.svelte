@@ -139,7 +139,7 @@
 
 						<!-- Info -->
 						<div class="flex-1 min-w-0">
-							<h2 class="text-2xl font-bold text-white mb-1">{person.name}</h2>
+							<h2 class="text-2xl font-bold text-text-primary mb-1">{person.name}</h2>
 							{#if person.knownFor}
 								<p class="text-sm text-text-muted mb-3">{person.knownFor}</p>
 							{/if}
@@ -213,7 +213,7 @@
 												</div>
 											{/if}
 										</div>
-										<p class="mt-1.5 text-xs text-white truncate">{item.title}</p>
+										<p class="mt-1.5 text-xs text-text-primary truncate">{item.title}</p>
 										<p class="text-[10px] text-text-muted">{item.year}</p>
 									</button>
 								{/each}
@@ -249,7 +249,7 @@
 												</div>
 											{/if}
 										</div>
-										<p class="mt-1.5 text-xs text-white truncate">{credit.title}</p>
+										<p class="mt-1.5 text-xs text-text-primary truncate">{credit.title}</p>
 										{#if credit.character}
 											<p class="text-[10px] text-text-muted truncate">{credit.character}</p>
 										{/if}

@@ -178,7 +178,7 @@
 								<svg class="w-5 h-5 text-amber-500 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24">
 									<path d="M10 4H4c-1.11 0-2 .89-2 2v12c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V8c0-1.11-.89-2-2-2h-8l-2-2z" />
 								</svg>
-								<span class="text-sm text-text-primary group-hover:text-white truncate">{dir.name}</span>
+								<span class="text-sm text-text-primary group-hover:text-cream truncate">{dir.name}</span>
 							</button>
 						{/each}
 					</div>
@@ -190,7 +190,7 @@
 				<button
 					type="button"
 					onclick={handleClose}
-					class="liquid-btn-sm !bg-white/5 text-text-secondary hover:text-white"
+					class="liquid-btn-sm !bg-white/5 text-text-secondary hover:text-text-primary"
 				>
 					Cancel
 				</button>

@@ -166,7 +166,7 @@
 		<div class="flex items-center gap-4">
 			<h1 class="text-2xl font-bold text-text-primary">Wanted</h1>
 			{#if items.length > 0}
-				<div class="inline-flex items-center px-3 py-1.5 rounded-xl bg-black/40 backdrop-blur-md border border-white/10 text-sm text-white/60">
+				<div class="inline-flex items-center px-3 py-1.5 rounded-xl bg-black/40 backdrop-blur-md border border-white/10 text-sm text-text-muted">
 					{items.filter(i => i.monitored).length} monitored
 				</div>
 			{/if}
@@ -174,7 +174,7 @@
 	</div>
 
 	{#if error}
-		<div class="bg-white/5 border border-white/10 text-text-secondary px-4 py-3 rounded-xl flex items-center justify-between">
+		<div class="bg-glass border border-border-subtle text-text-secondary px-4 py-3 rounded-xl flex items-center justify-between">
 			<span>{error}</span>
 			<button class="text-text-muted hover:text-text-secondary" onclick={() => (error = null)}>
 				<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -276,7 +276,7 @@
 										</button>
 										<button
 											onclick={cancelDelete}
-											class="liquid-btn-sm !bg-white/5 !border-t-white/10 text-text-secondary hover:text-white"
+											class="liquid-btn-sm !bg-white/5 !border-t-white/10 text-text-secondary hover:text-text-primary"
 										>
 											Cancel
 										</button>
@@ -284,7 +284,7 @@
 										<button
 											onclick={() => handleDeleteClick(item.id)}
 											disabled={processingIds.has(item.id)}
-											class="liquid-btn-sm !bg-white/5 !border-t-white/10 text-text-secondary hover:text-white disabled:opacity-50"
+											class="liquid-btn-sm !bg-white/5 !border-t-white/10 text-text-secondary hover:text-text-primary disabled:opacity-50"
 										>
 											Remove
 										</button>
@@ -295,11 +295,11 @@
 					</div>
 
 					{#if searchResults[item.id] && searchResults[item.id].length > 0}
-						<div class="border-t border-white/10 p-4 bg-bg-primary/50">
+						<div class="border-t border-border-subtle p-4 bg-bg-primary/50">
 							<h4 class="text-sm font-medium text-text-secondary mb-3">Search Results ({searchResults[item.id].length})</h4>
 							<div class="overflow-x-auto">
 								<table class="w-full text-sm">
-									<thead class="text-xs text-text-muted border-b border-white/10">
+									<thead class="text-xs text-text-muted border-b border-border-subtle">
 										<tr>
 											<th class="py-2 px-2 text-left">Title</th>
 											<th class="py-2 px-2 text-left">Quality</th>
@@ -370,7 +370,7 @@
 							</div>
 						</div>
 					{:else if searchResults[item.id] && searchResults[item.id].length === 0}
-						<div class="border-t border-white/10 p-4 text-center text-text-muted text-sm">
+						<div class="border-t border-border-subtle p-4 text-center text-text-muted text-sm">
 							No results found
 						</div>
 					{/if}

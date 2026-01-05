@@ -29,6 +29,6 @@
 			</div>
 		{/if}
 	</div>
-	<p class="mt-2 text-sm font-medium text-text-primary truncate group-hover:text-white transition-colors">{name}</p>
+	<p class="mt-2 text-sm font-medium text-text-primary truncate group-hover:text-cream transition-colors">{name}</p>
 	<p class="text-xs text-text-muted truncate">{role}</p>
 </button>

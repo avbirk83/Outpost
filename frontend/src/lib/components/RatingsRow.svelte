@@ -22,7 +22,7 @@
 			title="TMDB Rating"
 		>
 			<img src="/icons/tmdb.svg" alt="TMDB" class="w-6 h-6 rounded" />
-			<span class="text-base font-bold text-white">{tmdbRating.toFixed(1)}</span>
+			<span class="text-base font-bold text-text-primary">{tmdbRating.toFixed(1)}</span>
 		</a>
 	{/if}
 	<div

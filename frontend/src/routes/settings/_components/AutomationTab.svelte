@@ -94,7 +94,7 @@
 		<div class="overflow-x-auto">
 			<table class="w-full text-sm">
 				<thead>
-					<tr class="text-xs text-text-muted uppercase tracking-wide border-b border-white/10">
+					<tr class="text-xs text-text-muted uppercase tracking-wide border-b border-border-subtle">
 						<th class="text-left py-3 px-2 font-medium">Task</th>
 						<th class="text-center py-3 px-2 font-medium w-20">Last Run</th>
 						<th class="text-center py-3 px-2 font-medium w-20">Duration</th>
