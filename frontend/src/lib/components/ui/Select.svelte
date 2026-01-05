@@ -82,7 +82,7 @@
 
 	{#if open}
 		<div
-			class="absolute left-0 right-0 top-full max-h-64 overflow-y-auto
+			class="absolute left-0 right-0 top-full max-h-64 overflow-y-auto scrollbar-thin
 				bg-[#1a1a1a] rounded-b-xl border-t border-white/5 shadow-2xl"
 		>
 			{#each options as opt}

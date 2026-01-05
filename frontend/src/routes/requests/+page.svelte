@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { getRequests, updateRequest, deleteRequest, getTmdbImageUrl, type Request } from '$lib/api';
 	import { auth } from '$lib/stores/auth';
+	import { toast } from '$lib/stores/toast';
 	import TypeBadge from '$lib/components/TypeBadge.svelte';
 	import Select from '$lib/components/ui/Select.svelte';
 
@@ -10,6 +11,7 @@
 	let error: string | null = $state(null);
 	let statusFilter = $state('');
 	let processingIds: Set<number> = $state(new Set());
+	let confirmingDeleteId: number | null = $state(null);
 	let user = $state<{ role: string } | null>(null);
 
 	auth.subscribe((value) => {
@@ -32,13 +34,16 @@
 	}
 
 	async function handleApprove(id: number) {
+		const request = requests.find(r => r.id === id);
 		processingIds.add(id);
 		processingIds = processingIds;
 		try {
 			await updateRequest(id, 'approved');
 			await loadRequests();
+			toast.success(`Approved! Searching for ${request?.title || 'item'}...`);
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to approve request';
+			toast.error('Failed to approve request');
 		} finally {
 			processingIds.delete(id);
 			processingIds = processingIds;
@@ -52,23 +57,35 @@
 		try {
 			await updateRequest(id, 'denied', reason || undefined);
 			await loadRequests();
+			toast.info('Request denied');
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to deny request';
+			toast.error('Failed to deny request');
 		} finally {
 			processingIds.delete(id);
 			processingIds = processingIds;
 		}
 	}
 
-	async function handleDelete(id: number) {
-		if (!confirm('Delete this request?')) return;
+	function handleDeleteClick(id: number) {
+		confirmingDeleteId = id;
+	}
+
+	function cancelDelete() {
+		confirmingDeleteId = null;
+	}
+
+	async function confirmDelete(id: number) {
 		processingIds.add(id);
 		processingIds = processingIds;
+		confirmingDeleteId = null;
 		try {
 			await deleteRequest(id);
 			await loadRequests();
+			toast.success('Request deleted');
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to delete request';
+			toast.error('Failed to delete request');
 		} finally {
 			processingIds.delete(id);
 			processingIds = processingIds;
@@ -231,13 +248,29 @@
 										</button>
 									{/if}
 									{#if user?.role === 'admin' || (request.status === 'requested')}
-										<button
-											onclick={() => handleDelete(request.id)}
-											disabled={processingIds.has(request.id)}
-											class="px-3 py-1.5 rounded-lg text-sm font-medium bg-white/10 text-text-secondary hover:bg-white/20 hover:text-white disabled:opacity-50 transition-colors"
-										>
-											Delete
-										</button>
+										{#if confirmingDeleteId === request.id}
+											<button
+												onclick={() => confirmDelete(request.id)}
+												disabled={processingIds.has(request.id)}
+												class="px-3 py-1.5 rounded-lg text-sm font-medium bg-red-600 text-white hover:bg-red-500 disabled:opacity-50 transition-colors"
+											>
+												Confirm
+											</button>
+											<button
+												onclick={cancelDelete}
+												class="px-3 py-1.5 rounded-lg text-sm font-medium bg-white/10 text-text-secondary hover:bg-white/20 hover:text-white transition-colors"
+											>
+												Cancel
+											</button>
+										{:else}
+											<button
+												onclick={() => handleDeleteClick(request.id)}
+												disabled={processingIds.has(request.id)}
+												class="px-3 py-1.5 rounded-lg text-sm font-medium bg-white/10 text-text-secondary hover:bg-white/20 hover:text-white disabled:opacity-50 transition-colors"
+											>
+												Delete
+											</button>
+										{/if}
 									{/if}
 								</div>
 							</div>

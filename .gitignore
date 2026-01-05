@@ -36,6 +36,9 @@ frontend/build/
 # Docker volumes
 docker-data/
 
+# Test folders
+docker/test-qbit/
+
 # Downloaded logos (except banners for README)
 logos/*
 !logos/github-banner.png

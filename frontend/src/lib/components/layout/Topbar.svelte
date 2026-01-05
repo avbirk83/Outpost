@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
-	import { createRequest, getImageUrl } from '$lib/api';
+	import { createRequest, getImageUrl, getSystemStatus, type SystemStatus } from '$lib/api';
+	import { onMount, onDestroy } from 'svelte';
 
 	interface Props {
 		username?: string;
@@ -12,6 +13,27 @@
 	let { username = '', isAdmin = false, onLogout }: Props = $props();
 
 	let showUserMenu = $state(false);
+
+	// System status
+	let systemStatus: SystemStatus | null = $state(null);
+	let statusInterval: ReturnType<typeof setInterval> | null = null;
+
+	onMount(() => {
+		loadSystemStatus();
+		statusInterval = setInterval(loadSystemStatus, 10000);
+	});
+
+	onDestroy(() => {
+		if (statusInterval) clearInterval(statusInterval);
+	});
+
+	async function loadSystemStatus() {
+		try {
+			systemStatus = await getSystemStatus();
+		} catch (e) {
+			// Silently fail
+		}
+	}
 
 	// Search state
 	let query = $state('');
@@ -533,15 +555,64 @@
 
 	<!-- Right: Actions + User -->
 	<div class="flex items-center gap-2">
+		<!-- Activity Indicator -->
+		{#if systemStatus && systemStatus.runningTasks.length > 0}
+			<div
+				class="w-10 h-10 rounded-full bg-cream/10 flex items-center justify-center text-blue-400"
+				title={"Running: " + systemStatus.runningTasks.join(", ")}
+			>
+				<div class="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
+			</div>
+		{/if}
+
+		<!-- Downloads (admin only) -->
+		{#if isAdmin}
+			<a
+				href="/downloads"
+				class="relative w-10 h-10 rounded-full bg-cream/10 flex items-center justify-center text-text-secondary hover:text-cream hover:bg-cream/20 transition-all"
+				title="Downloads"
+			>
+				<svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+				</svg>
+				{#if systemStatus && systemStatus.activeDownloads > 0}
+					<span class="absolute -top-1 -right-1 min-w-[18px] h-[18px] rounded-full bg-blue-500 text-white text-[10px] font-bold flex items-center justify-center px-1">
+						{systemStatus.activeDownloads}
+					</span>
+				{/if}
+			</a>
+
+			<!-- Wanted (admin only) -->
+			<a
+				href="/wanted"
+				class="relative w-10 h-10 rounded-full bg-cream/10 flex items-center justify-center text-text-secondary hover:text-cream hover:bg-cream/20 transition-all"
+				title="Wanted"
+			>
+				<svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+				</svg>
+				{#if systemStatus && systemStatus.wantedCount > 0}
+					<span class="absolute -top-1 -right-1 min-w-[18px] h-[18px] rounded-full bg-purple-500 text-white text-[10px] font-bold flex items-center justify-center px-1">
+						{systemStatus.wantedCount}
+					</span>
+				{/if}
+			</a>
+		{/if}
+
 		<!-- Requests -->
 		<a
 			href="/requests"
-			class="w-10 h-10 rounded-full bg-cream/10 flex items-center justify-center text-text-secondary hover:text-cream hover:bg-cream/20 transition-all"
+			class="relative w-10 h-10 rounded-full bg-cream/10 flex items-center justify-center text-text-secondary hover:text-cream hover:bg-cream/20 transition-all"
 			title="Requests"
 		>
 			<svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
 			</svg>
+			{#if systemStatus && systemStatus.pendingRequests > 0}
+				<span class="absolute -top-1 -right-1 min-w-[18px] h-[18px] rounded-full bg-amber-500 text-white text-[10px] font-bold flex items-center justify-center px-1">
+					{systemStatus.pendingRequests}
+				</span>
+			{/if}
 		</a>
 
 		<!-- Settings (admin only) -->

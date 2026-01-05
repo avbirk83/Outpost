@@ -232,6 +232,83 @@ func (m *Manager) Search(params SearchParams) ([]SearchResult, error) {
 	return allResults, nil
 }
 
+
+
+// SearchWithIndexerIDs searches only the specified indexers
+func (m *Manager) SearchWithIndexerIDs(params SearchParams, indexerIDs []int64) ([]SearchResult, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if len(m.indexers) == 0 || len(indexerIDs) == 0 {
+		return nil, nil
+	}
+
+	// Create a set of allowed IDs for quick lookup
+	allowedIDs := make(map[int64]bool)
+	for _, id := range indexerIDs {
+		allowedIDs[id] = true
+	}
+
+	var wg sync.WaitGroup
+	resultsChan := make(chan []SearchResult, len(indexerIDs))
+	errorsChan := make(chan error, len(indexerIDs))
+
+	for id, client := range m.indexers {
+		// Skip if not in allowed list
+		if !allowedIDs[id] {
+			continue
+		}
+
+		config := m.configs[id]
+		if !config.Enabled {
+			continue
+		}
+
+		wg.Add(1)
+		go func(id int64, c Client, cfg *IndexerConfig) {
+			defer wg.Done()
+
+			results, err := c.Search(params)
+			if err != nil {
+				errorsChan <- fmt.Errorf("indexer %s: %w", cfg.Name, err)
+				return
+			}
+
+			// Add indexer info to results
+			for i := range results {
+				results[i].IndexerID = id
+				results[i].IndexerName = cfg.Name
+				results[i].IndexerType = cfg.Type
+			}
+
+			resultsChan <- results
+		}(id, client, config)
+	}
+
+	// Wait for all searches to complete
+	go func() {
+		wg.Wait()
+		close(resultsChan)
+		close(errorsChan)
+	}()
+
+	// Collect results
+	var allResults []SearchResult
+	for results := range resultsChan {
+		allResults = append(allResults, results...)
+	}
+
+	// Sort by seeders (descending)
+	sort.Slice(allResults, func(i, j int) bool {
+		if allResults[i].Seeders != allResults[j].Seeders {
+			return allResults[i].Seeders > allResults[j].Seeders
+		}
+		return allResults[i].Size > allResults[j].Size
+	})
+
+	return allResults, nil
+}
+
 // TestIndexer tests a specific indexer connection
 func (m *Manager) TestIndexer(id int64) error {
 	m.mu.RLock()
@@ -264,6 +341,13 @@ func (m *Manager) Clear() {
 	defer m.mu.Unlock()
 	m.indexers = make(map[int64]Client)
 	m.configs = make(map[int64]*IndexerConfig)
+}
+
+// Count returns the number of loaded indexers
+func (m *Manager) Count() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return len(m.indexers)
 }
 
 // FetchRSS fetches RSS feed from a specific indexer

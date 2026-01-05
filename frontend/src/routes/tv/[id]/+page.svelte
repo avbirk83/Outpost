@@ -111,11 +111,22 @@
 	}
 
 	let deletingEpisode: number | null = $state(null);
+	let confirmingDeleteEpisodeId: number | null = $state(null);
 
-	async function handleDeleteEpisode(episodeId: number, e: Event) {
+	function handleDeleteEpisodeClick(episodeId: number, e: Event) {
 		e.stopPropagation();
-		if (!confirm('Are you sure you want to delete this episode? This will also delete the file.')) return;
+		confirmingDeleteEpisodeId = episodeId;
+	}
+
+	function cancelDeleteEpisode(e: Event) {
+		e.stopPropagation();
+		confirmingDeleteEpisodeId = null;
+	}
+
+	async function confirmDeleteEpisode(episodeId: number, e: Event) {
+		e.stopPropagation();
 		deletingEpisode = episodeId;
+		confirmingDeleteEpisodeId = null;
 		try {
 			await deleteEpisode(episodeId);
 			// Refresh show data to update the episode list
@@ -505,20 +516,44 @@
 												{/if}
 											</button>
 											{#if user?.role === 'admin'}
-												<button
-													onclick={(e) => handleDeleteEpisode(episode.id, e)}
-													disabled={deletingEpisode === episode.id}
-													class="p-1.5 rounded-full text-text-muted hover:bg-red-500/20 hover:text-red-400 transition-colors"
-													title="Delete episode"
-												>
-													{#if deletingEpisode === episode.id}
-														<div class="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
-													{:else}
+												{#if confirmingDeleteEpisodeId === episode.id}
+													<!-- Confirm button (checkmark) -->
+													<button
+														onclick={(e) => confirmDeleteEpisode(episode.id, e)}
+														disabled={deletingEpisode === episode.id}
+														class="p-1.5 rounded-full text-green-400 hover:bg-green-500/20 transition-colors"
+														title="Confirm delete"
+													>
+														{#if deletingEpisode === episode.id}
+															<div class="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
+														{:else}
+															<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+																<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+															</svg>
+														{/if}
+													</button>
+													<!-- Cancel button (X) -->
+													<button
+														onclick={(e) => cancelDeleteEpisode(e)}
+														class="p-1.5 rounded-full text-text-muted hover:bg-white/10 hover:text-white transition-colors"
+														title="Cancel"
+													>
+														<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+															<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+														</svg>
+													</button>
+												{:else}
+													<button
+														onclick={(e) => handleDeleteEpisodeClick(episode.id, e)}
+														disabled={deletingEpisode === episode.id}
+														class="p-1.5 rounded-full text-text-muted hover:bg-red-500/20 hover:text-red-400 transition-colors"
+														title="Delete episode"
+													>
 														<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 															<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
 														</svg>
-													{/if}
-												</button>
+													</button>
+												{/if}
 											{/if}
 										</div>
 									</div>

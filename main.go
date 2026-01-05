@@ -57,7 +57,7 @@ func main() {
 	indexers := indexer.NewManager()
 
 	// Initialize scheduler
-	sched := scheduler.New(db, indexers, downloads)
+	sched := scheduler.New(db, indexers, downloads, scan)
 
 	// Initialize server with scheduler
 	server := api.NewServer(cfg, db, scan, meta, authSvc, downloads, indexers, sched)

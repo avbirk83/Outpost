@@ -696,6 +696,34 @@ export interface Indexer {
 	categories?: string;
 	priority: number;
 	enabled: boolean;
+	prowlarrId?: number;
+	syncedFromProwlarr?: boolean;
+	protocol?: string;
+	supportsMovies?: boolean;
+	supportsTV?: boolean;
+	supportsMusic?: boolean;
+	supportsBooks?: boolean;
+	supportsAnime?: boolean;
+	supportsImdb?: boolean;
+	supportsTmdb?: boolean;
+	supportsTvdb?: boolean;
+}
+
+export interface ProwlarrConfig {
+	id?: number;
+	url: string;
+	apiKey?: string;
+	autoSync: boolean;
+	syncIntervalHours: number;
+	lastSync?: string;
+	createdAt?: string;
+}
+
+export interface IndexerTag {
+	id: number;
+	prowlarrId: number;
+	name: string;
+	indexerCount?: number;
 }
 
 export interface SearchResult {
@@ -805,6 +833,74 @@ export async function testIndexer(id: number): Promise<TestConnectionResult> {
 
 export async function getIndexerCapabilities(id: number): Promise<IndexerCapabilities> {
 	const response = await apiFetch(`${API_BASE}/indexers/${id}/capabilities`);
+	if (!response.ok) {
+		throw new Error(`API error: ${response.status}`);
+	}
+	return response.json();
+}
+
+
+
+// Prowlarr sync functions
+
+export async function getProwlarrConfig(): Promise<ProwlarrConfig | null> {
+	const response = await apiFetch(`${API_BASE}/prowlarr/config`);
+	if (!response.ok) {
+		throw new Error(`API error: ${response.status}`);
+	}
+	const data = await response.json();
+	return data.url ? data : null;
+}
+
+export async function saveProwlarrConfig(config: Partial<ProwlarrConfig>): Promise<ProwlarrConfig> {
+	const response = await apiFetch(`${API_BASE}/prowlarr/config`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(config)
+	});
+	if (!response.ok) {
+		throw new Error(`API error: ${response.status}`);
+	}
+	return response.json();
+}
+
+export interface ProwlarrTestResult {
+	success: boolean;
+	error?: string;
+	indexerCount?: number;
+}
+
+export async function testProwlarrConnection(url: string, apiKey: string): Promise<ProwlarrTestResult> {
+	const response = await apiFetch(`${API_BASE}/prowlarr/test`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ url, apiKey })
+	});
+	if (!response.ok) {
+		throw new Error(`API error: ${response.status}`);
+	}
+	return response.json();
+}
+
+export interface ProwlarrSyncResult {
+	success: boolean;
+	error?: string;
+	synced?: number;
+	indexers?: Indexer[];
+}
+
+export async function syncProwlarr(): Promise<ProwlarrSyncResult> {
+	const response = await apiFetch(`${API_BASE}/prowlarr/sync`, {
+		method: 'POST'
+	});
+	if (!response.ok) {
+		throw new Error(`API error: ${response.status}`);
+	}
+	return response.json();
+}
+
+export async function getIndexerTags(): Promise<IndexerTag[]> {
+	const response = await apiFetch(`${API_BASE}/indexer-tags`);
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
 	}
@@ -1210,6 +1306,9 @@ export interface Request {
 	year?: number;
 	overview?: string;
 	posterPath?: string;
+	backdropPath?: string;
+	qualityProfileId?: number;
+	qualityPresetId?: number;
 	status: 'requested' | 'approved' | 'denied' | 'available';
 	statusReason?: string;
 	requestedAt: string;
@@ -1234,6 +1333,9 @@ export async function createRequest(request: {
 	year?: number;
 	overview?: string;
 	posterPath?: string;
+	backdropPath?: string;
+	qualityProfileId?: number;
+	qualityPresetId?: number;
 }): Promise<Request> {
 	const response = await apiFetch(`${API_BASE}/requests`, {
 		method: 'POST',
@@ -1249,11 +1351,11 @@ export async function createRequest(request: {
 	return response.json();
 }
 
-export async function updateRequest(id: number, status: string, statusReason?: string): Promise<Request> {
+export async function updateRequest(id: number, status: string, statusReason?: string, qualityProfileId?: number): Promise<Request> {
 	const response = await apiFetch(`${API_BASE}/requests/${id}`, {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ status, statusReason })
+		body: JSON.stringify({ status, statusReason, qualityProfileId })
 	});
 	if (!response.ok) {
 		throw new Error(`API error: ${response.status}`);
@@ -1783,6 +1885,8 @@ export interface QualityPreset {
 	name: string;
 	isDefault: boolean;
 	isBuiltIn: boolean;
+	enabled: boolean;
+	priority: number;
 	resolution: string;
 	source: string;
 	hdrFormats: string | null;
@@ -1831,6 +1935,24 @@ export async function updateQualityPreset(id: number, preset: Partial<QualityPre
 export async function deleteQualityPreset(id: number): Promise<void> {
 	const response = await apiFetch(`${API_BASE}/quality/presets/${id}`, {
 		method: 'DELETE',
+	});
+	if (!response.ok) throw new Error(`API error: ${response.status}`);
+}
+
+export async function toggleQualityPresetEnabled(id: number, enabled: boolean): Promise<void> {
+	const response = await apiFetch(`${API_BASE}/quality/presets/${id}/toggle`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ enabled }),
+	});
+	if (!response.ok) throw new Error(`API error: ${response.status}`);
+}
+
+export async function updateQualityPresetPriority(id: number, priority: number): Promise<void> {
+	const response = await apiFetch(`${API_BASE}/quality/presets/${id}/priority`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ priority }),
 	});
 	if (!response.ok) throw new Error(`API error: ${response.status}`);
 }
@@ -1942,6 +2064,22 @@ export interface StorageStatus {
 
 export async function getStorageStatus(): Promise<StorageStatus> {
 	const response = await apiFetch(`${API_BASE}/storage/status`);
+	if (!response.ok) throw new Error(`API error: ${response.status}`);
+	return response.json();
+}
+
+// System Status API
+
+export interface SystemStatus {
+	pendingRequests: number;
+	activeDownloads: number;
+	runningTasks: string[];
+	diskUsed: number;
+	diskTotal: number;
+}
+
+export async function getSystemStatus(): Promise<SystemStatus> {
+	const response = await apiFetch(`${API_BASE}/system/status`);
 	if (!response.ok) throw new Error(`API error: ${response.status}`);
 	return response.json();
 }

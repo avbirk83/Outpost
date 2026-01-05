@@ -6,6 +6,7 @@
 	import { onMount } from 'svelte';
 	import { auth } from '$lib/stores/auth';
 	import Topbar from '$lib/components/layout/Topbar.svelte';
+	import StatusBar from '$lib/components/layout/StatusBar.svelte';
 	import Toast from '$lib/components/Toast.svelte';
 
 	let { children } = $props();
@@ -71,9 +72,12 @@
 			/>
 
 			<!-- Main content area -->
-			<main class="pt-16">
+			<main class="pt-16 pb-8">
 				{@render children()}
 			</main>
+
+			<!-- Status Bar -->
+			<StatusBar isAdmin={user.role === 'admin'} />
 		</div>
 	{/if}
 

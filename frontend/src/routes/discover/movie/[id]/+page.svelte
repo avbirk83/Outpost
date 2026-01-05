@@ -13,6 +13,7 @@
 	import MediaDetail from '$lib/components/MediaDetail.svelte';
 	import IconButton from '$lib/components/IconButton.svelte';
 	import TrailerModal from '$lib/components/TrailerModal.svelte';
+	import RequestModal from '$lib/components/RequestModal.svelte';
 
 	let movie: DiscoverMovieDetailWithStatus | null = $state(null);
 	let loading = $state(true);
@@ -22,6 +23,7 @@
 	let inWatchlist = $state(false);
 	let watchlistLoading = $state(false);
 	let showTrailer = $state(false);
+	let showRequestModal = $state(false);
 
 	onMount(async () => {
 		const id = parseInt($page.params.id);
@@ -42,8 +44,13 @@
 		}
 	});
 
-	async function handleRequest() {
+	function openRequestModal() {
+		showRequestModal = true;
+	}
+
+	async function handleRequest(qualityPresetId: number) {
 		if (!movie) return;
+		showRequestModal = false;
 		requesting = true;
 
 		try {
@@ -54,10 +61,12 @@
 				title: movie.title,
 				year,
 				overview: movie.overview || undefined,
-				posterPath: movie.posterPath || undefined
+				posterPath: movie.posterPath || undefined,
+				backdropPath: movie.backdropPath || undefined,
+				qualityPresetId
 			});
 			requested = true;
-			toast.success('Request submitted');
+			toast.success('Request submitted! It will be searched once approved.');
 		} catch (e) {
 			if (e instanceof Error && e.message === 'Already requested') {
 				requested = true;
@@ -177,7 +186,7 @@
 					</svg>
 				</IconButton>
 			{:else}
-				<IconButton onclick={handleRequest} disabled={requesting} title="Request">
+				<IconButton onclick={openRequestModal} disabled={requesting} title="Request">
 					{#if requesting}
 						<div class="w-5 h-5 border-2 border-white/50 border-t-transparent rounded-full animate-spin"></div>
 					{:else}
@@ -206,4 +215,21 @@
 		mediaType="movie"
 		title={movie.title}
 	/>
+
+	<!-- Request Modal -->
+	{#if showRequestModal}
+		<RequestModal
+			item={{
+				title: movie.title,
+				year: movie.releaseDate ? parseInt(movie.releaseDate.substring(0, 4)) : undefined,
+				type: 'movie',
+				posterPath: movie.posterPath,
+				backdropPath: movie.backdropPath,
+				overview: movie.overview
+			}}
+			mode="request"
+			onConfirm={handleRequest}
+			onCancel={() => showRequestModal = false}
+		/>
+	{/if}
 {/if}

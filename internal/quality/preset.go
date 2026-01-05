@@ -11,6 +11,7 @@ import (
 type Preset struct {
 	ID                 int64    `json:"id"`
 	Name               string   `json:"name"`
+	MediaType          string   `json:"mediaType"`          // "movie", "tv", "anime"
 	IsDefault          bool     `json:"isDefault"`
 	IsBuiltIn          bool     `json:"isBuiltIn"`
 	Resolution         string   `json:"resolution"`         // "4k", "1080p", "720p", "480p"
@@ -32,23 +33,30 @@ type Preset struct {
 	CutoffMetBehavior  string   `json:"cutoffMetBehavior"`  // "stop" or "continue"
 
 	// Anime-specific
-	PreferDualAudio    bool     `json:"preferDualAudio"`
-	PreferSoftSubs     bool     `json:"preferSoftSubs"`
-	PreferHigherVersion bool    `json:"preferHigherVersion"` // v2 over v1
+	PreferDualAudio     bool   `json:"preferDualAudio"`
+	PreferDubbed        bool   `json:"preferDubbed"`
+	PreferredLanguage   string `json:"preferredLanguage"`   // "english", "japanese", "any"
+	PreferSoftSubs      bool   `json:"preferSoftSubs"`
+	PreferHigherVersion bool   `json:"preferHigherVersion"` // v2 over v1
 
 	// Size preferences
-	PreferSmallerSize  bool     `json:"preferSmallerSize"`
+	PreferSmallerSize bool `json:"preferSmallerSize"`
 }
 
 // Built-in presets
 var BuiltInPresets = []Preset{
+	// ============================================
+	// MOVIE PRESETS (8 total - quality matters most)
+	// ============================================
+
+	// 4K Tier (3 presets)
 	{
-		Name:              "Best Quality",
+		Name:              "4K Remux",
+		MediaType:         "movie",
 		IsBuiltIn:         true,
 		Resolution:        "4k",
 		MinResolution:     "1080p",
-		Sources:           []string{"remux", "bluray"},
-		Source:            "remux",
+		Sources:           []string{"remux"},
 		HDRFormats:        []string{"dv", "hdr10plus", "hdr10"},
 		AudioFormats:      []string{"atmos", "truehd", "dtshd", "dtsx"},
 		AudioChannels:     []string{"7.1", "5.1"},
@@ -59,53 +67,237 @@ var BuiltInPresets = []Preset{
 		CutoffMetBehavior: "stop",
 	},
 	{
-		Name:             "High Quality",
+		Name:             "4K HDR",
+		MediaType:        "movie",
+		IsBuiltIn:        true,
+		Resolution:       "4k",
+		MinResolution:    "1080p",
+		Sources:          []string{"bluray", "webdl", "webrip"},
+		HDRFormats:       []string{"dv", "hdr10plus", "hdr10"},
+		AudioFormats:     []string{"atmos", "truehd", "dtshd", "ddplus"},
+		AudioChannels:    []string{"7.1", "5.1"},
+		MinSeeders:       3,
+		AutoUpgrade:      true,
+		CutoffResolution: "2160p",
+	},
+	{
+		Name:             "4K",
+		MediaType:        "movie",
 		IsBuiltIn:        true,
 		Resolution:       "4k",
 		MinResolution:    "1080p",
 		Sources:          []string{"webdl", "webrip", "bluray"},
-		Source:           "web",
-		HDRFormats:       []string{"dv", "hdr10plus", "hdr10"},
 		MinSeeders:       3,
 		AutoUpgrade:      true,
 		CutoffResolution: "2160p",
-		CutoffSource:     "webdl",
 	},
+
+	// 1080p Tier (3 presets)
 	{
-		Name:          "Balanced",
+		Name:          "1080p Remux",
+		MediaType:     "movie",
 		IsBuiltIn:     true,
 		Resolution:    "1080p",
-		MinResolution: "720p",
-		Sources:       []string{"webdl", "webrip"},
-		Source:        "web",
+		MinResolution: "1080p",
+		Sources:       []string{"remux"},
+		AudioFormats:  []string{"atmos", "truehd", "dtshd", "dtsx"},
+		AudioChannels: []string{"7.1", "5.1"},
+		MinSeeders:    3,
+		AutoUpgrade:   true,
+		CutoffSource:  "remux",
+	},
+	{
+		Name:          "1080p BluRay",
+		MediaType:     "movie",
+		IsBuiltIn:     true,
+		Resolution:    "1080p",
+		MinResolution: "1080p",
+		Sources:       []string{"bluray", "webdl"},
+		AudioFormats:  []string{"truehd", "dtshd", "ddplus", "dts"},
+		AudioChannels: []string{"7.1", "5.1"},
 		MinSeeders:    3,
 		AutoUpgrade:   true,
 	},
 	{
-		Name:              "Storage Saver",
-		IsBuiltIn:         true,
-		Resolution:        "1080p",
-		MinResolution:     "720p",
-		Sources:           []string{"webdl", "webrip"},
-		Source:            "web",
-		Codec:             "hevc",
-		AudioFormats:      []string{"ddplus", "aac"},
-		MinSeeders:        3,
-		AutoUpgrade:       false,
-		PreferSmallerSize: true,
+		Name:          "1080p",
+		MediaType:     "movie",
+		IsBuiltIn:     true,
+		Resolution:    "1080p",
+		MinResolution: "720p",
+		Sources:       []string{"webdl", "webrip", "bluray"},
+		MinSeeders:    3,
+		AutoUpgrade:   true,
+	},
+
+	// 720p Tier (1 preset)
+	{
+		Name:          "720p",
+		MediaType:     "movie",
+		IsBuiltIn:     true,
+		Resolution:    "720p",
+		MinResolution: "480p",
+		Sources:       []string{"webdl", "webrip", "bluray"},
+		MinSeeders:    2,
+		AutoUpgrade:   false,
+	},
+
+	// 480p Tier (1 preset)
+	{
+		Name:          "480p",
+		MediaType:     "movie",
+		IsBuiltIn:     true,
+		Resolution:    "480p",
+		MinResolution: "480p",
+		Sources:       []string{"webdl", "webrip", "dvd"},
+		MinSeeders:    1,
+		AutoUpgrade:   false,
+	},
+
+	// ============================================
+	// TV PRESETS (6 total)
+	// ============================================
+
+	// 4K Tier (2 presets)
+	{
+		Name:             "4K HDR",
+		MediaType:        "tv",
+		IsBuiltIn:        true,
+		Resolution:       "4k",
+		MinResolution:    "1080p",
+		Sources:          []string{"webdl", "webrip"},
+		HDRFormats:       []string{"dv", "hdr10plus", "hdr10"},
+		MinSeeders:       3,
+		AutoUpgrade:      true,
+		CutoffResolution: "2160p",
 	},
 	{
-		Name:                "Anime",
+		Name:             "4K",
+		MediaType:        "tv",
+		IsBuiltIn:        true,
+		Resolution:       "4k",
+		MinResolution:    "1080p",
+		Sources:          []string{"webdl", "webrip"},
+		MinSeeders:       3,
+		AutoUpgrade:      true,
+		CutoffResolution: "2160p",
+	},
+
+	// 1080p Tier (2 presets)
+	{
+		Name:          "1080p",
+		MediaType:     "tv",
+		IsBuiltIn:     true,
+		Resolution:    "1080p",
+		MinResolution: "720p",
+		Sources:       []string{"webdl", "webrip"},
+		MinSeeders:    3,
+		AutoUpgrade:   true,
+	},
+	{
+		Name:          "1080p HDTV",
+		MediaType:     "tv",
+		IsBuiltIn:     true,
+		Resolution:    "1080p",
+		MinResolution: "720p",
+		Sources:       []string{"hdtv", "webdl", "webrip"},
+		MinSeeders:    2,
+		AutoUpgrade:   true,
+	},
+
+	// 720p Tier (1 preset)
+	{
+		Name:          "720p",
+		MediaType:     "tv",
+		IsBuiltIn:     true,
+		Resolution:    "720p",
+		MinResolution: "480p",
+		Sources:       []string{"webdl", "webrip", "hdtv"},
+		MinSeeders:    2,
+		AutoUpgrade:   false,
+	},
+
+	// Any/480p Tier (1 preset)
+	{
+		Name:          "Any",
+		MediaType:     "tv",
+		IsBuiltIn:     true,
+		Resolution:    "any",
+		MinResolution: "480p",
+		Sources:       []string{"any"},
+		MinSeeders:    1,
+		AutoUpgrade:   false,
+	},
+
+	// ============================================
+	// ANIME PRESETS (4 total - simple with editable preferences)
+	// ============================================
+
+	{
+		Name:                "4K",
+		MediaType:           "anime",
 		IsBuiltIn:           true,
-		Resolution:          "1080p",
-		MinResolution:       "720p",
+		Resolution:          "4k",
+		MinResolution:       "1080p",
 		Sources:             []string{"bluray", "webdl", "webrip"},
-		Source:              "bluray",
+		HDRFormats:          []string{"dv", "hdr10plus", "hdr10"},
 		AudioFormats:        []string{"flac", "aac", "opus"},
 		AudioChannels:       []string{"2.0", "5.1"},
 		MinSeeders:          2,
 		AutoUpgrade:         true,
-		PreferDualAudio:     true,
+		PreferDualAudio:     false, // User can toggle
+		PreferDubbed:        false, // User can toggle
+		PreferredLanguage:   "any", // User can set: english, japanese, any
+		PreferSoftSubs:      true,
+		PreferHigherVersion: true,
+	},
+	{
+		Name:                "1080p",
+		MediaType:           "anime",
+		IsBuiltIn:           true,
+		Resolution:          "1080p",
+		MinResolution:       "720p",
+		Sources:             []string{"bluray", "webdl", "webrip"},
+		AudioFormats:        []string{"flac", "aac", "opus"},
+		AudioChannels:       []string{"2.0", "5.1"},
+		MinSeeders:          2,
+		AutoUpgrade:         true,
+		PreferDualAudio:     false, // User can toggle
+		PreferDubbed:        false, // User can toggle
+		PreferredLanguage:   "any", // User can set: english, japanese, any
+		PreferSoftSubs:      true,
+		PreferHigherVersion: true,
+	},
+	{
+		Name:                "720p",
+		MediaType:           "anime",
+		IsBuiltIn:           true,
+		Resolution:          "720p",
+		MinResolution:       "480p",
+		Sources:             []string{"webdl", "webrip"},
+		AudioFormats:        []string{"aac", "opus"},
+		AudioChannels:       []string{"2.0"},
+		MinSeeders:          2,
+		AutoUpgrade:         true,
+		PreferDualAudio:     false, // User can toggle
+		PreferDubbed:        false, // User can toggle
+		PreferredLanguage:   "any", // User can set: english, japanese, any
+		PreferSoftSubs:      true,
+		PreferHigherVersion: true,
+	},
+	{
+		Name:                "480p",
+		MediaType:           "anime",
+		IsBuiltIn:           true,
+		Resolution:          "480p",
+		MinResolution:       "480p",
+		Sources:             []string{"webdl", "webrip"},
+		AudioFormats:        []string{"aac", "opus"},
+		AudioChannels:       []string{"2.0"},
+		MinSeeders:          1,
+		AutoUpgrade:         false,
+		PreferDualAudio:     false, // User can toggle
+		PreferDubbed:        false, // User can toggle
+		PreferredLanguage:   "any", // User can set: english, japanese, any
 		PreferSoftSubs:      true,
 		PreferHigherVersion: true,
 	},
@@ -236,12 +428,18 @@ func ScoreWithPreset(release *parser.ParsedRelease, preset *Preset) int {
 	}
 	score += seederBonus
 
+	// Dubbed handling - only penalize if NOT preferred
+	if release.IsDubbed {
+		if preset.PreferDubbed {
+			score += 10 // Bonus for dubbed when preferred
+		} else {
+			score -= 10 // Penalty when not preferred
+		}
+	}
+
 	// Negative modifiers
 	if release.IsFullscreen {
 		score -= 20
-	}
-	if release.IsDubbed {
-		score -= 10
 	}
 	if release.IsFansub {
 		score -= 5
@@ -547,3 +745,4 @@ func IsUpgrade(newRelease *parser.ParsedRelease, currentResolution, currentSourc
 
 	return newScore > currentScore
 }
+

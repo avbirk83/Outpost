@@ -715,6 +715,12 @@
 						</button>
 					</div>
 				{:else}
+					<div class="flex items-center justify-between mb-4">
+						<h2 class="text-xl font-semibold text-text-primary">
+							{movieSearch || movieGenreFilter !== 'all' || hasActiveMovieFilters() ? 'Results' : (movieSort === 'added' ? 'Recently Added' : movieSort === 'title' ? 'A-Z' : movieSort === 'year' ? 'By Year' : 'Top Rated')}
+							<span class="text-sm text-text-muted font-normal ml-2">({filteredMovies().length})</span>
+						</h2>
+					</div>
 					<div class="grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-3">
 						{#each filteredMovies() as movie}
 							<MediaCard
@@ -918,6 +924,12 @@
 						</button>
 					</div>
 				{:else}
+					<div class="flex items-center justify-between mb-4">
+						<h2 class="text-xl font-semibold text-text-primary">
+							{showSearch || showGenreFilter !== 'all' || hasActiveShowFilters() ? 'Results' : (showSort === 'added' ? 'Recently Added' : showSort === 'title' ? 'A-Z' : showSort === 'year' ? 'By Year' : 'Top Rated')}
+							<span class="text-sm text-text-muted font-normal ml-2">({filteredShows().length})</span>
+						</h2>
+					</div>
 					<div class="grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-3">
 						{#each filteredShows() as show}
 							<MediaCard

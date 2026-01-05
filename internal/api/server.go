@@ -20,6 +20,7 @@ import (
 	"github.com/outpost/outpost/internal/downloadclient"
 	"github.com/outpost/outpost/internal/indexer"
 	"github.com/outpost/outpost/internal/metadata"
+	"github.com/outpost/outpost/internal/prowlarr"
 	"github.com/outpost/outpost/internal/parser"
 	"github.com/outpost/outpost/internal/quality"
 	"github.com/outpost/outpost/internal/scanner"
@@ -49,6 +50,7 @@ type Scheduler interface {
 	GetStatus() []database.ScheduledTask
 	TriggerTask(taskID int64) error
 	UpdateTask(taskID int64, enabled bool, intervalMinutes int) error
+	SearchWantedItem(tmdbID int64, mediaType string) error
 }
 
 func NewServer(cfg *config.Config, db *database.Database, scan *scanner.Scanner, meta *metadata.Service, authSvc *auth.Service, downloads *downloadclient.Manager, indexers *indexer.Manager, sched Scheduler) *Server {
@@ -72,8 +74,10 @@ func NewServer(cfg *config.Config, db *database.Database, scan *scanner.Scanner,
 func (s *Server) loadIndexers() {
 	indexers, err := s.db.GetEnabledIndexers()
 	if err != nil {
+		log.Printf("Error loading indexers from database: %v", err)
 		return
 	}
+	log.Printf("Found %d enabled indexers in database", len(indexers))
 	for _, idx := range indexers {
 		config := &indexer.IndexerConfig{
 			ID:         idx.ID,
@@ -85,8 +89,19 @@ func (s *Server) loadIndexers() {
 			Priority:   idx.Priority,
 			Enabled:    idx.Enabled,
 		}
-		s.indexers.AddIndexer(config)
+		if err := s.indexers.AddIndexer(config); err != nil {
+			log.Printf("Failed to add indexer %s: %v", idx.Name, err)
+		} else {
+			log.Printf("Added indexer: %s (type=%s, url=%s)", idx.Name, idx.Type, idx.URL)
+		}
 	}
+}
+
+// reloadIndexers clears and reloads all indexers from the database
+func (s *Server) reloadIndexers() {
+	s.indexers.Clear()
+	s.loadIndexers()
+	log.Printf("Reloaded %d indexers into manager", s.indexers.Count())
 }
 
 func (s *Server) setupRoutes() {
@@ -168,15 +183,21 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/search/scored", s.requireAdmin(s.handleSearchScored))
 	s.mux.HandleFunc("/api/grab", s.requireAdmin(s.handleGrab))
 
-	// Quality profile routes (admin only)
-	s.mux.HandleFunc("/api/quality-profiles", s.requireAdmin(s.handleQualityProfiles))
+	// Prowlarr sync routes (admin only)
+	s.mux.HandleFunc("/api/prowlarr/config", s.requireAdmin(s.handleProwlarrConfig))
+	s.mux.HandleFunc("/api/prowlarr/test", s.requireAdmin(s.handleProwlarrTest))
+	s.mux.HandleFunc("/api/prowlarr/sync", s.requireAdmin(s.handleProwlarrSync))
+	s.mux.HandleFunc("/api/indexer-tags", s.requireAdmin(s.handleIndexerTags))
+
+	// Quality profile routes (GET is auth only, modifications are admin only)
+	s.mux.HandleFunc("/api/quality-profiles", s.requireAuth(s.handleQualityProfiles))
 	s.mux.HandleFunc("/api/quality-profiles/", s.requireAdmin(s.handleQualityProfile))
 	s.mux.HandleFunc("/api/custom-formats", s.requireAdmin(s.handleCustomFormats))
 	s.mux.HandleFunc("/api/custom-formats/", s.requireAdmin(s.handleCustomFormat))
 	s.mux.HandleFunc("/api/releases/parse", s.requireAdmin(s.handleParseRelease))
 
-	// Quality preset routes (admin only)
-	s.mux.HandleFunc("/api/quality/presets", s.requireAdmin(s.handleQualityPresets))
+	// Quality preset routes (GET is auth only, modifications are admin only)
+	s.mux.HandleFunc("/api/quality/presets", s.requireAuth(s.handleQualityPresets))
 	s.mux.HandleFunc("/api/quality/presets/", s.requireAdmin(s.handleQualityPreset))
 
 	// Download tracking routes (admin only)
@@ -259,6 +280,12 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/tasks", s.requireAdmin(s.handleTasks))
 	s.mux.HandleFunc("/api/tasks/history", s.requireAdmin(s.handleTaskHistory))
 	s.mux.HandleFunc("/api/tasks/", s.requireAdmin(s.handleTask))
+
+	// System status route (authenticated)
+	s.mux.HandleFunc("/api/system/status", s.requireAuth(s.handleSystemStatus))
+
+	// Filesystem browse route (admin only)
+	s.mux.HandleFunc("/api/filesystem/browse", s.requireAdmin(s.handleFilesystemBrowse))
 
 	// Image cache (public for posters)
 	s.mux.HandleFunc("/images/", s.handleImages)
@@ -2370,6 +2397,136 @@ func (s *Server) handleIndexer(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+
+
+// Prowlarr handlers
+
+func (s *Server) handleProwlarrConfig(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	switch r.Method {
+	case http.MethodGet:
+		config, err := s.db.GetProwlarrConfig()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if config == nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{})
+			return
+		}
+		// Mask API key for response
+		config.APIKey = ""
+		json.NewEncoder(w).Encode(config)
+
+	case http.MethodPost:
+		var config database.ProwlarrConfig
+		if err := json.NewDecoder(r.Body).Decode(&config); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		if config.URL == "" || config.APIKey == "" {
+			http.Error(w, "URL and API key are required", http.StatusBadRequest)
+			return
+		}
+
+		if err := s.db.SaveProwlarrConfig(&config); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		config.APIKey = ""
+		json.NewEncoder(w).Encode(config)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleProwlarrTest(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		URL    string `json:"url"`
+		APIKey string `json:"apiKey"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	syncSvc := prowlarr.NewSyncService(s.db)
+	if err := syncSvc.TestConnection(req.URL, req.APIKey); err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	// Also return indexer count for preview
+	indexers, _ := syncSvc.FetchIndexers(req.URL, req.APIKey)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":      true,
+		"indexerCount": len(indexers),
+	})
+}
+
+func (s *Server) handleProwlarrSync(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	syncSvc := prowlarr.NewSyncService(s.db)
+	synced, err := syncSvc.SyncAll()
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	// Reload indexers into the manager after sync
+	s.reloadIndexers()
+
+	// Return updated indexer list
+	indexers, _ := s.db.GetSyncedIndexers()
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":  true,
+		"synced":   synced,
+		"indexers": indexers,
+	})
+}
+
+func (s *Server) handleIndexerTags(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	tags, err := s.db.GetIndexerTags()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if tags == nil {
+		tags = []database.IndexerTag{}
+	}
+	json.NewEncoder(w).Encode(tags)
+}
+
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
@@ -2664,6 +2821,13 @@ func (s *Server) handleQualityProfiles(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(profiles)
 
 	case http.MethodPost:
+		// POST requires admin
+		user := r.Context().Value(userContextKey).(*database.User)
+		if user.Role != "admin" {
+			http.Error(w, "Admin access required", http.StatusForbidden)
+			return
+		}
+
 		var profile database.QualityProfile
 		if err := json.NewDecoder(r.Body).Decode(&profile); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -4464,12 +4628,15 @@ func (s *Server) handleRequests(w http.ResponseWriter, r *http.Request) {
 
 	case http.MethodPost:
 		var req struct {
-			Type       string  `json:"type"`
-			TmdbID     int64   `json:"tmdbId"`
-			Title      string  `json:"title"`
-			Year       int     `json:"year"`
-			Overview   *string `json:"overview"`
-			PosterPath *string `json:"posterPath"`
+			Type             string  `json:"type"`
+			TmdbID           int64   `json:"tmdbId"`
+			Title            string  `json:"title"`
+			Year             int     `json:"year"`
+			Overview         *string `json:"overview"`
+			PosterPath       *string `json:"posterPath"`
+			BackdropPath     *string `json:"backdropPath"`
+			QualityProfileID *int64  `json:"qualityProfileId"`
+			QualityPresetID  *int64  `json:"qualityPresetId"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -4489,13 +4656,16 @@ func (s *Server) handleRequests(w http.ResponseWriter, r *http.Request) {
 		}
 
 		request := &database.Request{
-			UserID:     user.ID,
-			Type:       req.Type,
-			TmdbID:     req.TmdbID,
-			Title:      req.Title,
-			Year:       req.Year,
-			Overview:   req.Overview,
-			PosterPath: req.PosterPath,
+			UserID:           user.ID,
+			Type:             req.Type,
+			TmdbID:           req.TmdbID,
+			Title:            req.Title,
+			Year:             req.Year,
+			Overview:         req.Overview,
+			PosterPath:       req.PosterPath,
+			BackdropPath:     req.BackdropPath,
+			QualityProfileID: req.QualityProfileID,
+			QualityPresetID:  req.QualityPresetID,
 		}
 
 		if err := s.db.CreateRequest(request); err != nil {
@@ -4548,8 +4718,9 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 
 		var updates struct {
-			Status       string  `json:"status"`
-			StatusReason *string `json:"statusReason"`
+			Status          string  `json:"status"`
+			StatusReason    *string `json:"statusReason"`
+			QualityPresetID *int64  `json:"qualityPresetId"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
 			http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -4580,26 +4751,59 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 		// If approved, optionally add to wanted list
 		if updates.Status == "approved" {
+			log.Printf("Request approved: %s (tmdb=%d, type=%s)", request.Title, request.TmdbID, request.Type)
 			// Check if not already in wanted
 			existing, _ := s.db.GetWantedByTmdb(request.Type, request.TmdbID)
 			if existing == nil {
-				// Get default quality profile
-				profiles, _ := s.db.GetQualityProfiles()
-				profileID := int64(1)
-				if len(profiles) > 0 {
-					profileID = profiles[0].ID
+				log.Printf("Adding to wanted list: %s", request.Title)
+				// Use quality preset from request, or provided in update, or get default
+				var presetID *int64
+				if request.QualityPresetID != nil && *request.QualityPresetID > 0 {
+					presetID = request.QualityPresetID
+				} else if updates.QualityPresetID != nil && *updates.QualityPresetID > 0 {
+					presetID = updates.QualityPresetID
+				} else {
+					// Get default preset
+					presets, _ := s.db.GetQualityPresets()
+					for _, p := range presets {
+						if p.IsDefault && p.Enabled {
+							presetID = &p.ID
+							break
+						}
+					}
+					// If no default, use first enabled
+					if presetID == nil {
+						for _, p := range presets {
+							if p.Enabled {
+								presetID = &p.ID
+								break
+							}
+						}
+					}
 				}
 
 				wanted := &database.WantedItem{
-					Type:             request.Type,
-					TmdbID:           request.TmdbID,
-					Title:            request.Title,
-					Year:             request.Year,
-					PosterPath:       request.PosterPath,
-					QualityProfileID: profileID,
-					Monitored:        true,
+					Type:            request.Type,
+					TmdbID:          request.TmdbID,
+					Title:           request.Title,
+					Year:            request.Year,
+					PosterPath:      request.PosterPath,
+					QualityPresetID: presetID,
+					Monitored:       true,
 				}
-				s.db.CreateWantedItem(wanted)
+				if err := s.db.CreateWantedItem(wanted); err != nil {
+					log.Printf("Failed to create wanted item: %v", err)
+				}
+
+				// Trigger immediate search for the item
+				if s.scheduler != nil {
+					log.Printf("Triggering search for: %s", request.Title)
+					go s.scheduler.SearchWantedItem(request.TmdbID, request.Type)
+				} else {
+					log.Printf("Scheduler is nil, cannot trigger search")
+				}
+			} else {
+				log.Printf("Already in wanted list: %s", request.Title)
 			}
 		}
 
@@ -5570,6 +5774,13 @@ func (s *Server) handleQualityPresets(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(presets)
 
 	case http.MethodPost:
+		// POST requires admin
+		user := r.Context().Value(userContextKey).(*database.User)
+		if user.Role != "admin" {
+			http.Error(w, "Admin access required", http.StatusForbidden)
+			return
+		}
+
 		var preset database.QualityPreset
 		if err := json.NewDecoder(r.Body).Decode(&preset); err != nil {
 			http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -5606,6 +5817,59 @@ func (s *Server) handleQualityPreset(w http.ResponseWriter, r *http.Request) {
 	// Check for /api/quality/presets/:id/default
 	if len(parts) > 1 && parts[1] == "default" && r.Method == http.MethodPost {
 		if err := s.db.SetDefaultQualityPreset(id); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		return
+	}
+
+	// Check for /api/quality/presets/:id/toggle - toggle enabled status
+	if len(parts) > 1 && parts[1] == "toggle" && r.Method == http.MethodPost {
+		var req struct {
+			Enabled bool `json:"enabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		if err := s.db.ToggleQualityPresetEnabled(id, req.Enabled); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"status": "ok", "enabled": req.Enabled})
+		return
+	}
+
+	// Check for /api/quality/presets/:id/priority - update priority
+	if len(parts) > 1 && parts[1] == "priority" && r.Method == http.MethodPost {
+		var req struct {
+			Priority int `json:"priority"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		if err := s.db.UpdateQualityPresetPriority(id, req.Priority); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"status": "ok", "priority": req.Priority})
+		return
+	}
+
+	// Check for /api/quality/presets/:id/anime-preferences - update anime-specific preferences
+	if len(parts) > 1 && parts[1] == "anime-preferences" && r.Method == http.MethodPatch {
+		var req struct {
+			PreferDualAudio   *bool   `json:"preferDualAudio,omitempty"`
+			PreferDubbed      *bool   `json:"preferDubbed,omitempty"`
+			PreferredLanguage *string `json:"preferredLanguage,omitempty"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		if err := s.db.UpdateQualityPresetAnimePreferences(id, req.PreferDualAudio, req.PreferDubbed, req.PreferredLanguage); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -6425,4 +6689,144 @@ func (s *Server) handleTask(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// handleSystemStatus returns current system status for UI indicators
+func (s *Server) handleSystemStatus(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Get pending requests count
+	requests, _ := s.db.GetRequestsByStatus("pending")
+	pendingRequests := len(requests)
+
+	// Get active downloads
+	downloads, _ := s.db.GetDownloads()
+	activeDownloads := 0
+	for _, d := range downloads {
+		if d.Status == "downloading" || d.Status == "pending" {
+			activeDownloads++
+		}
+	}
+
+	// Get running tasks
+	tasks := s.scheduler.GetStatus()
+	runningTasks := []string{}
+	for _, t := range tasks {
+		if t.IsRunning {
+			runningTasks = append(runningTasks, t.Name)
+		}
+	}
+
+	// Get disk usage
+	var diskUsed, diskTotal int64
+	for _, checkPath := range []string{"/media", "/app/data", "/"} {
+		usage, err := storage.GetDiskUsage(checkPath)
+		if err == nil {
+			diskUsed = int64(usage.Used)
+			diskTotal = int64(usage.Total)
+			break
+		}
+	}
+
+	response := struct {
+		PendingRequests int      `json:"pendingRequests"`
+		ActiveDownloads int      `json:"activeDownloads"`
+		RunningTasks    []string `json:"runningTasks"`
+		DiskUsed        int64    `json:"diskUsed"`
+		DiskTotal       int64    `json:"diskTotal"`
+	}{
+		PendingRequests: pendingRequests,
+		ActiveDownloads: activeDownloads,
+		RunningTasks:    runningTasks,
+		DiskUsed:        diskUsed,
+		DiskTotal:       diskTotal,
+	}
+
+	json.NewEncoder(w).Encode(response)
+}
+
+// handleFilesystemBrowse returns directory contents for the file browser
+func (s *Server) handleFilesystemBrowse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		// Default to root or common media paths
+		path = "/"
+	}
+
+	// Clean and validate the path
+	path = filepath.Clean(path)
+
+	// Check if path exists and is a directory
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			http.Error(w, "Path does not exist", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "Cannot access path", http.StatusForbidden)
+		return
+	}
+	if !info.IsDir() {
+		http.Error(w, "Path is not a directory", http.StatusBadRequest)
+		return
+	}
+
+	// Read directory contents
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		http.Error(w, "Cannot read directory", http.StatusForbidden)
+		return
+	}
+
+	type DirEntry struct {
+		Name  string `json:"name"`
+		Path  string `json:"path"`
+		IsDir bool   `json:"isDir"`
+	}
+
+	var dirs []DirEntry
+	for _, entry := range entries {
+		// Only include directories, skip hidden files
+		if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") {
+			dirs = append(dirs, DirEntry{
+				Name:  entry.Name(),
+				Path:  filepath.Join(path, entry.Name()),
+				IsDir: true,
+			})
+		}
+	}
+
+	// Sort alphabetically
+	sort.Slice(dirs, func(i, j int) bool {
+		return strings.ToLower(dirs[i].Name) < strings.ToLower(dirs[j].Name)
+	})
+
+	// Get parent directory
+	parent := filepath.Dir(path)
+	if parent == path {
+		parent = "" // We're at root
+	}
+
+	fsResponse := struct {
+		Current string     `json:"current"`
+		Parent  string     `json:"parent"`
+		Dirs    []DirEntry `json:"dirs"`
+	}{
+		Current: path,
+		Parent:  parent,
+		Dirs:    dirs,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(fsResponse)
 }

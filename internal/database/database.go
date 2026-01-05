@@ -150,14 +150,42 @@ type DownloadClient struct {
 }
 
 type Indexer struct {
-	ID         int64  `json:"id"`
-	Name       string `json:"name"`
-	Type       string `json:"type"` // torznab, newznab, prowlarr
-	URL        string `json:"url"`
-	APIKey     string `json:"apiKey,omitempty"`
-	Categories string `json:"categories,omitempty"` // Comma-separated category IDs
-	Priority   int    `json:"priority"`
-	Enabled    bool   `json:"enabled"`
+	ID                 int64  `json:"id"`
+	Name               string `json:"name"`
+	Type               string `json:"type"` // torznab, newznab, prowlarr
+	URL                string `json:"url"`
+	APIKey             string `json:"apiKey,omitempty"`
+	Categories         string `json:"categories,omitempty"` // Comma-separated category IDs
+	Priority           int    `json:"priority"`
+	Enabled            bool   `json:"enabled"`
+	ProwlarrID         *int64 `json:"prowlarrId,omitempty"`
+	SyncedFromProwlarr bool   `json:"syncedFromProwlarr"`
+	Protocol           string `json:"protocol,omitempty"` // torrent, usenet
+	SupportsMovies     bool   `json:"supportsMovies"`
+	SupportsTV         bool   `json:"supportsTV"`
+	SupportsMusic      bool   `json:"supportsMusic"`
+	SupportsBooks      bool   `json:"supportsBooks"`
+	SupportsAnime      bool   `json:"supportsAnime"`
+	SupportsIMDB       bool   `json:"supportsImdb"`
+	SupportsTMDB       bool   `json:"supportsTmdb"`
+	SupportsTVDB       bool   `json:"supportsTvdb"`
+}
+
+type ProwlarrConfig struct {
+	ID                int64      `json:"id"`
+	URL               string     `json:"url"`
+	APIKey            string     `json:"apiKey,omitempty"`
+	AutoSync          bool       `json:"autoSync"`
+	SyncIntervalHours int        `json:"syncIntervalHours"`
+	LastSync          *time.Time `json:"lastSync,omitempty"`
+	CreatedAt         time.Time  `json:"createdAt"`
+}
+
+type IndexerTag struct {
+	ID           int64  `json:"id"`
+	ProwlarrID   int    `json:"prowlarrId"`
+	Name         string `json:"name"`
+	IndexerCount int    `json:"indexerCount,omitempty"`
 }
 
 type QualityProfile struct {
@@ -178,34 +206,38 @@ type CustomFormat struct {
 }
 
 type WantedItem struct {
-	ID               int64     `json:"id"`
-	Type             string    `json:"type"`             // movie, show
-	TmdbID           int64     `json:"tmdbId"`
-	Title            string    `json:"title"`
-	Year             int       `json:"year,omitempty"`
-	PosterPath       *string   `json:"posterPath,omitempty"`
-	QualityProfileID int64     `json:"qualityProfileId"`
-	Monitored        bool      `json:"monitored"`
-	Seasons          string    `json:"seasons,omitempty"`       // JSON array of season numbers, empty = all
-	SearchNow        bool      `json:"searchNow,omitempty"`     // For triggering immediate search
+	ID               int64      `json:"id"`
+	Type             string     `json:"type"`             // movie, show
+	TmdbID           int64      `json:"tmdbId"`
+	Title            string     `json:"title"`
+	Year             int        `json:"year,omitempty"`
+	PosterPath       *string    `json:"posterPath,omitempty"`
+	QualityProfileID int64      `json:"qualityProfileId"`  // Deprecated, kept for compatibility
+	QualityPresetID  *int64     `json:"qualityPresetId,omitempty"` // New: which preset to use for filtering
+	Monitored        bool       `json:"monitored"`
+	Seasons          string     `json:"seasons,omitempty"`       // JSON array of season numbers, empty = all
+	SearchNow        bool       `json:"searchNow,omitempty"`     // For triggering immediate search
 	LastSearched     *time.Time `json:"lastSearched,omitempty"`
-	AddedAt          time.Time `json:"addedAt"`
+	AddedAt          time.Time  `json:"addedAt"`
 }
 
 type Request struct {
-	ID           int64     `json:"id"`
-	UserID       int64     `json:"userId"`
-	Username     string    `json:"username,omitempty"` // Populated from join
-	Type         string    `json:"type"`               // movie, show
-	TmdbID       int64     `json:"tmdbId"`
-	Title        string    `json:"title"`
-	Year         int       `json:"year,omitempty"`
-	Overview     *string   `json:"overview,omitempty"`
-	PosterPath   *string   `json:"posterPath,omitempty"`
-	Status       string    `json:"status"` // requested, approved, denied, available
-	StatusReason *string   `json:"statusReason,omitempty"`
-	RequestedAt  time.Time `json:"requestedAt"`
-	UpdatedAt    time.Time `json:"updatedAt"`
+	ID               int64     `json:"id"`
+	UserID           int64     `json:"userId"`
+	Username         string    `json:"username,omitempty"` // Populated from join
+	Type             string    `json:"type"`               // movie, show
+	TmdbID           int64     `json:"tmdbId"`
+	Title            string    `json:"title"`
+	Year             int       `json:"year,omitempty"`
+	Overview         *string   `json:"overview,omitempty"`
+	PosterPath       *string   `json:"posterPath,omitempty"`
+	BackdropPath     *string   `json:"backdropPath,omitempty"`
+	QualityProfileID *int64    `json:"qualityProfileId,omitempty"` // Deprecated, use QualityPresetID
+	QualityPresetID  *int64    `json:"qualityPresetId,omitempty"`
+	Status           string    `json:"status"` // requested, approved, denied, available
+	StatusReason     *string   `json:"statusReason,omitempty"`
+	RequestedAt      time.Time `json:"requestedAt"`
+	UpdatedAt        time.Time `json:"updatedAt"`
 }
 
 // Music types
@@ -275,21 +307,28 @@ type WatchlistItem struct {
 // Quality preset types
 
 type QualityPreset struct {
-	ID               int64     `json:"id"`
-	Name             string    `json:"name"`
-	IsDefault        bool      `json:"isDefault"`
-	IsBuiltIn        bool      `json:"isBuiltIn"`
-	Resolution       string    `json:"resolution"`       // "4k", "1080p", "720p", "480p"
-	Source           string    `json:"source"`           // "remux", "bluray", "web", "any"
-	HDRFormats       []string  `json:"hdrFormats"`       // Array of HDR formats
-	Codec            string    `json:"codec"`            // "any", "hevc", "av1"
-	AudioFormats     []string  `json:"audioFormats"`     // Array of audio formats
-	PreferredEdition string    `json:"preferredEdition"` // "any", "theatrical", "directors", etc
-	MinSeeders       int       `json:"minSeeders"`
-	PreferSeasonPacks bool     `json:"preferSeasonPacks"`
-	AutoUpgrade      bool      `json:"autoUpgrade"`
-	CreatedAt        time.Time `json:"createdAt"`
-	UpdatedAt        time.Time `json:"updatedAt"`
+	ID                int64     `json:"id"`
+	Name              string    `json:"name"`
+	MediaType         string    `json:"mediaType"`         // "movie", "tv", "anime"
+	IsDefault         bool      `json:"isDefault"`
+	IsBuiltIn         bool      `json:"isBuiltIn"`
+	Enabled           bool      `json:"enabled"`           // Whether this preset is shown in request modal
+	Priority          int       `json:"priority"`          // Order for fallback (lower = higher priority)
+	Resolution        string    `json:"resolution"`        // "4k", "1080p", "720p", "480p", "sd", "any"
+	Source            string    `json:"source"`            // "remux", "bluray", "web", "hdtv", "dvd", "any"
+	HDRFormats        []string  `json:"hdrFormats"`        // Array of HDR formats
+	Codec             string    `json:"codec"`             // "any", "hevc", "av1", "x264"
+	AudioFormats      []string  `json:"audioFormats"`      // Array of audio formats
+	PreferredEdition  string    `json:"preferredEdition"`  // "any", "theatrical", "directors", etc
+	MinSeeders        int       `json:"minSeeders"`
+	PreferSeasonPacks bool      `json:"preferSeasonPacks"`
+	AutoUpgrade       bool      `json:"autoUpgrade"`
+	// Anime-specific preferences
+	PreferDualAudio   bool   `json:"preferDualAudio"`
+	PreferDubbed      bool   `json:"preferDubbed"`
+	PreferredLanguage string `json:"preferredLanguage"` // "english", "japanese", "any"
+	CreatedAt         time.Time `json:"createdAt"`
+	UpdatedAt         time.Time `json:"updatedAt"`
 }
 
 type MediaQualityOverride struct {
@@ -690,6 +729,42 @@ func (d *Database) migrate() error {
 		enabled INTEGER DEFAULT 1
 	);
 
+	-- Prowlarr connection config
+	CREATE TABLE IF NOT EXISTS prowlarr_config (
+		id INTEGER PRIMARY KEY,
+		url TEXT NOT NULL,
+		api_key TEXT NOT NULL,
+		auto_sync INTEGER DEFAULT 1,
+		sync_interval_hours INTEGER DEFAULT 24,
+		last_sync DATETIME,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	-- Tags synced from Prowlarr
+	CREATE TABLE IF NOT EXISTS indexer_tags (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		prowlarr_id INTEGER NOT NULL UNIQUE,
+		name TEXT NOT NULL
+	);
+
+	-- Indexer <-> Tag mapping
+	CREATE TABLE IF NOT EXISTS indexer_tag_map (
+		indexer_id INTEGER NOT NULL,
+		tag_id INTEGER NOT NULL,
+		PRIMARY KEY (indexer_id, tag_id),
+		FOREIGN KEY (indexer_id) REFERENCES indexers(id) ON DELETE CASCADE,
+		FOREIGN KEY (tag_id) REFERENCES indexer_tags(id) ON DELETE CASCADE
+	);
+
+	-- Library <-> Tag assignment
+	CREATE TABLE IF NOT EXISTS library_indexer_tags (
+		library_id INTEGER NOT NULL,
+		tag_id INTEGER NOT NULL,
+		PRIMARY KEY (library_id, tag_id),
+		FOREIGN KEY (library_id) REFERENCES libraries(id) ON DELETE CASCADE,
+		FOREIGN KEY (tag_id) REFERENCES indexer_tags(id) ON DELETE CASCADE
+	);
+
 	CREATE TABLE IF NOT EXISTS quality_profiles (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		name TEXT NOT NULL UNIQUE,
@@ -731,11 +806,14 @@ func (d *Database) migrate() error {
 		year INTEGER,
 		overview TEXT,
 		poster_path TEXT,
+		backdrop_path TEXT,
+		quality_profile_id INTEGER,
 		status TEXT NOT NULL DEFAULT 'requested',
 		status_reason TEXT,
 		requested_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+		FOREIGN KEY (quality_profile_id) REFERENCES quality_profiles(id),
 		UNIQUE(user_id, type, tmdb_id)
 	);
 
@@ -1059,25 +1137,111 @@ func (d *Database) migrate() error {
 		"ALTER TABLE downloads ADD COLUMN stalled_notified INTEGER DEFAULT 0",
 		// Library preset assignment
 		"ALTER TABLE libraries ADD COLUMN quality_preset_id INTEGER",
+		// Prowlarr sync migrations
+		"ALTER TABLE indexers ADD COLUMN prowlarr_id INTEGER",
+		"ALTER TABLE indexers ADD COLUMN synced_from_prowlarr INTEGER DEFAULT 0",
+		"ALTER TABLE indexers ADD COLUMN protocol TEXT",
+		"ALTER TABLE indexers ADD COLUMN supports_movies INTEGER DEFAULT 1",
+		"ALTER TABLE indexers ADD COLUMN supports_tv INTEGER DEFAULT 1",
+		"ALTER TABLE indexers ADD COLUMN supports_music INTEGER DEFAULT 0",
+		"ALTER TABLE indexers ADD COLUMN supports_books INTEGER DEFAULT 0",
+		"ALTER TABLE indexers ADD COLUMN supports_anime INTEGER DEFAULT 0",
+		"ALTER TABLE indexers ADD COLUMN supports_imdb INTEGER DEFAULT 0",
+		"ALTER TABLE indexers ADD COLUMN supports_tmdb INTEGER DEFAULT 0",
+		"ALTER TABLE indexers ADD COLUMN supports_tvdb INTEGER DEFAULT 0",
+		// Request quality profile migrations
+		"ALTER TABLE requests ADD COLUMN backdrop_path TEXT",
+		"ALTER TABLE requests ADD COLUMN quality_profile_id INTEGER",
+		"ALTER TABLE requests ADD COLUMN quality_preset_id INTEGER",
+		// Quality preset improvements
+		"ALTER TABLE quality_presets ADD COLUMN enabled INTEGER DEFAULT 1",
+		"ALTER TABLE quality_presets ADD COLUMN priority INTEGER DEFAULT 100",
+		// Wanted table preset support
+		"ALTER TABLE wanted ADD COLUMN quality_preset_id INTEGER",
+		// Media type for presets (movie, tv, anime)
+		"ALTER TABLE quality_presets ADD COLUMN media_type TEXT DEFAULT 'movie'",
+		// Anime preferences
+		"ALTER TABLE quality_presets ADD COLUMN prefer_dual_audio INTEGER DEFAULT 0",
+		"ALTER TABLE quality_presets ADD COLUMN prefer_dubbed INTEGER DEFAULT 0",
+		"ALTER TABLE quality_presets ADD COLUMN preferred_language TEXT DEFAULT 'any'",
 	}
 	for _, m := range migrations {
 		// Ignore errors (column may already exist)
 		d.db.Exec(m)
 	}
 
-	// Seed built-in quality presets if none exist
-	var presetCount int
-	d.db.QueryRow("SELECT COUNT(*) FROM quality_presets WHERE is_built_in = 1").Scan(&presetCount)
-	if presetCount == 0 {
-		presets := []string{
-			`INSERT INTO quality_presets (name, is_built_in, is_default, resolution, source, hdr_formats, audio_formats, min_seeders, auto_upgrade) VALUES ('Best', 1, 1, '4k', 'remux', '["dv", "hdr10+", "hdr10"]', '["atmos", "truehd", "dtshd"]', 3, 1)`,
-			`INSERT INTO quality_presets (name, is_built_in, resolution, source, hdr_formats, min_seeders, auto_upgrade) VALUES ('High', 1, '4k', 'web', '["dv", "hdr10+", "hdr10"]', 3, 1)`,
-			`INSERT INTO quality_presets (name, is_built_in, resolution, source, min_seeders, auto_upgrade) VALUES ('Balanced', 1, '1080p', 'web', 3, 1)`,
-			`INSERT INTO quality_presets (name, is_built_in, resolution, source, codec, min_seeders, auto_upgrade) VALUES ('Storage Saver', 1, '1080p', 'web', 'hevc', 3, 0)`,
+	// Drop old unique index and create new one with media_type
+	d.db.Exec(`DROP INDEX IF EXISTS idx_quality_presets_name`)
+	d.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_quality_presets_name_type ON quality_presets(name, media_type)`)
+
+	// Delete old presets without media_type to re-seed properly
+	d.db.Exec(`DELETE FROM quality_presets WHERE media_type IS NULL OR media_type = ''`)
+
+	// Delete old built-in presets to reseed with new structure
+	d.db.Exec(`DELETE FROM quality_presets WHERE is_built_in = 1`)
+
+	// Seed built-in quality presets by media type
+	builtInPresets := []struct {
+		name       string
+		mediaType  string
+		priority   int
+		resolution string
+		source     string
+		hdrFormats string
+		audioFmts  string
+		codec      string
+		minSeeders int
+		isDefault  bool
+	}{
+		// Movie presets (8 total - quality matters most)
+		// 4K Tier (3 presets)
+		{"4K Remux", "movie", 10, "4k", "remux", `["dv", "hdr10plus", "hdr10"]`, `["atmos", "truehd", "dtshd", "dtsx"]`, "", 3, true},
+		{"4K HDR", "movie", 20, "4k", "bluray", `["dv", "hdr10plus", "hdr10"]`, `["atmos", "truehd", "dtshd", "ddplus"]`, "", 3, false},
+		{"4K", "movie", 30, "4k", "web", "", "", "", 3, false},
+		// 1080p Tier (3 presets)
+		{"1080p Remux", "movie", 40, "1080p", "remux", "", `["atmos", "truehd", "dtshd", "dtsx"]`, "", 3, false},
+		{"1080p BluRay", "movie", 50, "1080p", "bluray", "", `["truehd", "dtshd", "ddplus", "dts"]`, "", 3, false},
+		{"1080p", "movie", 60, "1080p", "web", "", "", "", 3, false},
+		// 720p Tier (1 preset)
+		{"720p", "movie", 70, "720p", "web", "", "", "", 2, false},
+		// 480p Tier (1 preset)
+		{"480p", "movie", 80, "480p", "web", "", "", "", 1, false},
+
+		// TV presets (6 total)
+		// 4K Tier (2 presets)
+		{"4K HDR", "tv", 10, "4k", "web", `["dv", "hdr10plus", "hdr10"]`, "", "", 3, true},
+		{"4K", "tv", 20, "4k", "web", "", "", "", 3, false},
+		// 1080p Tier (2 presets)
+		{"1080p", "tv", 30, "1080p", "web", "", "", "", 3, false},
+		{"1080p HDTV", "tv", 40, "1080p", "hdtv", "", "", "", 2, false},
+		// 720p Tier (1 preset)
+		{"720p", "tv", 50, "720p", "web", "", "", "", 2, false},
+		// Any/480p Tier (1 preset)
+		{"Any", "tv", 60, "any", "any", "", "", "", 1, false},
+
+		// Anime presets (4 total - simple with editable preferences)
+		{"4K", "anime", 10, "4k", "bluray", `["dv", "hdr10plus", "hdr10"]`, `["flac", "aac", "opus"]`, "", 2, true},
+		{"1080p", "anime", 20, "1080p", "bluray", "", `["flac", "aac", "opus"]`, "", 2, false},
+		{"720p", "anime", 30, "720p", "web", "", `["aac", "opus"]`, "", 2, false},
+		{"480p", "anime", 40, "480p", "web", "", `["aac", "opus"]`, "", 1, false},
+	}
+
+	for _, p := range builtInPresets {
+		defaultVal := 0
+		if p.isDefault {
+			defaultVal = 1
 		}
-		for _, p := range presets {
-			d.db.Exec(p)
+		hdrFormats := p.hdrFormats
+		if hdrFormats == "" {
+			hdrFormats = "[]"
 		}
+		audioFormats := p.audioFmts
+		if audioFormats == "" {
+			audioFormats = "[]"
+		}
+		d.db.Exec(`INSERT OR IGNORE INTO quality_presets (name, media_type, is_built_in, is_default, enabled, priority, resolution, source, hdr_formats, audio_formats, codec, min_seeders, auto_upgrade, prefer_dual_audio, prefer_dubbed, preferred_language)
+			VALUES (?, ?, 1, ?, 1, ?, ?, ?, ?, ?, ?, ?, 1, 0, 0, 'any')`,
+			p.name, p.mediaType, defaultVal, p.priority, p.resolution, p.source, hdrFormats, audioFormats, p.codec, p.minSeeders)
 	}
 
 	// Seed default naming templates if none exist
@@ -1092,6 +1256,33 @@ func (d *Database) migrate() error {
 		for _, t := range templates {
 			d.db.Exec(t)
 		}
+	}
+
+	// Seed default quality profiles if none exist
+	var profileCount int
+	d.db.QueryRow("SELECT COUNT(*) FROM quality_profiles").Scan(&profileCount)
+	if profileCount == 0 {
+		profiles := []string{
+			`INSERT INTO quality_profiles (name, upgrade_allowed, upgrade_until_score, min_format_score, cutoff_format_score, qualities, custom_format_scores) VALUES ('Any', 1, 10000, 0, 0, '["2160p","1080p","720p","480p"]', '{}')`,
+			`INSERT INTO quality_profiles (name, upgrade_allowed, upgrade_until_score, min_format_score, cutoff_format_score, qualities, custom_format_scores) VALUES ('HD-1080p', 1, 10000, 0, 0, '["1080p","720p"]', '{}')`,
+			`INSERT INTO quality_profiles (name, upgrade_allowed, upgrade_until_score, min_format_score, cutoff_format_score, qualities, custom_format_scores) VALUES ('Ultra-HD', 1, 10000, 0, 0, '["2160p","1080p"]', '{}')`,
+		}
+		for _, p := range profiles {
+			d.db.Exec(p)
+		}
+	}
+
+	// Seed default scheduler settings (use INSERT OR IGNORE to avoid duplicates)
+	defaultSettings := map[string]string{
+		"scheduler_auto_search": "true",
+		"scheduler_auto_grab":   "true",
+		"scheduler_rss_enabled": "true",
+		"scheduler_min_score":   "0",
+		"storage_pause_enabled": "false",
+		"storage_threshold_gb":  "50",
+	}
+	for key, value := range defaultSettings {
+		d.db.Exec(`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`, key, value)
 	}
 
 	return nil
@@ -1860,7 +2051,11 @@ func (d *Database) CreateIndexer(indexer *Indexer) error {
 
 func (d *Database) GetIndexers() ([]Indexer, error) {
 	rows, err := d.db.Query(`
-		SELECT id, name, type, url, api_key, categories, priority, enabled
+		SELECT id, name, type, url, COALESCE(api_key, ''), COALESCE(categories, ''), priority, enabled,
+			COALESCE(prowlarr_id, 0), COALESCE(synced_from_prowlarr, 0), COALESCE(protocol, ''),
+			COALESCE(supports_movies, 1), COALESCE(supports_tv, 1), COALESCE(supports_music, 0),
+			COALESCE(supports_books, 0), COALESCE(supports_anime, 0), COALESCE(supports_imdb, 0),
+			COALESCE(supports_tmdb, 0), COALESCE(supports_tvdb, 0)
 		FROM indexers ORDER BY priority DESC, name`)
 	if err != nil {
 		return nil, err
@@ -1870,10 +2065,20 @@ func (d *Database) GetIndexers() ([]Indexer, error) {
 	var indexers []Indexer
 	for rows.Next() {
 		var i Indexer
+		var prowlarrID int64
+		var syncedFromProwlarr int
 		if err := rows.Scan(&i.ID, &i.Name, &i.Type, &i.URL, &i.APIKey,
-			&i.Categories, &i.Priority, &i.Enabled); err != nil {
+			&i.Categories, &i.Priority, &i.Enabled,
+			&prowlarrID, &syncedFromProwlarr, &i.Protocol,
+			&i.SupportsMovies, &i.SupportsTV, &i.SupportsMusic,
+			&i.SupportsBooks, &i.SupportsAnime, &i.SupportsIMDB,
+			&i.SupportsTMDB, &i.SupportsTVDB); err != nil {
 			return nil, err
 		}
+		if prowlarrID > 0 {
+			i.ProwlarrID = &prowlarrID
+		}
+		i.SyncedFromProwlarr = syncedFromProwlarr == 1
 		indexers = append(indexers, i)
 	}
 	return indexers, nil
@@ -1881,14 +2086,28 @@ func (d *Database) GetIndexers() ([]Indexer, error) {
 
 func (d *Database) GetIndexer(id int64) (*Indexer, error) {
 	var i Indexer
+	var prowlarrID int64
+	var syncedFromProwlarr int
 	err := d.db.QueryRow(`
-		SELECT id, name, type, url, api_key, categories, priority, enabled
+		SELECT id, name, type, url, COALESCE(api_key, ''), COALESCE(categories, ''), priority, enabled,
+			COALESCE(prowlarr_id, 0), COALESCE(synced_from_prowlarr, 0), COALESCE(protocol, ''),
+			COALESCE(supports_movies, 1), COALESCE(supports_tv, 1), COALESCE(supports_music, 0),
+			COALESCE(supports_books, 0), COALESCE(supports_anime, 0), COALESCE(supports_imdb, 0),
+			COALESCE(supports_tmdb, 0), COALESCE(supports_tvdb, 0)
 		FROM indexers WHERE id = ?`, id,
 	).Scan(&i.ID, &i.Name, &i.Type, &i.URL, &i.APIKey,
-		&i.Categories, &i.Priority, &i.Enabled)
+		&i.Categories, &i.Priority, &i.Enabled,
+		&prowlarrID, &syncedFromProwlarr, &i.Protocol,
+		&i.SupportsMovies, &i.SupportsTV, &i.SupportsMusic,
+		&i.SupportsBooks, &i.SupportsAnime, &i.SupportsIMDB,
+		&i.SupportsTMDB, &i.SupportsTVDB)
 	if err != nil {
 		return nil, err
 	}
+	if prowlarrID > 0 {
+		i.ProwlarrID = &prowlarrID
+	}
+	i.SyncedFromProwlarr = syncedFromProwlarr == 1
 	return &i, nil
 }
 
@@ -1910,7 +2129,11 @@ func (d *Database) DeleteIndexer(id int64) error {
 
 func (d *Database) GetEnabledIndexers() ([]Indexer, error) {
 	rows, err := d.db.Query(`
-		SELECT id, name, type, url, api_key, categories, priority, enabled
+		SELECT id, name, type, url, COALESCE(api_key, ''), COALESCE(categories, ''), priority, enabled,
+			COALESCE(prowlarr_id, 0), COALESCE(synced_from_prowlarr, 0), COALESCE(protocol, ''),
+			COALESCE(supports_movies, 1), COALESCE(supports_tv, 1), COALESCE(supports_music, 0),
+			COALESCE(supports_books, 0), COALESCE(supports_anime, 0), COALESCE(supports_imdb, 0),
+			COALESCE(supports_tmdb, 0), COALESCE(supports_tvdb, 0)
 		FROM indexers WHERE enabled = 1 ORDER BY priority DESC, name`)
 	if err != nil {
 		return nil, err
@@ -1920,10 +2143,20 @@ func (d *Database) GetEnabledIndexers() ([]Indexer, error) {
 	var indexers []Indexer
 	for rows.Next() {
 		var i Indexer
+		var prowlarrID int64
+		var syncedFromProwlarr int
 		if err := rows.Scan(&i.ID, &i.Name, &i.Type, &i.URL, &i.APIKey,
-			&i.Categories, &i.Priority, &i.Enabled); err != nil {
+			&i.Categories, &i.Priority, &i.Enabled,
+			&prowlarrID, &syncedFromProwlarr, &i.Protocol,
+			&i.SupportsMovies, &i.SupportsTV, &i.SupportsMusic,
+			&i.SupportsBooks, &i.SupportsAnime, &i.SupportsIMDB,
+			&i.SupportsTMDB, &i.SupportsTVDB); err != nil {
 			return nil, err
 		}
+		if prowlarrID > 0 {
+			i.ProwlarrID = &prowlarrID
+		}
+		i.SyncedFromProwlarr = syncedFromProwlarr == 1
 		indexers = append(indexers, i)
 	}
 	return indexers, nil
@@ -2051,10 +2284,10 @@ func (d *Database) DeleteCustomFormat(id int64) error {
 
 func (d *Database) CreateWantedItem(item *WantedItem) error {
 	result, err := d.db.Exec(`
-		INSERT INTO wanted (type, tmdb_id, title, year, poster_path, quality_profile_id, monitored, seasons)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO wanted (type, tmdb_id, title, year, poster_path, quality_profile_id, quality_preset_id, monitored, seasons)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		item.Type, item.TmdbID, item.Title, item.Year, item.PosterPath,
-		item.QualityProfileID, item.Monitored, item.Seasons,
+		item.QualityProfileID, item.QualityPresetID, item.Monitored, item.Seasons,
 	)
 	if err != nil {
 		return err
@@ -2065,7 +2298,7 @@ func (d *Database) CreateWantedItem(item *WantedItem) error {
 
 func (d *Database) GetWantedItems() ([]WantedItem, error) {
 	rows, err := d.db.Query(`
-		SELECT id, type, tmdb_id, title, year, poster_path, quality_profile_id, monitored, seasons, last_searched, added_at
+		SELECT id, type, tmdb_id, title, year, poster_path, quality_profile_id, quality_preset_id, monitored, seasons, last_searched, added_at
 		FROM wanted ORDER BY added_at DESC`)
 	if err != nil {
 		return nil, err
@@ -2076,7 +2309,7 @@ func (d *Database) GetWantedItems() ([]WantedItem, error) {
 	for rows.Next() {
 		var item WantedItem
 		if err := rows.Scan(&item.ID, &item.Type, &item.TmdbID, &item.Title, &item.Year,
-			&item.PosterPath, &item.QualityProfileID, &item.Monitored, &item.Seasons,
+			&item.PosterPath, &item.QualityProfileID, &item.QualityPresetID, &item.Monitored, &item.Seasons,
 			&item.LastSearched, &item.AddedAt); err != nil {
 			return nil, err
 		}
@@ -2088,10 +2321,10 @@ func (d *Database) GetWantedItems() ([]WantedItem, error) {
 func (d *Database) GetWantedItem(id int64) (*WantedItem, error) {
 	var item WantedItem
 	err := d.db.QueryRow(`
-		SELECT id, type, tmdb_id, title, year, poster_path, quality_profile_id, monitored, seasons, last_searched, added_at
+		SELECT id, type, tmdb_id, title, year, poster_path, quality_profile_id, quality_preset_id, monitored, seasons, last_searched, added_at
 		FROM wanted WHERE id = ?`, id,
 	).Scan(&item.ID, &item.Type, &item.TmdbID, &item.Title, &item.Year,
-		&item.PosterPath, &item.QualityProfileID, &item.Monitored, &item.Seasons,
+		&item.PosterPath, &item.QualityProfileID, &item.QualityPresetID, &item.Monitored, &item.Seasons,
 		&item.LastSearched, &item.AddedAt)
 	if err != nil {
 		return nil, err
@@ -2102,10 +2335,10 @@ func (d *Database) GetWantedItem(id int64) (*WantedItem, error) {
 func (d *Database) GetWantedByTmdb(itemType string, tmdbID int64) (*WantedItem, error) {
 	var item WantedItem
 	err := d.db.QueryRow(`
-		SELECT id, type, tmdb_id, title, year, poster_path, quality_profile_id, monitored, seasons, last_searched, added_at
+		SELECT id, type, tmdb_id, title, year, poster_path, quality_profile_id, quality_preset_id, monitored, seasons, last_searched, added_at
 		FROM wanted WHERE type = ? AND tmdb_id = ?`, itemType, tmdbID,
 	).Scan(&item.ID, &item.Type, &item.TmdbID, &item.Title, &item.Year,
-		&item.PosterPath, &item.QualityProfileID, &item.Monitored, &item.Seasons,
+		&item.PosterPath, &item.QualityProfileID, &item.QualityPresetID, &item.Monitored, &item.Seasons,
 		&item.LastSearched, &item.AddedAt)
 	if err != nil {
 		return nil, err
@@ -2115,7 +2348,7 @@ func (d *Database) GetWantedByTmdb(itemType string, tmdbID int64) (*WantedItem, 
 
 func (d *Database) GetMonitoredItems() ([]WantedItem, error) {
 	rows, err := d.db.Query(`
-		SELECT id, type, tmdb_id, title, year, poster_path, quality_profile_id, monitored, seasons, last_searched, added_at
+		SELECT id, type, tmdb_id, title, year, poster_path, quality_profile_id, quality_preset_id, monitored, seasons, last_searched, added_at
 		FROM wanted WHERE monitored = 1 ORDER BY added_at DESC`)
 	if err != nil {
 		return nil, err
@@ -2126,7 +2359,7 @@ func (d *Database) GetMonitoredItems() ([]WantedItem, error) {
 	for rows.Next() {
 		var item WantedItem
 		if err := rows.Scan(&item.ID, &item.Type, &item.TmdbID, &item.Title, &item.Year,
-			&item.PosterPath, &item.QualityProfileID, &item.Monitored, &item.Seasons,
+			&item.PosterPath, &item.QualityProfileID, &item.QualityPresetID, &item.Monitored, &item.Seasons,
 			&item.LastSearched, &item.AddedAt); err != nil {
 			return nil, err
 		}
@@ -2138,9 +2371,9 @@ func (d *Database) GetMonitoredItems() ([]WantedItem, error) {
 func (d *Database) UpdateWantedItem(item *WantedItem) error {
 	_, err := d.db.Exec(`
 		UPDATE wanted SET
-			quality_profile_id = ?, monitored = ?, seasons = ?
+			quality_profile_id = ?, quality_preset_id = ?, monitored = ?, seasons = ?
 		WHERE id = ?`,
-		item.QualityProfileID, item.Monitored, item.Seasons, item.ID,
+		item.QualityProfileID, item.QualityPresetID, item.Monitored, item.Seasons, item.ID,
 	)
 	return err
 }
@@ -2159,9 +2392,9 @@ func (d *Database) DeleteWantedItem(id int64) error {
 
 func (d *Database) CreateRequest(req *Request) error {
 	result, err := d.db.Exec(`
-		INSERT INTO requests (user_id, type, tmdb_id, title, year, overview, poster_path, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		req.UserID, req.Type, req.TmdbID, req.Title, req.Year, req.Overview, req.PosterPath, "requested",
+		INSERT INTO requests (user_id, type, tmdb_id, title, year, overview, poster_path, backdrop_path, quality_profile_id, quality_preset_id, status)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		req.UserID, req.Type, req.TmdbID, req.Title, req.Year, req.Overview, req.PosterPath, req.BackdropPath, req.QualityProfileID, req.QualityPresetID, "requested",
 	)
 	if err != nil {
 		return err
@@ -2176,7 +2409,7 @@ func (d *Database) CreateRequest(req *Request) error {
 func (d *Database) GetRequests() ([]Request, error) {
 	rows, err := d.db.Query(`
 		SELECT r.id, r.user_id, u.username, r.type, r.tmdb_id, r.title, r.year, r.overview,
-		       r.poster_path, r.status, r.status_reason, r.requested_at, r.updated_at
+		       r.poster_path, r.backdrop_path, r.quality_profile_id, r.quality_preset_id, r.status, r.status_reason, r.requested_at, r.updated_at
 		FROM requests r
 		LEFT JOIN users u ON r.user_id = u.id
 		ORDER BY r.requested_at DESC`)
@@ -2189,8 +2422,8 @@ func (d *Database) GetRequests() ([]Request, error) {
 	for rows.Next() {
 		var req Request
 		if err := rows.Scan(&req.ID, &req.UserID, &req.Username, &req.Type, &req.TmdbID, &req.Title,
-			&req.Year, &req.Overview, &req.PosterPath, &req.Status, &req.StatusReason,
-			&req.RequestedAt, &req.UpdatedAt); err != nil {
+			&req.Year, &req.Overview, &req.PosterPath, &req.BackdropPath, &req.QualityProfileID, &req.QualityPresetID,
+			&req.Status, &req.StatusReason, &req.RequestedAt, &req.UpdatedAt); err != nil {
 			return nil, err
 		}
 		requests = append(requests, req)
@@ -2201,7 +2434,7 @@ func (d *Database) GetRequests() ([]Request, error) {
 func (d *Database) GetRequestsByUser(userID int64) ([]Request, error) {
 	rows, err := d.db.Query(`
 		SELECT r.id, r.user_id, u.username, r.type, r.tmdb_id, r.title, r.year, r.overview,
-		       r.poster_path, r.status, r.status_reason, r.requested_at, r.updated_at
+		       r.poster_path, r.backdrop_path, r.quality_profile_id, r.quality_preset_id, r.status, r.status_reason, r.requested_at, r.updated_at
 		FROM requests r
 		LEFT JOIN users u ON r.user_id = u.id
 		WHERE r.user_id = ?
@@ -2215,8 +2448,8 @@ func (d *Database) GetRequestsByUser(userID int64) ([]Request, error) {
 	for rows.Next() {
 		var req Request
 		if err := rows.Scan(&req.ID, &req.UserID, &req.Username, &req.Type, &req.TmdbID, &req.Title,
-			&req.Year, &req.Overview, &req.PosterPath, &req.Status, &req.StatusReason,
-			&req.RequestedAt, &req.UpdatedAt); err != nil {
+			&req.Year, &req.Overview, &req.PosterPath, &req.BackdropPath, &req.QualityProfileID, &req.QualityPresetID,
+			&req.Status, &req.StatusReason, &req.RequestedAt, &req.UpdatedAt); err != nil {
 			return nil, err
 		}
 		requests = append(requests, req)
@@ -2227,7 +2460,7 @@ func (d *Database) GetRequestsByUser(userID int64) ([]Request, error) {
 func (d *Database) GetRequestsByStatus(status string) ([]Request, error) {
 	rows, err := d.db.Query(`
 		SELECT r.id, r.user_id, u.username, r.type, r.tmdb_id, r.title, r.year, r.overview,
-		       r.poster_path, r.status, r.status_reason, r.requested_at, r.updated_at
+		       r.poster_path, r.backdrop_path, r.quality_profile_id, r.quality_preset_id, r.status, r.status_reason, r.requested_at, r.updated_at
 		FROM requests r
 		LEFT JOIN users u ON r.user_id = u.id
 		WHERE r.status = ?
@@ -2241,8 +2474,8 @@ func (d *Database) GetRequestsByStatus(status string) ([]Request, error) {
 	for rows.Next() {
 		var req Request
 		if err := rows.Scan(&req.ID, &req.UserID, &req.Username, &req.Type, &req.TmdbID, &req.Title,
-			&req.Year, &req.Overview, &req.PosterPath, &req.Status, &req.StatusReason,
-			&req.RequestedAt, &req.UpdatedAt); err != nil {
+			&req.Year, &req.Overview, &req.PosterPath, &req.BackdropPath, &req.QualityProfileID, &req.QualityPresetID,
+			&req.Status, &req.StatusReason, &req.RequestedAt, &req.UpdatedAt); err != nil {
 			return nil, err
 		}
 		requests = append(requests, req)
@@ -2254,12 +2487,12 @@ func (d *Database) GetRequest(id int64) (*Request, error) {
 	var req Request
 	err := d.db.QueryRow(`
 		SELECT r.id, r.user_id, u.username, r.type, r.tmdb_id, r.title, r.year, r.overview,
-		       r.poster_path, r.status, r.status_reason, r.requested_at, r.updated_at
+		       r.poster_path, r.backdrop_path, r.quality_profile_id, r.quality_preset_id, r.status, r.status_reason, r.requested_at, r.updated_at
 		FROM requests r
 		LEFT JOIN users u ON r.user_id = u.id
 		WHERE r.id = ?`, id).Scan(&req.ID, &req.UserID, &req.Username, &req.Type, &req.TmdbID,
-		&req.Title, &req.Year, &req.Overview, &req.PosterPath, &req.Status, &req.StatusReason,
-		&req.RequestedAt, &req.UpdatedAt)
+		&req.Title, &req.Year, &req.Overview, &req.PosterPath, &req.BackdropPath, &req.QualityProfileID, &req.QualityPresetID,
+		&req.Status, &req.StatusReason, &req.RequestedAt, &req.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -2270,13 +2503,13 @@ func (d *Database) GetRequestByTmdb(userID int64, mediaType string, tmdbID int64
 	var req Request
 	err := d.db.QueryRow(`
 		SELECT r.id, r.user_id, u.username, r.type, r.tmdb_id, r.title, r.year, r.overview,
-		       r.poster_path, r.status, r.status_reason, r.requested_at, r.updated_at
+		       r.poster_path, r.backdrop_path, r.quality_profile_id, r.quality_preset_id, r.status, r.status_reason, r.requested_at, r.updated_at
 		FROM requests r
 		LEFT JOIN users u ON r.user_id = u.id
 		WHERE r.user_id = ? AND r.type = ? AND r.tmdb_id = ?`,
 		userID, mediaType, tmdbID).Scan(&req.ID, &req.UserID, &req.Username, &req.Type, &req.TmdbID,
-		&req.Title, &req.Year, &req.Overview, &req.PosterPath, &req.Status, &req.StatusReason,
-		&req.RequestedAt, &req.UpdatedAt)
+		&req.Title, &req.Year, &req.Overview, &req.PosterPath, &req.BackdropPath, &req.QualityProfileID, &req.QualityPresetID,
+		&req.Status, &req.StatusReason, &req.RequestedAt, &req.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -3096,11 +3329,15 @@ func (d *Database) IsInWatchlist(userID, tmdbID int64, mediaType string) (bool, 
 
 func (d *Database) GetQualityPresets() ([]QualityPreset, error) {
 	rows, err := d.db.Query(`
-		SELECT id, name, is_default, is_built_in, resolution, source,
+		SELECT id, name, COALESCE(media_type, 'movie') as media_type, is_default, is_built_in, enabled, priority, resolution, source,
 		       hdr_formats, codec, audio_formats, preferred_edition,
-		       min_seeders, prefer_season_packs, auto_upgrade, created_at, updated_at
+		       min_seeders, prefer_season_packs, auto_upgrade,
+		       COALESCE(prefer_dual_audio, 0) as prefer_dual_audio,
+		       COALESCE(prefer_dubbed, 0) as prefer_dubbed,
+		       COALESCE(preferred_language, 'any') as preferred_language,
+		       created_at, updated_at
 		FROM quality_presets
-		ORDER BY is_default DESC, name ASC
+		ORDER BY media_type ASC, priority ASC, is_default DESC, name ASC
 	`)
 	if err != nil {
 		return nil, err
@@ -3110,19 +3347,24 @@ func (d *Database) GetQualityPresets() ([]QualityPreset, error) {
 	var presets []QualityPreset
 	for rows.Next() {
 		var p QualityPreset
-		var isDefault, isBuiltIn, preferSeasonPacks, autoUpgrade int
+		var isDefault, isBuiltIn, enabled, preferSeasonPacks, autoUpgrade, preferDualAudio, preferDubbed int
 		var hdrFormatsJSON, audioFormatsJSON *string
 		if err := rows.Scan(
-			&p.ID, &p.Name, &isDefault, &isBuiltIn, &p.Resolution, &p.Source,
+			&p.ID, &p.Name, &p.MediaType, &isDefault, &isBuiltIn, &enabled, &p.Priority, &p.Resolution, &p.Source,
 			&hdrFormatsJSON, &p.Codec, &audioFormatsJSON, &p.PreferredEdition,
-			&p.MinSeeders, &preferSeasonPacks, &autoUpgrade, &p.CreatedAt, &p.UpdatedAt,
+			&p.MinSeeders, &preferSeasonPacks, &autoUpgrade,
+			&preferDualAudio, &preferDubbed, &p.PreferredLanguage,
+			&p.CreatedAt, &p.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
 		p.IsDefault = isDefault == 1
 		p.IsBuiltIn = isBuiltIn == 1
+		p.Enabled = enabled == 1
 		p.PreferSeasonPacks = preferSeasonPacks == 1
 		p.AutoUpgrade = autoUpgrade == 1
+		p.PreferDualAudio = preferDualAudio == 1
+		p.PreferDubbed = preferDubbed == 1
 		// Parse JSON arrays
 		if hdrFormatsJSON != nil && *hdrFormatsJSON != "" {
 			json.Unmarshal([]byte(*hdrFormatsJSON), &p.HDRFormats)
@@ -3143,25 +3385,34 @@ func (d *Database) GetQualityPresets() ([]QualityPreset, error) {
 
 func (d *Database) GetQualityPreset(id int64) (*QualityPreset, error) {
 	var p QualityPreset
-	var isDefault, isBuiltIn, preferSeasonPacks, autoUpgrade int
+	var isDefault, isBuiltIn, enabled, preferSeasonPacks, autoUpgrade, preferDualAudio, preferDubbed int
 	var hdrFormatsJSON, audioFormatsJSON *string
 	err := d.db.QueryRow(`
-		SELECT id, name, is_default, is_built_in, resolution, source,
+		SELECT id, name, COALESCE(media_type, 'movie') as media_type, is_default, is_built_in, enabled, priority, resolution, source,
 		       hdr_formats, codec, audio_formats, preferred_edition,
-		       min_seeders, prefer_season_packs, auto_upgrade, created_at, updated_at
+		       min_seeders, prefer_season_packs, auto_upgrade,
+		       COALESCE(prefer_dual_audio, 0) as prefer_dual_audio,
+		       COALESCE(prefer_dubbed, 0) as prefer_dubbed,
+		       COALESCE(preferred_language, 'any') as preferred_language,
+		       created_at, updated_at
 		FROM quality_presets WHERE id = ?
 	`, id).Scan(
-		&p.ID, &p.Name, &isDefault, &isBuiltIn, &p.Resolution, &p.Source,
+		&p.ID, &p.Name, &p.MediaType, &isDefault, &isBuiltIn, &enabled, &p.Priority, &p.Resolution, &p.Source,
 		&hdrFormatsJSON, &p.Codec, &audioFormatsJSON, &p.PreferredEdition,
-		&p.MinSeeders, &preferSeasonPacks, &autoUpgrade, &p.CreatedAt, &p.UpdatedAt,
+		&p.MinSeeders, &preferSeasonPacks, &autoUpgrade,
+		&preferDualAudio, &preferDubbed, &p.PreferredLanguage,
+		&p.CreatedAt, &p.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
 	}
 	p.IsDefault = isDefault == 1
 	p.IsBuiltIn = isBuiltIn == 1
+	p.Enabled = enabled == 1
 	p.PreferSeasonPacks = preferSeasonPacks == 1
 	p.AutoUpgrade = autoUpgrade == 1
+	p.PreferDualAudio = preferDualAudio == 1
+	p.PreferDubbed = preferDubbed == 1
 	if hdrFormatsJSON != nil && *hdrFormatsJSON != "" {
 		json.Unmarshal([]byte(*hdrFormatsJSON), &p.HDRFormats)
 	}
@@ -3179,25 +3430,34 @@ func (d *Database) GetQualityPreset(id int64) (*QualityPreset, error) {
 
 func (d *Database) GetDefaultQualityPreset() (*QualityPreset, error) {
 	var p QualityPreset
-	var isDefault, isBuiltIn, preferSeasonPacks, autoUpgrade int
+	var isDefault, isBuiltIn, enabled, preferSeasonPacks, autoUpgrade, preferDualAudio, preferDubbed int
 	var hdrFormatsJSON, audioFormatsJSON *string
 	err := d.db.QueryRow(`
-		SELECT id, name, is_default, is_built_in, resolution, source,
+		SELECT id, name, COALESCE(media_type, 'movie') as media_type, is_default, is_built_in, enabled, priority, resolution, source,
 		       hdr_formats, codec, audio_formats, preferred_edition,
-		       min_seeders, prefer_season_packs, auto_upgrade, created_at, updated_at
+		       min_seeders, prefer_season_packs, auto_upgrade,
+		       COALESCE(prefer_dual_audio, 0) as prefer_dual_audio,
+		       COALESCE(prefer_dubbed, 0) as prefer_dubbed,
+		       COALESCE(preferred_language, 'any') as preferred_language,
+		       created_at, updated_at
 		FROM quality_presets WHERE is_default = 1 LIMIT 1
 	`).Scan(
-		&p.ID, &p.Name, &isDefault, &isBuiltIn, &p.Resolution, &p.Source,
+		&p.ID, &p.Name, &p.MediaType, &isDefault, &isBuiltIn, &enabled, &p.Priority, &p.Resolution, &p.Source,
 		&hdrFormatsJSON, &p.Codec, &audioFormatsJSON, &p.PreferredEdition,
-		&p.MinSeeders, &preferSeasonPacks, &autoUpgrade, &p.CreatedAt, &p.UpdatedAt,
+		&p.MinSeeders, &preferSeasonPacks, &autoUpgrade,
+		&preferDualAudio, &preferDubbed, &p.PreferredLanguage,
+		&p.CreatedAt, &p.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
 	}
 	p.IsDefault = isDefault == 1
 	p.IsBuiltIn = isBuiltIn == 1
+	p.Enabled = enabled == 1
 	p.PreferSeasonPacks = preferSeasonPacks == 1
 	p.AutoUpgrade = autoUpgrade == 1
+	p.PreferDualAudio = preferDualAudio == 1
+	p.PreferDubbed = preferDubbed == 1
 	if hdrFormatsJSON != nil && *hdrFormatsJSON != "" {
 		json.Unmarshal([]byte(*hdrFormatsJSON), &p.HDRFormats)
 	}
@@ -3216,12 +3476,25 @@ func (d *Database) GetDefaultQualityPreset() (*QualityPreset, error) {
 func (d *Database) CreateQualityPreset(p *QualityPreset) error {
 	hdrFormatsJSON, _ := json.Marshal(p.HDRFormats)
 	audioFormatsJSON, _ := json.Marshal(p.AudioFormats)
+	// Default to enabled with priority 100 for new presets
+	enabled := 1
+	if !p.Enabled {
+		enabled = 0
+	}
+	priority := p.Priority
+	if priority == 0 {
+		priority = 100
+	}
+	mediaType := p.MediaType
+	if mediaType == "" {
+		mediaType = "movie"
+	}
 	result, err := d.db.Exec(`
-		INSERT INTO quality_presets (name, is_default, is_built_in, resolution, source,
+		INSERT INTO quality_presets (name, media_type, is_default, is_built_in, enabled, priority, resolution, source,
 		                            hdr_formats, codec, audio_formats, preferred_edition,
 		                            min_seeders, prefer_season_packs, auto_upgrade)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, p.Name, p.IsDefault, p.IsBuiltIn, p.Resolution, p.Source,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, p.Name, mediaType, p.IsDefault, p.IsBuiltIn, enabled, priority, p.Resolution, p.Source,
 		string(hdrFormatsJSON), p.Codec, string(audioFormatsJSON), p.PreferredEdition,
 		p.MinSeeders, p.PreferSeasonPacks, p.AutoUpgrade)
 	if err != nil {
@@ -3236,14 +3509,68 @@ func (d *Database) UpdateQualityPreset(p *QualityPreset) error {
 	audioFormatsJSON, _ := json.Marshal(p.AudioFormats)
 	_, err := d.db.Exec(`
 		UPDATE quality_presets SET
-			name = ?, resolution = ?, source = ?, hdr_formats = ?,
+			name = ?, enabled = ?, priority = ?, resolution = ?, source = ?, hdr_formats = ?,
 			codec = ?, audio_formats = ?, preferred_edition = ?,
 			min_seeders = ?, prefer_season_packs = ?, auto_upgrade = ?,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ? AND is_built_in = 0
-	`, p.Name, p.Resolution, p.Source, string(hdrFormatsJSON),
+	`, p.Name, p.Enabled, p.Priority, p.Resolution, p.Source, string(hdrFormatsJSON),
 		p.Codec, string(audioFormatsJSON), p.PreferredEdition,
 		p.MinSeeders, p.PreferSeasonPacks, p.AutoUpgrade, p.ID)
+	return err
+}
+
+// ToggleQualityPresetEnabled allows toggling enabled status for any preset (including built-in)
+func (d *Database) ToggleQualityPresetEnabled(id int64, enabled bool) error {
+	enabledVal := 0
+	if enabled {
+		enabledVal = 1
+	}
+	_, err := d.db.Exec(`
+		UPDATE quality_presets SET enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+	`, enabledVal, id)
+	return err
+}
+
+// UpdateQualityPresetPriority allows changing priority for any preset (including built-in)
+func (d *Database) UpdateQualityPresetPriority(id int64, priority int) error {
+	_, err := d.db.Exec(`
+		UPDATE quality_presets SET priority = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+	`, priority, id)
+	return err
+}
+
+// UpdateQualityPresetAnimePreferences updates anime-specific preferences for a preset
+func (d *Database) UpdateQualityPresetAnimePreferences(id int64, preferDualAudio, preferDubbed *bool, preferredLanguage *string) error {
+	// Build dynamic SQL based on which fields are provided
+	query := "UPDATE quality_presets SET updated_at = CURRENT_TIMESTAMP"
+	args := []interface{}{}
+
+	if preferDualAudio != nil {
+		val := 0
+		if *preferDualAudio {
+			val = 1
+		}
+		query += ", prefer_dual_audio = ?"
+		args = append(args, val)
+	}
+	if preferDubbed != nil {
+		val := 0
+		if *preferDubbed {
+			val = 1
+		}
+		query += ", prefer_dubbed = ?"
+		args = append(args, val)
+	}
+	if preferredLanguage != nil {
+		query += ", preferred_language = ?"
+		args = append(args, *preferredLanguage)
+	}
+
+	query += " WHERE id = ?"
+	args = append(args, id)
+
+	_, err := d.db.Exec(query, args...)
 	return err
 }
 

@@ -21,6 +21,8 @@
 	let searchResults: Record<number, ScoredSearchResult[]> = $state({});
 	let grabbing: Record<string, boolean> = $state({});
 	let grabResults: Record<string, { success: boolean; message: string }> = $state({});
+	let confirmingDeleteId: number | null = $state(null);
+	let processingIds: Set<number> = $state(new Set());
 
 	onMount(async () => {
 		await Promise.all([loadItems(), loadProfiles()]);
@@ -45,13 +47,26 @@
 		}
 	}
 
-	async function handleDelete(id: number) {
-		if (!confirm('Remove this item from the wanted list?')) return;
+	function handleDeleteClick(id: number) {
+		confirmingDeleteId = id;
+	}
+
+	function cancelDelete() {
+		confirmingDeleteId = null;
+	}
+
+	async function confirmDelete(id: number) {
+		processingIds.add(id);
+		processingIds = processingIds;
+		confirmingDeleteId = null;
 		try {
 			await deleteWantedItem(id);
 			await loadItems();
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to delete item';
+		} finally {
+			processingIds.delete(id);
+			processingIds = processingIds;
 		}
 	}
 
@@ -251,12 +266,29 @@
 									>
 										{searching[item.id] ? 'Searching...' : 'Search'}
 									</button>
-									<button
-										class="liquid-btn-sm !bg-white/5 !border-t-white/10 text-text-secondary hover:text-white"
-										onclick={() => handleDelete(item.id)}
-									>
-										Remove
-									</button>
+									{#if confirmingDeleteId === item.id}
+										<button
+											onclick={() => confirmDelete(item.id)}
+											disabled={processingIds.has(item.id)}
+											class="liquid-btn-sm !bg-red-600 text-white hover:!bg-red-500 disabled:opacity-50"
+										>
+											Confirm
+										</button>
+										<button
+											onclick={cancelDelete}
+											class="liquid-btn-sm !bg-white/5 !border-t-white/10 text-text-secondary hover:text-white"
+										>
+											Cancel
+										</button>
+									{:else}
+										<button
+											onclick={() => handleDeleteClick(item.id)}
+											disabled={processingIds.has(item.id)}
+											class="liquid-btn-sm !bg-white/5 !border-t-white/10 text-text-secondary hover:text-white disabled:opacity-50"
+										>
+											Remove
+										</button>
+									{/if}
 								</div>
 							</div>
 						</div>

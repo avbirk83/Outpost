@@ -36,11 +36,12 @@
 - **Cutoff System** — Stop upgrading after reaching target quality
 
 ### Automation
+- **Prowlarr Integration** — Sync indexers directly from Prowlarr with auto-sync support
 - **Indexer Support** — Connect to Newznab and Torznab indexers
-- **Download Clients** — Integration with qBittorrent, Transmission, Deluge, SABnzbd, NZBGet
+- **Download Clients** — Integration with qBittorrent, Transmission, SABnzbd, NZBGet
 - **Automated Search** — Scheduled searches for missing and wanted content
 - **RSS Feeds** — Monitor indexer RSS feeds for new releases
-- **Delay Profiles** — Wait for preferred quality before grabbing
+- **Import Queue** — Automatic import of completed downloads with rename support
 - **Blocklist** — Automatically block failed releases and groups
 
 ### Playback
@@ -146,21 +147,16 @@ Configure in **Settings** → **Download Clients**.
 
 ### Quality Presets
 
-Choose or customize quality preferences:
+Built-in presets organized by media type:
 
-- **Best Quality** — 4K Remux/Blu-ray with HDR and lossless audio
-- **High Quality** — 4K/1080p from quality web sources
-- **Balanced** — 1080p web releases
-- **Storage Saver** — HEVC-encoded releases for smaller files
-- **Anime** — Optimized for anime with dual-audio preference
+**Movies** — 4K Remux, 4K HDR, 4K, 1080p Remux, 1080p BluRay, 1080p, 720p, 480p
 
-### Delay Profiles
+**TV Shows** — 4K HDR, 4K, 1080p, 1080p HDTV, 720p, Any
 
-Wait for preferred quality before downloading:
-
-1. Go to **Settings** → **Delay Profiles**
-2. Set minimum delay before grabbing Usenet/Torrent
-3. Configure bypass rules for specific qualities
+**Anime** — 4K, 1080p, 720p, 480p with editable preferences for:
+- Dual Audio toggle
+- Dubbed toggle
+- Language preference (Any, English, Japanese)
 
 ---
 

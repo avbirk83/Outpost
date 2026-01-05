@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import Select from '$lib/components/ui/Select.svelte';
+	import DirectoryBrowser from '$lib/components/DirectoryBrowser.svelte';
 	import {
 		getLibraries,
 		createLibrary,
@@ -26,11 +27,20 @@
 		updateQualityPreset,
 		deleteQualityPreset,
 		setDefaultQualityPreset,
+		toggleQualityPresetEnabled,
+		updateQualityPresetPriority,
 		getStorageStatus,
 		getTasks,
 		updateTask,
 		triggerTask,
+		getProwlarrConfig,
+		saveProwlarrConfig,
+		testProwlarrConnection,
+		syncProwlarr,
+		getIndexerTags,
 		type Library,
+		type ProwlarrConfig,
+		type IndexerTag,
 		type DownloadClient,
 		type Indexer,
 		type QualityPreset,
@@ -47,6 +57,8 @@
 	let tasks: ScheduledTask[] = $state([]);
 	let taskRefreshInterval: ReturnType<typeof setInterval> | null = null;
 	let triggeringTask: Record<number, boolean> = $state({});
+	let editingTaskInterval: Record<number, number> = $state({});
+	let savingTask: Record<number, boolean> = $state({});
 	let loading = $state(true);
 	let error: string | null = $state(null);
 	let showAddForm = $state(false);
@@ -54,6 +66,10 @@
 	let showAddIndexerForm = $state(false);
 	let showAddPresetForm = $state(false);
 	let editingPreset: QualityPreset | null = $state(null);
+	let presetMediaTab: "movie" | "tv" | "anime" = $state("movie");
+	const filteredPresets = $derived(qualityPresets.filter(p => (p.mediaType || 'movie') === presetMediaTab));
+	let draggingPresetId: number | null = $state(null);
+	let dragOverPresetId: number | null = $state(null);
 	let scanning: Record<number, boolean> = $state({});
 	let testing: Record<number, boolean> = $state({});
 	let testingIndexer: Record<number, boolean> = $state({});
@@ -62,10 +78,43 @@
 	let scanProgress: ScanProgress | null = $state(null);
 	let progressInterval: ReturnType<typeof setInterval> | null = null;
 
+	// Prowlarr state
+	let prowlarrConfig: ProwlarrConfig | null = $state(null);
+	let prowlarrUrl = $state('');
+	let prowlarrApiKey = $state('');
+	let prowlarrAutoSync = $state(true);
+	let prowlarrSyncInterval = $state(24);
+	let prowlarrTesting = $state(false);
+	let prowlarrTestResult: { success: boolean; message: string; indexerCount?: number } | null = $state(null);
+	let prowlarrSyncing = $state(false);
+	let prowlarrSyncResult: { success: boolean; message: string; synced?: number } | null = $state(null);
+	let indexerTags: IndexerTag[] = $state([]);
+
 	// Form state
 	let name = $state('');
 	let path = $state('');
 	let type: Library['type'] = $state('movies');
+
+	// Auto-populate library name when type changes
+	const typeLabels: Record<string, string> = {
+		movies: 'Movies',
+		tv: 'TV Shows',
+		anime: 'Anime',
+		music: 'Music',
+		books: 'Books'
+	};
+	let lastAutoName = $state('');
+	$effect(() => {
+		const label = typeLabels[type] || '';
+		// Only auto-populate if name is empty or matches last auto-populated value
+		if (name === '' || name === lastAutoName) {
+			name = label;
+			lastAutoName = label;
+		}
+	});
+
+	// Directory browser state
+	let showBrowser = $state(false);
 
 	// Download client form state
 	let clientName = $state('');
@@ -77,6 +126,7 @@
 	let clientApiKey = $state('');
 	let clientUseTls = $state(false);
 	let clientCategory = $state('');
+	let editingClient: DownloadClient | null = $state(null);
 
 	// Indexer form state
 	let indexerName = $state('');
@@ -126,7 +176,7 @@
 	];
 
 	onMount(async () => {
-		await Promise.all([loadLibraries(), loadSettings(), loadDownloadClients(), loadIndexers(), loadQualityPresets(), loadStorageStatus(), loadTasks()]);
+		await Promise.all([loadLibraries(), loadSettings(), loadDownloadClients(), loadIndexers(), loadProwlarrConfig(), loadQualityPresets(), loadStorageStatus(), loadTasks()]);
 		// Check if a scan is already running
 		checkScanProgress();
 		// Start task refresh interval
@@ -286,24 +336,42 @@
 
 	async function handleAddClient() {
 		try {
-			await createDownloadClient({
-				name: clientName,
-				type: clientType,
-				host: clientHost,
-				port: clientPort,
-				username: clientUsername || undefined,
-				password: clientPassword || undefined,
-				apiKey: clientApiKey || undefined,
-				useTls: clientUseTls,
-				category: clientCategory || undefined,
-				priority: 0,
-				enabled: true
-			});
+			if (editingClient) {
+				// Update existing client
+				await updateDownloadClient(editingClient.id, {
+					name: clientName,
+					type: clientType,
+					host: clientHost,
+					port: clientPort,
+					username: clientUsername || undefined,
+					password: clientPassword || undefined,
+					apiKey: clientApiKey || undefined,
+					useTls: clientUseTls,
+					category: clientCategory || undefined,
+					priority: editingClient.priority,
+					enabled: editingClient.enabled
+				});
+			} else {
+				// Create new client
+				await createDownloadClient({
+					name: clientName,
+					type: clientType,
+					host: clientHost,
+					port: clientPort,
+					username: clientUsername || undefined,
+					password: clientPassword || undefined,
+					apiKey: clientApiKey || undefined,
+					useTls: clientUseTls,
+					category: clientCategory || undefined,
+					priority: 0,
+					enabled: true
+				});
+			}
 			resetClientForm();
 			showAddClientForm = false;
 			await loadDownloadClients();
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to add download client';
+			error = e instanceof Error ? e.message : editingClient ? 'Failed to update download client' : 'Failed to add download client';
 		}
 	}
 
@@ -317,6 +385,21 @@
 		clientApiKey = '';
 		clientUseTls = false;
 		clientCategory = '';
+		editingClient = null;
+	}
+
+	function handleEditClient(client: DownloadClient) {
+		editingClient = client;
+		clientName = client.name;
+		clientType = client.type;
+		clientHost = client.host;
+		clientPort = client.port;
+		clientUsername = client.username || '';
+		clientPassword = client.password || '';
+		clientApiKey = client.apiKey || '';
+		clientUseTls = client.useTls;
+		clientCategory = client.category || '';
+		showAddClientForm = true;
 	}
 
 	function getDefaultPort(type: string): number {
@@ -385,7 +468,74 @@
 	}
 
 	// Indexer functions
-	async function loadIndexers() {
+	// Prowlarr functions
+	async function loadProwlarrConfig() {
+		try {
+			prowlarrConfig = await getProwlarrConfig();
+			if (prowlarrConfig) {
+				prowlarrUrl = prowlarrConfig.url;
+				prowlarrAutoSync = prowlarrConfig.autoSync;
+				prowlarrSyncInterval = prowlarrConfig.syncIntervalHours;
+			}
+			indexerTags = await getIndexerTags();
+		} catch (e) {
+			console.error('Failed to load Prowlarr config:', e);
+		}
+	}
+
+	async function handleProwlarrTest() {
+		if (!prowlarrUrl || !prowlarrApiKey) {
+			prowlarrTestResult = { success: false, message: 'URL and API key are required' };
+			return;
+		}
+		prowlarrTesting = true;
+		prowlarrTestResult = null;
+		try {
+			const result = await testProwlarrConnection(prowlarrUrl, prowlarrApiKey);
+			if (result.success) {
+				prowlarrTestResult = { success: true, message: `Connection successful! Found ${result.indexerCount} indexers.`, indexerCount: result.indexerCount };
+			} else {
+				prowlarrTestResult = { success: false, message: result.error || 'Connection failed' };
+			}
+		} catch (e) {
+			prowlarrTestResult = { success: false, message: 'Connection failed: ' + (e as Error).message };
+		}
+		prowlarrTesting = false;
+	}
+
+	async function handleProwlarrSave() {
+		try {
+			await saveProwlarrConfig({
+				url: prowlarrUrl,
+				apiKey: prowlarrApiKey,
+				autoSync: prowlarrAutoSync,
+				syncIntervalHours: prowlarrSyncInterval
+			});
+			await loadProwlarrConfig();
+		} catch (e) {
+			console.error('Failed to save Prowlarr config:', e);
+		}
+	}
+
+	async function handleProwlarrSync() {
+		prowlarrSyncing = true;
+		prowlarrSyncResult = null;
+		try {
+			const result = await syncProwlarr();
+			if (result.success) {
+				prowlarrSyncResult = { success: true, message: `Synced ${result.synced} indexers from Prowlarr`, synced: result.synced };
+				await loadIndexers();
+				await loadProwlarrConfig();
+			} else {
+				prowlarrSyncResult = { success: false, message: result.error || 'Sync failed' };
+			}
+		} catch (e) {
+			prowlarrSyncResult = { success: false, message: 'Sync failed: ' + (e as Error).message };
+		}
+		prowlarrSyncing = false;
+	}
+
+		async function loadIndexers() {
 		try {
 			indexers = await getIndexers();
 		} catch (e) {
@@ -572,6 +722,81 @@
 		}
 	}
 
+	async function updateAnimePresetPreference(id: number, field: string, value: boolean | string) {
+		const response = await fetch(`/api/quality/presets/${id}/anime-preferences`, {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ [field]: value })
+		});
+		if (!response.ok) {
+			throw new Error('Failed to update anime preferences');
+		}
+	}
+
+	// Drag and drop handlers for preset reordering
+	function handlePresetDragStart(e: DragEvent, presetId: number) {
+		draggingPresetId = presetId;
+		if (e.dataTransfer) {
+			e.dataTransfer.effectAllowed = 'move';
+			e.dataTransfer.setData('text/plain', String(presetId));
+		}
+	}
+
+	function handlePresetDragOver(e: DragEvent, presetId: number) {
+		e.preventDefault();
+		if (e.dataTransfer) {
+			e.dataTransfer.dropEffect = 'move';
+		}
+		if (draggingPresetId !== presetId) {
+			dragOverPresetId = presetId;
+		}
+	}
+
+	function handlePresetDragLeave() {
+		dragOverPresetId = null;
+	}
+
+	function handlePresetDragEnd() {
+		draggingPresetId = null;
+		dragOverPresetId = null;
+	}
+
+	async function handlePresetDrop(e: DragEvent, targetPresetId: number) {
+		e.preventDefault();
+		if (draggingPresetId === null || draggingPresetId === targetPresetId) {
+			handlePresetDragEnd();
+			return;
+		}
+
+		// Find the dragged and target presets
+		const draggedIndex = qualityPresets.findIndex(p => p.id === draggingPresetId);
+		const targetIndex = qualityPresets.findIndex(p => p.id === targetPresetId);
+
+		if (draggedIndex === -1 || targetIndex === -1) {
+			handlePresetDragEnd();
+			return;
+		}
+
+		// Create new array with reordered presets
+		const newPresets = [...qualityPresets];
+		const [removed] = newPresets.splice(draggedIndex, 1);
+		newPresets.splice(targetIndex, 0, removed);
+
+		// Update priorities based on new positions
+		try {
+			for (let i = 0; i < newPresets.length; i++) {
+				if (newPresets[i].priority !== i + 1) {
+					await updateQualityPresetPriority(newPresets[i].id, i + 1);
+				}
+			}
+			await loadQualityPresets();
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to reorder presets';
+		}
+
+		handlePresetDragEnd();
+	}
+
 	function toggleHdrFormat(format: string) {
 		if (presetHdrFormats.includes(format)) {
 			presetHdrFormats = presetHdrFormats.filter(f => f !== format);
@@ -650,6 +875,21 @@
 			await loadTasks();
 		} catch (e) {
 			console.error('Failed to update task:', e);
+		}
+	}
+
+	async function handleSaveTaskInterval(task: ScheduledTask) {
+		const newInterval = editingTaskInterval[task.id];
+		if (!newInterval || newInterval === task.intervalMinutes) return;
+		savingTask[task.id] = true;
+		try {
+			await updateTask(task.id, task.enabled, newInterval);
+			await loadTasks();
+			delete editingTaskInterval[task.id];
+		} catch (e) {
+			console.error('Failed to save task interval:', e);
+		} finally {
+			savingTask[task.id] = false;
 		}
 	}
 
@@ -909,14 +1149,26 @@
 				</div>
 				<div>
 					<label for="lib-path" class={labelClass}>Path</label>
-					<input
-						type="text"
-						id="lib-path"
-						bind:value={path}
-						required
-						class={inputClass}
-						placeholder="/media/movies"
-					/>
+					<div class="flex gap-2">
+						<input
+							type="text"
+							id="lib-path"
+							bind:value={path}
+							required
+							class="{inputClass} flex-1"
+							placeholder="/media/movies"
+						/>
+						<button
+							type="button"
+							onclick={() => showBrowser = true}
+							class="px-3 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-text-secondary hover:text-text-primary transition-colors"
+							title="Browse directories"
+						>
+							<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+							</svg>
+						</button>
+					</div>
 				</div>
 				<button type="submit" class="liquid-btn">
 					Add Library
@@ -1053,6 +1305,12 @@
 			</button>
 		</div>
 
+		{#if editingClient}
+		<div class="text-sm text-text-secondary">
+			Editing: <span class="text-text-primary font-medium">{editingClient.name}</span>
+		</div>
+		{/if}
+
 		{#if showAddClientForm}
 			<form
 				class="p-4 bg-bg-elevated/50 rounded-xl space-y-4 border border-white/5"
@@ -1104,20 +1362,15 @@
 						<input type="password" id="client-apikey" bind:value={clientApiKey} class={inputClass} placeholder="API Key from client settings" />
 					</div>
 				{/if}
-				<div class="grid sm:grid-cols-2 gap-4">
-					<div>
-						<label for="client-category" class={labelClass}>Category/Label</label>
-						<input type="text" id="client-category" bind:value={clientCategory} class={inputClass} placeholder="outpost (optional)" />
-					</div>
-					<div class="flex items-center pt-7">
-						<label class="flex items-center gap-2 cursor-pointer">
-							<input type="checkbox" bind:checked={clientUseTls} class="w-4 h-4 rounded bg-bg-elevated border-white/20 text-white-400 focus:ring-white-400" />
-							<span class="text-sm text-text-secondary">Use HTTPS</span>
-						</label>
-					</div>
+				<div class="flex items-center">
+					<label class="flex items-center gap-2 cursor-pointer">
+						<input type="checkbox" bind:checked={clientUseTls} class="form-checkbox" />
+						<span class="text-sm text-text-secondary">Use HTTPS</span>
+					</label>
 				</div>
+				<p class="text-xs text-text-muted">Categories are set automatically based on content type (movies-outpost, tv-outpost, etc.)</p>
 				<button type="submit" class="liquid-btn">
-					Add Client
+					{editingClient ? 'Save Changes' : 'Add Client'}
 				</button>
 			</form>
 		{/if}
@@ -1165,6 +1418,12 @@
 								</button>
 								<button
 									class="liquid-btn-sm !bg-white/5 !border-t-white/10 text-text-secondary hover:text-white"
+									onclick={() => handleEditClient(client)}
+								>
+									Edit
+								</button>
+								<button
+									class="liquid-btn-sm !bg-white/5 !border-t-white/10 text-text-secondary hover:text-red-400"
 									onclick={() => handleDeleteClient(client.id)}
 								>
 									Delete
@@ -1189,7 +1448,120 @@
 		{/if}
 	</section>
 
-	<!-- Indexers -->
+	<!-- Prowlarr Sync -->
+	<section class="glass-card p-6 space-y-4">
+		<div class="flex items-center justify-between">
+			<div class="flex items-center gap-3">
+				<div class="w-10 h-10 rounded-xl bg-orange-600/20 flex items-center justify-center">
+					<svg class="w-5 h-5 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+					</svg>
+				</div>
+				<div>
+					<h2 class="text-lg font-semibold text-text-primary">Prowlarr Sync</h2>
+					<p class="text-sm text-text-secondary">Import indexers from Prowlarr with capabilities and tags</p>
+				</div>
+			</div>
+		</div>
+
+		<div class="p-4 bg-bg-elevated/50 rounded-xl space-y-4 border border-white/5">
+			<div class="grid sm:grid-cols-2 gap-4">
+				<div>
+					<label for="prowlarr-url" class={labelClass}>Prowlarr URL</label>
+					<input type="url" id="prowlarr-url" bind:value={prowlarrUrl} class={inputClass} placeholder="http://localhost:9696" />
+				</div>
+				<div>
+					<label for="prowlarr-apikey" class={labelClass}>API Key</label>
+					<input type="password" id="prowlarr-apikey" bind:value={prowlarrApiKey} class={inputClass} placeholder="API Key from Prowlarr settings" />
+				</div>
+			</div>
+			<div class="grid sm:grid-cols-3 gap-4 items-end">
+				<div class="flex items-center gap-2">
+					<input type="checkbox" id="prowlarr-autosync" bind:checked={prowlarrAutoSync} class="form-checkbox" />
+					<label for="prowlarr-autosync" class="text-sm text-text-secondary">Auto-sync</label>
+				</div>
+				<div>
+					<label for="prowlarr-interval" class={labelClass}>Sync Interval (hours)</label>
+					<input type="number" id="prowlarr-interval" bind:value={prowlarrSyncInterval} min="1" max="168" class={inputClass} />
+				</div>
+				<div class="flex gap-2">
+					<button
+						class="liquid-btn-sm flex-1"
+						onclick={handleProwlarrTest}
+						disabled={prowlarrTesting}
+					>
+						{prowlarrTesting ? 'Testing...' : 'Test'}
+					</button>
+					<button
+						class="liquid-btn-sm flex-1"
+						onclick={handleProwlarrSave}
+					>
+						Save
+					</button>
+				</div>
+			</div>
+			{#if prowlarrTestResult}
+				<div class="flex items-center justify-between">
+					<div class="text-sm {prowlarrTestResult.success ? 'text-green-400' : 'text-red-400'}">
+						{prowlarrTestResult.message}
+					</div>
+					{#if prowlarrTestResult.success}
+						<button
+							class="liquid-btn-sm"
+							onclick={async () => { await handleProwlarrSave(); await handleProwlarrSync(); }}
+							disabled={prowlarrSyncing}
+						>
+							{prowlarrSyncing ? 'Syncing...' : 'Save & Sync'}
+						</button>
+					{/if}
+				</div>
+			{/if}
+
+			{#if prowlarrConfig?.lastSync}
+				<div class="flex items-center justify-between text-sm text-text-secondary pt-2 border-t border-white/5">
+					<span>Last synced: {new Date(prowlarrConfig.lastSync).toLocaleString()}</span>
+					<button
+						class="liquid-btn-sm"
+						onclick={handleProwlarrSync}
+						disabled={prowlarrSyncing}
+					>
+						{prowlarrSyncing ? 'Syncing...' : 'Sync Now'}
+					</button>
+				</div>
+			{:else if prowlarrConfig}
+				<div class="flex items-center justify-between text-sm text-text-secondary pt-2 border-t border-white/5">
+					<span>Not synced yet</span>
+					<button
+						class="liquid-btn-sm"
+						onclick={handleProwlarrSync}
+						disabled={prowlarrSyncing}
+					>
+						{prowlarrSyncing ? 'Syncing...' : 'Sync Now'}
+					</button>
+				</div>
+			{/if}
+			{#if prowlarrSyncResult}
+				<div class="text-sm {prowlarrSyncResult.success ? 'text-green-400' : 'text-red-400'}">
+					{prowlarrSyncResult.message}
+				</div>
+			{/if}
+		</div>
+
+		{#if indexerTags.length > 0}
+			<div class="p-4 bg-bg-elevated/50 rounded-xl border border-white/5">
+				<h3 class="text-sm font-medium text-text-primary mb-2">Synced Tags</h3>
+				<div class="flex flex-wrap gap-2">
+					{#each indexerTags as tag}
+						<span class="px-2 py-1 text-xs rounded-lg bg-orange-900/30 text-orange-300 border border-orange-600/20">
+							{tag.name} ({tag.indexerCount})
+						</span>
+					{/each}
+				</div>
+			</div>
+		{/if}
+	</section>
+
+		<!-- Indexers -->
 	<section class="glass-card p-6 space-y-4">
 		<div class="flex items-center justify-between">
 			<div class="flex items-center gap-3">
@@ -1279,10 +1651,26 @@
 										<span class="px-2 py-0.5 text-xs rounded-lg {idx.type === 'torznab' ? 'bg-blue-900/50 text-blue-300' : idx.type === 'newznab' ? 'bg-purple-900/50 text-purple-300' : 'bg-green-900/50 text-green-300'}">
 											{getIndexerTypeBadge(idx.type)}
 										</span>
+										{#if idx.syncedFromProwlarr}
+											<span class="px-2 py-0.5 text-xs rounded-lg bg-orange-900/30 text-orange-300">Prowlarr</span>
+										{/if}
 									</div>
-									<p class="text-sm text-text-secondary truncate max-w-sm">
-										{idx.url}
-									</p>
+									{#if idx.syncedFromProwlarr}
+										<div class="flex flex-wrap gap-1 mt-1">
+											{#if idx.supportsMovies}<span class="px-1.5 py-0.5 text-[10px] rounded bg-white/5 text-text-muted">Movies</span>{/if}
+											{#if idx.supportsTV}<span class="px-1.5 py-0.5 text-[10px] rounded bg-white/5 text-text-muted">TV</span>{/if}
+											{#if idx.supportsAnime}<span class="px-1.5 py-0.5 text-[10px] rounded bg-white/5 text-text-muted">Anime</span>{/if}
+											{#if idx.supportsMusic}<span class="px-1.5 py-0.5 text-[10px] rounded bg-white/5 text-text-muted">Music</span>{/if}
+											{#if idx.supportsBooks}<span class="px-1.5 py-0.5 text-[10px] rounded bg-white/5 text-text-muted">Books</span>{/if}
+											{#if idx.supportsImdb}<span class="px-1.5 py-0.5 text-[10px] rounded bg-blue-900/30 text-blue-300">IMDB</span>{/if}
+											{#if idx.supportsTmdb}<span class="px-1.5 py-0.5 text-[10px] rounded bg-blue-900/30 text-blue-300">TMDB</span>{/if}
+											{#if idx.supportsTvdb}<span class="px-1.5 py-0.5 text-[10px] rounded bg-blue-900/30 text-blue-300">TVDB</span>{/if}
+										</div>
+									{:else}
+										<p class="text-sm text-text-secondary truncate max-w-sm">
+											{idx.url}
+										</p>
+									{/if}
 								</div>
 							</div>
 							<div class="flex gap-2">
@@ -1330,8 +1718,8 @@
 	<section class="glass-card p-6 space-y-4">
 		<div class="flex items-center justify-between">
 			<div class="flex items-center gap-3">
-				<div class="w-10 h-10 rounded-xl bg-cyan-600/20 flex items-center justify-center">
-					<svg class="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<div class="w-10 h-10 rounded-xl bg-amber-600/20 flex items-center justify-center">
+					<svg class="w-5 h-5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
 					</svg>
 				</div>
@@ -1345,6 +1733,31 @@
 				onclick={() => { showAddPresetForm = !showAddPresetForm; resetPresetForm(); }}
 			>
 				{showAddPresetForm ? 'Cancel' : 'Add Preset'}
+			</button>
+		</div>
+
+		<!-- Media Type Tabs -->
+		<div class="flex gap-1 p-1 bg-bg-card rounded-xl">
+			<button
+				type="button"
+				class="flex-1 px-4 py-2 text-sm font-medium rounded-lg transition-colors {presetMediaTab === 'movie' ? 'bg-cream/20 text-cream border border-cream/30' : 'text-text-secondary hover:text-text-primary hover:bg-white/5'}"
+				onclick={() => presetMediaTab = 'movie'}
+			>
+				Movies
+			</button>
+			<button
+				type="button"
+				class="flex-1 px-4 py-2 text-sm font-medium rounded-lg transition-colors {presetMediaTab === 'tv' ? 'bg-cream/20 text-cream border border-cream/30' : 'text-text-secondary hover:text-text-primary hover:bg-white/5'}"
+				onclick={() => presetMediaTab = 'tv'}
+			>
+				TV Shows
+			</button>
+			<button
+				type="button"
+				class="flex-1 px-4 py-2 text-sm font-medium rounded-lg transition-colors {presetMediaTab === 'anime' ? 'bg-cream/20 text-cream border border-cream/30' : 'text-text-secondary hover:text-text-primary hover:bg-white/5'}"
+				onclick={() => presetMediaTab = 'anime'}
+			>
+				Anime
 			</button>
 		</div>
 
@@ -1384,7 +1797,7 @@
 						{#each hdrOptions as hdr}
 							<button
 								type="button"
-								class="px-3 py-1.5 text-xs rounded-lg transition-colors font-medium {presetHdrFormats.includes(hdr) ? 'bg-purple-600 text-white' : 'bg-bg-card text-text-muted hover:bg-bg-elevated'}"
+								class="px-3 py-1.5 text-xs rounded-lg transition-colors font-medium {presetHdrFormats.includes(hdr) ? 'bg-amber-600 text-white' : 'bg-bg-card text-text-muted hover:bg-bg-elevated'}"
 								onclick={() => toggleHdrFormat(hdr)}
 							>
 								{hdr.toUpperCase()}
@@ -1400,7 +1813,7 @@
 						{#each audioOptions as audio}
 							<button
 								type="button"
-								class="px-3 py-1.5 text-xs rounded-lg transition-colors font-medium {presetAudioFormats.includes(audio) ? 'bg-blue-600 text-white' : 'bg-bg-card text-text-muted hover:bg-bg-elevated'}"
+								class="px-3 py-1.5 text-xs rounded-lg transition-colors font-medium {presetAudioFormats.includes(audio) ? 'bg-amber-600 text-white' : 'bg-bg-card text-text-muted hover:bg-bg-elevated'}"
 								onclick={() => toggleAudioFormat(audio)}
 							>
 								{audio.toUpperCase()}
@@ -1434,11 +1847,11 @@
 
 				<div class="flex flex-wrap gap-6">
 					<label class="flex items-center gap-2 cursor-pointer">
-						<input type="checkbox" bind:checked={presetPreferSeasonPacks} class="w-4 h-4 rounded bg-bg-elevated border-white/20 text-cyan-400 focus:ring-cyan-400" />
+						<input type="checkbox" bind:checked={presetPreferSeasonPacks} class="form-checkbox" />
 						<span class="text-sm text-text-secondary">Prefer season packs for TV</span>
 					</label>
 					<label class="flex items-center gap-2 cursor-pointer">
-						<input type="checkbox" bind:checked={presetAutoUpgrade} class="w-4 h-4 rounded bg-bg-elevated border-white/20 text-cyan-400 focus:ring-cyan-400" />
+						<input type="checkbox" bind:checked={presetAutoUpgrade} class="form-checkbox" />
 						<span class="text-sm text-text-secondary">Auto-upgrade when better quality found</span>
 					</label>
 				</div>
@@ -1456,14 +1869,50 @@
 			</form>
 		{/if}
 
-		{#if qualityPresets.length === 0}
+		
+		{#if filteredPresets.length === 0}
 			<p class="text-text-muted py-4">No quality presets configured. Built-in presets will be added on first use.</p>
 		{:else}
 			<div class="space-y-2">
-				{#each qualityPresets as preset}
-					<div class="p-4 bg-bg-elevated/50 rounded-xl border border-white/5 {preset.isDefault ? 'ring-1 ring-cyan-500/50' : ''}">
-						<div class="flex items-center justify-between">
-							<div>
+				{#each filteredPresets as preset}
+					<div
+						class="p-4 bg-bg-elevated/50 rounded-xl border transition-all
+							{preset.isDefault ? 'ring-1 ring-amber-500/50' : ''}
+							{!preset.enabled ? 'opacity-50' : ''}
+							{draggingPresetId === preset.id ? 'opacity-50 scale-[0.98] border-amber-500/50' : 'border-white/5'}
+							{dragOverPresetId === preset.id ? 'border-amber-400 bg-amber-500/10' : ''}"
+						draggable="true"
+						ondragstart={(e: DragEvent) => handlePresetDragStart(e, preset.id)}
+						ondragover={(e: DragEvent) => handlePresetDragOver(e, preset.id)}
+						ondragleave={handlePresetDragLeave}
+						ondragend={handlePresetDragEnd}
+						ondrop={(e: DragEvent) => handlePresetDrop(e, preset.id)}
+					>
+						<div class="flex items-center justify-between gap-4">
+							<!-- Drag Handle -->
+							<div class="flex-shrink-0 cursor-grab active:cursor-grabbing text-text-muted hover:text-text-secondary" title="Drag to reorder">
+								<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 8h16M4 16h16" />
+								</svg>
+							</div>
+
+							<!-- Enable/Disable Toggle -->
+							<button
+								class="flex-shrink-0 w-10 h-6 rounded-full transition-colors {preset.enabled ? 'bg-amber-600' : 'bg-white/10'}"
+								onclick={async () => {
+									try {
+										await toggleQualityPresetEnabled(preset.id, !preset.enabled);
+										preset.enabled = !preset.enabled;
+									} catch (e) {
+										console.error('Failed to toggle preset:', e);
+									}
+								}}
+								title={preset.enabled ? 'Disable preset' : 'Enable preset'}
+							>
+								<div class="w-4 h-4 m-1 rounded-full bg-white transition-transform {preset.enabled ? 'translate-x-4' : 'translate-x-0'}"></div>
+							</button>
+
+							<div class="flex-1 min-w-0">
 								<div class="flex items-center gap-2 flex-wrap">
 									<h3 class="font-medium text-text-primary">{preset.name}</h3>
 									<span class="px-2 py-0.5 text-xs rounded-lg {getResolutionColor(preset.resolution)} text-white">
@@ -1473,11 +1922,14 @@
 										<span class="px-2 py-0.5 text-xs rounded-lg bg-bg-card text-text-muted">Built-in</span>
 									{/if}
 									{#if preset.isDefault}
-										<span class="px-2 py-0.5 text-xs rounded-lg bg-cyan-900/50 text-cyan-300">Default</span>
+										<span class="px-2 py-0.5 text-xs rounded-lg bg-amber-900/50 text-amber-300">Default</span>
 									{/if}
 									{#if preset.autoUpgrade}
 										<span class="px-2 py-0.5 text-xs rounded-lg bg-green-900/50 text-green-300">Auto-upgrade</span>
 									{/if}
+									<span class="px-2 py-0.5 text-xs rounded-lg bg-white/5 text-text-muted" title="Priority (lower = higher priority)">
+										#{preset.priority}
+									</span>
 								</div>
 								<p class="text-sm text-text-secondary mt-1">
 									{getPresetDescription(preset)}
@@ -1487,8 +1939,68 @@
 										Audio: {preset.audioFormats.map(a => a.toUpperCase()).join(', ')}
 									</p>
 								{/if}
+
+								<!-- Anime preferences (editable inline) -->
+								{#if preset.mediaType === 'anime'}
+									<div class="flex items-center gap-4 mt-3 pt-3 border-t border-white/5">
+										<label class="flex items-center gap-2 cursor-pointer">
+											<input
+												type="checkbox"
+												checked={preset.preferDualAudio}
+												onchange={async (e) => {
+													const target = e.target as HTMLInputElement;
+													try {
+														await updateAnimePresetPreference(preset.id, 'preferDualAudio', target.checked);
+														preset.preferDualAudio = target.checked;
+													} catch (err) {
+														console.error('Failed to update preference:', err);
+													}
+												}}
+												class="form-checkbox"
+											/>
+											<span class="text-xs text-text-secondary">Dual Audio</span>
+										</label>
+										<label class="flex items-center gap-2 cursor-pointer">
+											<input
+												type="checkbox"
+												checked={preset.preferDubbed}
+												onchange={async (e) => {
+													const target = e.target as HTMLInputElement;
+													try {
+														await updateAnimePresetPreference(preset.id, 'preferDubbed', target.checked);
+														preset.preferDubbed = target.checked;
+													} catch (err) {
+														console.error('Failed to update preference:', err);
+													}
+												}}
+												class="form-checkbox"
+											/>
+											<span class="text-xs text-text-secondary">Dubbed</span>
+										</label>
+										<div class="flex items-center gap-2">
+											<span class="text-xs text-text-muted">Language:</span>
+											<select
+												value={preset.preferredLanguage || 'any'}
+												onchange={async (e) => {
+													const target = e.target as HTMLSelectElement;
+													try {
+														await updateAnimePresetPreference(preset.id, 'preferredLanguage', target.value);
+														preset.preferredLanguage = target.value;
+													} catch (err) {
+														console.error('Failed to update preference:', err);
+													}
+												}}
+												class="form-select-sm"
+											>
+												<option value="any">Any</option>
+												<option value="english">English</option>
+												<option value="japanese">Japanese</option>
+											</select>
+										</div>
+									</div>
+								{/if}
 							</div>
-							<div class="flex gap-2">
+							<div class="flex gap-2 flex-shrink-0">
 								{#if !preset.isDefault}
 									<button
 										class="liquid-btn-sm"
@@ -1549,7 +2061,7 @@
 							<th class="text-center py-3 px-2 font-medium w-20">Last Run</th>
 							<th class="text-center py-3 px-2 font-medium w-20">Duration</th>
 							<th class="text-center py-3 px-2 font-medium w-20">Next Run</th>
-							<th class="text-center py-3 px-2 font-medium w-24">Interval</th>
+							<th class="text-center py-3 px-2 font-medium w-28">Interval</th>
 							<th class="text-center py-3 px-2 font-medium w-16">Enabled</th>
 							<th class="text-center py-3 px-2 font-medium w-20">Action</th>
 						</tr>
@@ -1568,8 +2080,11 @@
 												<svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
 											{/if}
 										</div>
-										<div>
+										<div class="flex-1">
 											<div class="font-medium text-text-primary">{task.name}</div>
+											{#if task.description}
+												<div class="text-xs text-text-muted">{task.description}</div>
+											{/if}
 											{#if task.lastStatus === 'failed'}
 												<span class="text-xs text-red-400">Failed</span>
 											{/if}
@@ -1580,16 +2095,29 @@
 								<td class="py-3 px-2 text-center text-text-secondary text-xs">{formatDuration(task.lastDurationMs)}</td>
 								<td class="py-3 px-2 text-center text-text-secondary text-xs">{formatNextRun(task.nextRun)}</td>
 								<td class="py-3 px-2 text-center">
-									<select class="liquid-select px-2 py-1 text-xs w-full" value={task.intervalMinutes} onchange={(e) => handleUpdateTask(task, task.enabled, parseInt((e.target as HTMLSelectElement).value))}>
-										<option value="5">5 min</option>
-										<option value="15">15 min</option>
-										<option value="30">30 min</option>
-										<option value="60">1 hour</option>
-										<option value="120">2 hours</option>
-										<option value="360">6 hours</option>
-										<option value="720">12 hours</option>
-										<option value="1440">24 hours</option>
-									</select>
+									<div class="flex items-center gap-1 justify-center">
+										<input
+											type="number"
+											min="1"
+											class="liquid-input !w-16 !px-1 !py-1 text-xs text-center"
+											value={editingTaskInterval[task.id] ?? task.intervalMinutes}
+											oninput={(e) => editingTaskInterval[task.id] = parseInt((e.target as HTMLInputElement).value) || task.intervalMinutes}
+										/>
+										<span class="text-xs text-text-muted">min</span>
+										{#if editingTaskInterval[task.id] && editingTaskInterval[task.id] !== task.intervalMinutes}
+											<button
+												class="liquid-btn-sm !px-1.5 !py-0.5 text-xs"
+												disabled={savingTask[task.id]}
+												onclick={() => handleSaveTaskInterval(task)}
+											>
+												{#if savingTask[task.id]}
+													<span class="w-2 h-2 border border-white/50 border-t-white rounded-full animate-spin inline-block"></span>
+												{:else}
+													<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>
+												{/if}
+											</button>
+										{/if}
+									</div>
 								</td>
 								<td class="py-3 px-2 text-center">
 									<button class="relative w-10 h-5 rounded-full transition-colors mx-auto block {task.enabled ? 'bg-green-600' : 'bg-gray-600'}" onclick={() => handleUpdateTask(task, !task.enabled, task.intervalMinutes)}>
@@ -1762,3 +2290,10 @@
 
 	{/if}
 </div>
+
+<!-- Directory Browser Modal -->
+<DirectoryBrowser
+	bind:open={showBrowser}
+	bind:currentPath={path}
+	onSelect={(selectedPath) => path = selectedPath}
+/>

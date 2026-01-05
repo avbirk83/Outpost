@@ -200,6 +200,53 @@ input, input:focus, input:active {
     border-color: rgba(255, 255, 255, 0.4);
     background: rgba(255, 255, 255, 0.12);
   }
+  /* Number input spinner styling */
+  &[type="number"] {
+    -moz-appearance: textfield;
+    &::-webkit-outer-spin-button,
+    &::-webkit-inner-spin-button {
+      -webkit-appearance: none;
+      appearance: none;
+      margin: 0;
+    }
+  }
+}
+
+/* Number input with visible styled spinners */
+.number-input-wrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.number-input-wrapper input[type="number"] {
+  padding-right: 2.5rem;
+}
+.number-spinner {
+  position: absolute;
+  right: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.number-spinner button {
+  width: 1.25rem;
+  height: 0.875rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.1);
+  border: none;
+  border-radius: 4px;
+  color: rgba(255, 255, 255, 0.6);
+  cursor: pointer;
+  transition: all 150ms ease;
+  &:hover {
+    background: rgba(255, 255, 255, 0.2);
+    color: #ffffff;
+  }
+  &:active {
+    background: rgba(255, 255, 255, 0.25);
+  }
 }
 
 /* Solid dropdown/menu */
@@ -599,6 +646,171 @@ input, input:focus, input:active {
   &::-webkit-scrollbar {
     display: none;
   }
+}
+
+/* ============================================
+   FORM COMPONENTS - Consistent styling
+   ============================================ */
+
+/* Standard select dropdown */
+@utility form-select {
+  appearance: none;
+  background: var(--color-bg-card);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: var(--color-text-primary);
+  padding: 0.5rem 2.25rem 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='rgba(245,230,200,0.5)'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.5rem center;
+  background-size: 1rem;
+  transition: all 150ms ease;
+  &:hover {
+    border-color: rgba(255, 255, 255, 0.2);
+  }
+  &:focus {
+    outline: none;
+    border-color: var(--color-amber-400);
+    box-shadow: 0 0 0 1px rgba(232, 168, 73, 0.3);
+  }
+  option {
+    background: #1a1a1a;
+    color: var(--color-text-primary);
+    padding: 0.5rem;
+  }
+}
+
+/* Small select dropdown */
+@utility form-select-sm {
+  appearance: none;
+  background: var(--color-bg-card);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  color: var(--color-text-primary);
+  padding: 0.375rem 1.75rem 0.375rem 0.625rem;
+  font-size: 0.75rem;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='rgba(245,230,200,0.5)'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.375rem center;
+  background-size: 0.75rem;
+  transition: all 150ms ease;
+  &:hover {
+    border-color: rgba(255, 255, 255, 0.2);
+  }
+  &:focus {
+    outline: none;
+    border-color: var(--color-amber-400);
+    box-shadow: 0 0 0 1px rgba(232, 168, 73, 0.3);
+  }
+  option {
+    background: #1a1a1a;
+    color: var(--color-text-primary);
+  }
+}
+
+/* Checkbox - green check */
+@utility form-checkbox {
+  appearance: none;
+  width: 1rem;
+  height: 1rem;
+  background: var(--color-bg-elevated);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  cursor: pointer;
+  position: relative;
+  transition: all 150ms ease;
+  flex-shrink: 0;
+  &:hover {
+    border-color: rgba(255, 255, 255, 0.3);
+  }
+  &:checked {
+    background: var(--color-success);
+    border-color: var(--color-success);
+  }
+  &:checked::after {
+    content: '';
+    position: absolute;
+    left: 5px;
+    top: 2px;
+    width: 4px;
+    height: 8px;
+    border: solid white;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+  }
+  &:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(74, 222, 128, 0.3);
+  }
+}
+
+/* Toggle switch */
+@utility form-toggle {
+  appearance: none;
+  width: 2.5rem;
+  height: 1.5rem;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 9999px;
+  cursor: pointer;
+  position: relative;
+  transition: all 150ms ease;
+  flex-shrink: 0;
+  &::after {
+    content: '';
+    position: absolute;
+    left: 0.25rem;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 1rem;
+    height: 1rem;
+    background: white;
+    border-radius: 50%;
+    transition: all 150ms ease;
+  }
+  &:checked {
+    background: var(--color-amber-400);
+  }
+  &:checked::after {
+    left: calc(100% - 1.25rem);
+  }
+  &:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(232, 168, 73, 0.3);
+  }
+}
+
+/* Text input */
+@utility form-input {
+  background: var(--color-bg-card);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: var(--color-text-primary);
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  transition: all 150ms ease;
+  &::placeholder {
+    color: var(--color-text-muted);
+  }
+  &:hover {
+    border-color: rgba(255, 255, 255, 0.2);
+  }
+  &:focus {
+    outline: none;
+    border-color: var(--color-amber-400);
+    box-shadow: 0 0 0 1px rgba(232, 168, 73, 0.3);
+  }
+}
+
+/* Form label */
+@utility form-label {
+  display: block;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  margin-bottom: 0.375rem;
 }
 
 /* ============================================
