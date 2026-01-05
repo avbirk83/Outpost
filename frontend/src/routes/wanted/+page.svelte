@@ -312,7 +312,7 @@
 									<tbody class="divide-y divide-white/5">
 										{#each searchResults[item.id].slice(0, 10) as result}
 											{@const key = `${item.id}-${result.guid}`}
-											<tr class="hover:bg-white/5 transition-colors {result.rejected ? 'opacity-50' : ''}">
+											<tr class="hover:bg-glass transition-colors {result.rejected ? 'opacity-50' : ''}">
 												<td class="py-2 px-2">
 													<p class="truncate max-w-xs text-text-primary" title={result.title}>{result.title}</p>
 													<span class="text-xs text-text-muted">{result.indexerName}</span>

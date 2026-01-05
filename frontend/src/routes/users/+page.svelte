@@ -139,7 +139,7 @@
 		{#if !showAddForm && !editingUser}
 			<div class="inline-flex items-center p-1.5 rounded-xl bg-black/40 backdrop-blur-md border border-white/10">
 				<button
-					class="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg text-text-muted hover:text-text-primary hover:bg-white/5 transition-colors"
+					class="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg text-text-muted hover:text-text-primary hover:bg-glass transition-colors"
 					onclick={() => { showAddForm = true; editingUser = null; }}
 				>
 					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -309,7 +309,7 @@
 				</thead>
 				<tbody class="divide-y divide-white/5">
 					{#each users as user}
-						<tr class="hover:bg-white/5 transition-colors">
+						<tr class="hover:bg-glass transition-colors">
 							<td class="px-4 py-4">
 								<div class="flex items-center gap-3">
 									<div class="w-10 h-10 rounded-full bg-bg-elevated flex items-center justify-center">

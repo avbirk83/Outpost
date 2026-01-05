@@ -47,7 +47,7 @@
 	<button
 		type="button"
 		onclick={toggle}
-		class="flex items-center gap-1 transition-all {inline ? 'w-full px-1.5 py-1 bg-transparent hover:bg-white/5 rounded' : 'px-3 py-1.5 w-[160px] liquid-glass hover:!bg-white/15 ' + (open ? 'rounded-t-xl !rounded-b-none' : 'rounded-xl')}"
+		class="flex items-center gap-1 transition-all {inline ? 'w-full px-1.5 py-1 bg-transparent hover:bg-glass rounded' : 'px-3 py-1.5 w-[160px] liquid-glass hover:bg-cream/10 ' + (open ? 'rounded-t-xl !rounded-b-none' : 'rounded-xl')}"
 		style={!inline && open ? 'border-bottom-color: transparent;' : ''}
 	>
 		{#if icon === 'video'}
@@ -75,10 +75,10 @@
 				<button
 					type="button"
 					onclick={() => select(opt)}
-					class="w-full text-left flex items-center gap-2 px-4 py-2 text-sm transition-colors whitespace-nowrap {value === opt.value ? 'bg-white/10 text-text-primary' : 'text-text-secondary hover:bg-white/5 hover:text-text-primary'}"
+					class="w-full text-left flex items-center gap-2 px-4 py-2 text-sm transition-colors whitespace-nowrap {value === opt.value ? 'bg-glass text-text-primary' : 'text-text-secondary hover:bg-glass hover:text-text-primary'}"
 				>
 					{#if value === opt.value}
-						<svg class="w-4 h-4 text-white flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<svg class="w-4 h-4 text-cream flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
 						</svg>
 					{:else}

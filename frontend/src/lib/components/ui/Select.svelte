@@ -66,7 +66,7 @@
 		{disabled}
 		class="w-full flex items-center justify-between gap-2 px-3 py-1.5 text-sm text-left
 			bg-transparent text-text-primary transition-all rounded-lg
-			hover:bg-white/5
+			hover:bg-glass
 			disabled:opacity-50 disabled:cursor-not-allowed"
 	>
 		<span class="truncate">{selectedOption?.label || 'Select...'}</span>

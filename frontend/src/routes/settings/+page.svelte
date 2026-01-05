@@ -960,7 +960,7 @@
 		{#each tabs as tab}
 			<button
 				class="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all flex-1 justify-center
-					{currentTab === tab.id ? 'bg-white/10 text-text-primary' : 'text-text-muted hover:text-text-secondary hover:bg-white/5'}"
+					{currentTab === tab.id ? 'bg-white/10 text-text-primary' : 'text-text-muted hover:text-text-secondary hover:bg-glass'}"
 				onclick={() => currentTab = tab.id}
 			>
 				<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1740,21 +1740,21 @@
 		<div class="flex gap-1 p-1 bg-bg-card rounded-xl">
 			<button
 				type="button"
-				class="flex-1 px-4 py-2 text-sm font-medium rounded-lg transition-colors {presetMediaTab === 'movie' ? 'bg-cream/20 text-cream border border-cream/30' : 'text-text-secondary hover:text-text-primary hover:bg-white/5'}"
+				class="flex-1 px-4 py-2 text-sm font-medium rounded-lg transition-colors {presetMediaTab === 'movie' ? 'bg-cream/20 text-cream border border-cream/30' : 'text-text-secondary hover:text-text-primary hover:bg-glass'}"
 				onclick={() => presetMediaTab = 'movie'}
 			>
 				Movies
 			</button>
 			<button
 				type="button"
-				class="flex-1 px-4 py-2 text-sm font-medium rounded-lg transition-colors {presetMediaTab === 'tv' ? 'bg-cream/20 text-cream border border-cream/30' : 'text-text-secondary hover:text-text-primary hover:bg-white/5'}"
+				class="flex-1 px-4 py-2 text-sm font-medium rounded-lg transition-colors {presetMediaTab === 'tv' ? 'bg-cream/20 text-cream border border-cream/30' : 'text-text-secondary hover:text-text-primary hover:bg-glass'}"
 				onclick={() => presetMediaTab = 'tv'}
 			>
 				TV Shows
 			</button>
 			<button
 				type="button"
-				class="flex-1 px-4 py-2 text-sm font-medium rounded-lg transition-colors {presetMediaTab === 'anime' ? 'bg-cream/20 text-cream border border-cream/30' : 'text-text-secondary hover:text-text-primary hover:bg-white/5'}"
+				class="flex-1 px-4 py-2 text-sm font-medium rounded-lg transition-colors {presetMediaTab === 'anime' ? 'bg-cream/20 text-cream border border-cream/30' : 'text-text-secondary hover:text-text-primary hover:bg-glass'}"
 				onclick={() => presetMediaTab = 'anime'}
 			>
 				Anime
@@ -2068,7 +2068,7 @@
 					</thead>
 					<tbody class="divide-y divide-white/5">
 						{#each tasks as task (task.id)}
-							<tr class="hover:bg-white/5 transition-colors">
+							<tr class="hover:bg-glass transition-colors">
 								<td class="py-3 px-2">
 									<div class="flex items-center gap-3">
 										<div class="w-8 h-8 rounded-lg flex-shrink-0 {task.isRunning ? 'bg-blue-500/20' : task.enabled ? 'bg-green-500/20' : 'bg-gray-500/20'} flex items-center justify-center">

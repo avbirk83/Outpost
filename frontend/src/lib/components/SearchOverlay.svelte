@@ -245,7 +245,7 @@
 									<button
 										onclick={() => navigateToResult(item)}
 										class="w-full flex items-center gap-4 p-3 rounded-lg transition-all
-											{selectedIndex === i ? 'bg-white/10' : 'hover:bg-white/5'}"
+											{selectedIndex === i ? 'bg-white/10' : 'hover:bg-glass'}"
 									>
 										<!-- Poster thumbnail -->
 										<div class="w-12 h-16 bg-bg-card rounded overflow-hidden flex-shrink-0 relative">
@@ -306,7 +306,7 @@
 									{@const globalIndex = libraryResults.length + i}
 									<div
 										class="flex items-center gap-4 p-3 rounded-lg transition-all cursor-pointer
-											{selectedIndex === globalIndex ? 'bg-white/10' : 'hover:bg-white/5'}"
+											{selectedIndex === globalIndex ? 'bg-white/10' : 'hover:bg-glass'}"
 										onclick={() => navigateToResult(item)}
 										onkeydown={(e) => e.key === 'Enter' && navigateToResult(item)}
 										role="button"
@@ -384,7 +384,7 @@
 									href={action.href}
 									onclick={() => onClose?.()}
 									class="flex items-center gap-4 p-3 rounded-lg transition-all
-										{selectedIndex === i ? 'bg-white/10' : 'hover:bg-white/5'}"
+										{selectedIndex === i ? 'bg-white/10' : 'hover:bg-glass'}"
 								>
 									<div class="liquid-btn-icon !rounded-lg text-text-secondary">
 										{#if action.icon === 'film'}

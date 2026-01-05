@@ -106,7 +106,7 @@
 				</thead>
 				<tbody class="divide-y divide-white/5">
 					{#each tasks as task (task.id)}
-						<tr class="hover:bg-white/5 transition-colors">
+						<tr class="hover:bg-glass transition-colors">
 							<td class="py-3 px-2">
 								<div class="flex items-center gap-3">
 									<div class="w-8 h-8 rounded-lg flex-shrink-0 {task.isRunning ? 'bg-blue-500/20' : task.enabled ? 'bg-green-500/20' : 'bg-gray-500/20'} flex items-center justify-center">

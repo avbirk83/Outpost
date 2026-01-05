@@ -77,7 +77,7 @@
 		<h1 class="text-2xl font-bold text-text-primary">Downloads</h1>
 		<div class="inline-flex items-center p-1.5 rounded-xl bg-black/40 backdrop-blur-md border border-white/10">
 			<button
-				class="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg text-text-muted hover:text-text-primary hover:bg-white/5 transition-colors"
+				class="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg text-text-muted hover:text-text-primary hover:bg-glass transition-colors"
 				onclick={loadDownloads}
 			>
 				<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

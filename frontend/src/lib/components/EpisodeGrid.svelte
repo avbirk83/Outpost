@@ -41,7 +41,7 @@
 			tabindex="0"
 			onclick={() => handlePlay(episode.id)}
 			onkeydown={(e) => e.key === 'Enter' && handlePlay(episode.id)}
-			class="group flex items-center gap-3 p-2 rounded-lg hover:bg-white/5 transition-colors cursor-pointer"
+			class="group flex items-center gap-3 p-2 rounded-lg hover:bg-glass transition-colors cursor-pointer"
 		>
 			<!-- Episode number -->
 			<span class="w-6 text-center text-sm font-medium text-text-muted">{episode.episodeNumber}</span>
