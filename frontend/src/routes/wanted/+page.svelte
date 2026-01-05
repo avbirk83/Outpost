@@ -12,6 +12,7 @@
 		type ScoredSearchResult
 	} from '$lib/api';
 	import TypeBadge from '$lib/components/TypeBadge.svelte';
+	import { toast } from '$lib/stores/toast';
 
 	let items: WantedItem[] = $state([]);
 	let profiles: QualityProfile[] = $state([]);
@@ -62,8 +63,10 @@
 		try {
 			await deleteWantedItem(id);
 			await loadItems();
+			toast.success('Item removed from wanted list');
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to delete item';
+			toast.error('Failed to remove item');
 		} finally {
 			processingIds.delete(id);
 			processingIds = processingIds;
@@ -74,8 +77,10 @@
 		try {
 			await updateWantedItem(item.id, { monitored: !item.monitored });
 			await loadItems();
+			toast.success(item.monitored ? 'Monitoring disabled' : 'Monitoring enabled');
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to update item';
+			toast.error('Failed to update monitoring');
 		}
 	}
 
@@ -105,8 +110,14 @@
 				category: result.category
 			});
 			grabResults[key] = { success: response.success, message: response.message };
+			if (response.success) {
+				toast.success('Release sent to download client');
+			} else {
+				toast.error(response.message || 'Failed to grab release');
+			}
 		} catch (e) {
 			grabResults[key] = { success: false, message: e instanceof Error ? e.message : 'Grab failed' };
+			toast.error('Failed to grab release');
 		} finally {
 			grabbing[key] = false;
 		}

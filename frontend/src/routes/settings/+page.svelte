@@ -4,6 +4,7 @@
 	import DirectoryBrowser from '$lib/components/DirectoryBrowser.svelte';
 	import AutomationTab from './_components/AutomationTab.svelte';
 	import GeneralTab from './_components/GeneralTab.svelte';
+	import { toast } from '$lib/stores/toast';
 	import {
 		getLibraries,
 		createLibrary,
@@ -246,8 +247,10 @@
 			await saveSettings({ tmdb_api_key: tmdbApiKey });
 			settingsSaved = true;
 			setTimeout(() => (settingsSaved = false), 3000);
+			toast.success('Settings saved');
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to save settings';
+			toast.error('Failed to save settings');
 		} finally {
 			savingSettings = false;
 		}
@@ -260,8 +263,10 @@
 			const result = await refreshAllMetadata();
 			refreshResult = result;
 			setTimeout(() => (refreshResult = null), 10000);
+			toast.success(`Refreshed ${result.refreshed} items`);
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to refresh metadata';
+			toast.error('Failed to refresh metadata');
 		} finally {
 			refreshingMetadata = false;
 		}
@@ -272,10 +277,12 @@
 			clearingLibrary = true;
 			await clearLibraryData();
 			showClearConfirm = false;
+			toast.success('Library data cleared');
 			// Reload the page to reflect changes
 			window.location.reload();
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to clear library data';
+			toast.error('Failed to clear library data');
 		} finally {
 			clearingLibrary = false;
 		}
@@ -300,8 +307,10 @@
 			type = 'movies';
 			showAddForm = false;
 			await loadLibraries();
+			toast.success('Library added');
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to add library';
+			toast.error('Failed to add library');
 		}
 	}
 
@@ -310,8 +319,10 @@
 		try {
 			await deleteLibrary(id);
 			await loadLibraries();
+			toast.success('Library deleted');
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to delete library';
+			toast.error('Failed to delete library');
 		}
 	}
 
@@ -353,6 +364,7 @@
 					priority: editingClient.priority,
 					enabled: editingClient.enabled
 				});
+				toast.success('Download client updated');
 			} else {
 				// Create new client
 				await createDownloadClient({
@@ -368,12 +380,14 @@
 					priority: 0,
 					enabled: true
 				});
+				toast.success('Download client added');
 			}
 			resetClientForm();
 			showAddClientForm = false;
 			await loadDownloadClients();
 		} catch (e) {
 			error = e instanceof Error ? e.message : editingClient ? 'Failed to update download client' : 'Failed to add download client';
+			toast.error(editingClient ? 'Failed to update client' : 'Failed to add client');
 		}
 	}
 
@@ -432,8 +446,10 @@
 		try {
 			await deleteDownloadClient(id);
 			await loadDownloadClients();
+			toast.success('Download client deleted');
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to delete download client';
+			toast.error('Failed to delete client');
 		}
 	}
 
@@ -514,8 +530,10 @@
 				syncIntervalHours: prowlarrSyncInterval
 			});
 			await loadProwlarrConfig();
+			toast.success('Prowlarr settings saved');
 		} catch (e) {
 			console.error('Failed to save Prowlarr config:', e);
+			toast.error('Failed to save Prowlarr settings');
 		}
 	}
 
@@ -559,8 +577,10 @@
 			resetIndexerForm();
 			showAddIndexerForm = false;
 			await loadIndexers();
+			toast.success('Indexer added');
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to add indexer';
+			toast.error('Failed to add indexer');
 		}
 	}
 
@@ -590,8 +610,10 @@
 		try {
 			await deleteIndexer(id);
 			await loadIndexers();
+			toast.success('Indexer deleted');
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to delete indexer';
+			toast.error('Failed to delete indexer');
 		}
 	}
 
@@ -663,8 +685,10 @@
 			resetPresetForm();
 			showAddPresetForm = false;
 			await loadQualityPresets();
+			toast.success('Quality preset added');
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to add quality preset';
+			toast.error('Failed to add preset');
 		}
 	}
 
@@ -685,8 +709,10 @@
 			});
 			resetPresetForm();
 			await loadQualityPresets();
+			toast.success('Quality preset updated');
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to update quality preset';
+			toast.error('Failed to update preset');
 		}
 	}
 
@@ -710,8 +736,10 @@
 		try {
 			await deleteQualityPreset(id);
 			await loadQualityPresets();
+			toast.success('Quality preset deleted');
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to delete quality preset';
+			toast.error('Failed to delete preset');
 		}
 	}
 
@@ -719,8 +747,10 @@
 		try {
 			await setDefaultQualityPreset(id);
 			await loadQualityPresets();
+			toast.success('Default preset updated');
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to set default preset';
+			toast.error('Failed to set default preset');
 		}
 	}
 

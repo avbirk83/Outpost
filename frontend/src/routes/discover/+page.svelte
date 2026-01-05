@@ -20,6 +20,7 @@
 	} from '$lib/api';
 	import ScrollSection from '$lib/components/containers/ScrollSection.svelte';
 	import MediaCard from '$lib/components/media/MediaCard.svelte';
+	import { toast } from '$lib/stores/toast';
 
 	// Row data
 	let trendingMovies: DiscoverItem[] = $state([]);
@@ -193,8 +194,10 @@
 			popularShows = updateItems(popularShows);
 			upcomingShows = updateItems(upcomingShows);
 			topRatedShows = updateItems(topRatedShows);
+			toast.success('Request submitted');
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Failed to create request';
+			toast.error('Failed to create request');
 		} finally {
 			requestingIds.delete(item.id);
 			requestingIds = requestingIds;

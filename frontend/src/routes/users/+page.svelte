@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { getUsers, createUser, updateUser, deleteUser, type User } from '$lib/api';
 	import Select from '$lib/components/ui/Select.svelte';
+	import { toast } from '$lib/stores/toast';
 
 	let users: User[] = $state([]);
 	let loading = $state(true);
@@ -42,8 +43,10 @@
 			role = 'user';
 			showAddForm = false;
 			await loadUsers();
+			toast.success('User created');
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to create user';
+			toast.error('Failed to create user');
 		}
 	}
 
@@ -64,8 +67,10 @@
 			password = '';
 			role = 'user';
 			await loadUsers();
+			toast.success('User updated');
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to update user';
+			toast.error('Failed to update user');
 		}
 	}
 
@@ -75,8 +80,10 @@
 		try {
 			await deleteUser(id);
 			await loadUsers();
+			toast.success('User deleted');
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to delete user';
+			toast.error('Failed to delete user');
 		}
 	}
 

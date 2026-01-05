@@ -7,6 +7,7 @@
 		type DownloadItem,
 		type ImportHistoryItem
 	} from '$lib/api';
+	import { toast } from '$lib/stores/toast';
 
 	let downloads: DownloadItem[] = $state([]);
 	let importHistory: ImportHistoryItem[] = $state([]);
@@ -54,8 +55,10 @@
 		try {
 			await deleteDownloadItem(id);
 			downloads = downloads.filter(d => d.id !== id);
+			toast.success('Download dismissed');
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to remove download';
+			toast.error('Failed to dismiss download');
 		} finally {
 			removingIds.delete(id);
 			removingIds = removingIds;
