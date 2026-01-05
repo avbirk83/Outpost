@@ -45,6 +45,7 @@
 	let loading = $state(true);
 	let error: string | null = $state(null);
 	let activeTab = $state<'movies' | 'shows'>('movies');
+	let requestingIds: Set<number> = $state(new Set());
 
 	async function loadTheatricalReleases() {
 		try {
@@ -167,6 +168,9 @@
 		e.preventDefault();
 		e.stopPropagation();
 
+		requestingIds.add(item.id);
+		requestingIds = requestingIds;
+
 		try {
 			await createRequest({
 				type: item.type === 'movie' ? 'movie' : 'show',
@@ -191,6 +195,9 @@
 			topRatedShows = updateItems(topRatedShows);
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Failed to create request';
+		} finally {
+			requestingIds.delete(item.id);
+			requestingIds = requestingIds;
 		}
 	}
 
@@ -338,10 +345,15 @@
 									onclick={(e) => handleRequest(e, currentHero)}
 									class="btn-icon-glass-lg"
 									title="Request"
+									disabled={requestingIds.has(currentHero.id)}
 								>
-									<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-									</svg>
+									{#if requestingIds.has(currentHero.id)}
+										<div class="spinner-sm"></div>
+									{:else}
+										<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+										</svg>
+									{/if}
 								</button>
 							{/if}
 						</div>

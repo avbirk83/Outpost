@@ -13,6 +13,7 @@
 	let loading = $state(true);
 	let error: string | null = $state(null);
 	let refreshInterval: ReturnType<typeof setInterval> | null = null;
+	let removingIds: Set<number> = $state(new Set());
 
 	// Group downloads by status
 	let downloading = $derived(downloads.filter(d => d.status === 'downloading'));
@@ -48,11 +49,16 @@
 	}
 
 	async function handleRemoveDownload(id: number) {
+		removingIds.add(id);
+		removingIds = removingIds;
 		try {
 			await deleteDownloadItem(id);
 			downloads = downloads.filter(d => d.id !== id);
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to remove download';
+		} finally {
+			removingIds.delete(id);
+			removingIds = removingIds;
 		}
 	}
 
@@ -222,10 +228,15 @@
 								</div>
 								<div class="flex gap-2 ml-4">
 									<button
-										class="liquid-btn-sm !bg-white/5 !border-t-white/10 text-text-secondary hover:text-text-primary"
+										class="liquid-btn-sm !bg-white/5 !border-t-white/10 text-text-secondary hover:text-text-primary disabled:opacity-50"
 										onclick={() => handleRemoveDownload(dl.id)}
+										disabled={removingIds.has(dl.id)}
 									>
-										Dismiss
+										{#if removingIds.has(dl.id)}
+											<div class="spinner-sm"></div>
+										{:else}
+											Dismiss
+										{/if}
 									</button>
 								</div>
 							</div>

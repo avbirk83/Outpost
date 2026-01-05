@@ -4,6 +4,7 @@
 
 	let downloads: Download[] = $state([]);
 	let loading = $state(true);
+	let refreshing = $state(false);
 	let error: string | null = $state(null);
 	let refreshInterval: ReturnType<typeof setInterval>;
 
@@ -26,6 +27,15 @@
 			error = e instanceof Error ? e.message : 'Failed to load downloads';
 		} finally {
 			loading = false;
+		}
+	}
+
+	async function handleRefresh() {
+		refreshing = true;
+		try {
+			await loadDownloads();
+		} finally {
+			refreshing = false;
 		}
 	}
 
@@ -77,12 +87,17 @@
 		<h1 class="text-2xl font-bold text-text-primary">Downloads</h1>
 		<div class="inline-flex items-center p-1.5 rounded-xl bg-black/40 backdrop-blur-md border border-white/10">
 			<button
-				class="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg text-text-muted hover:text-text-primary hover:bg-glass transition-colors"
-				onclick={loadDownloads}
+				class="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg text-text-muted hover:text-text-primary hover:bg-glass transition-colors disabled:opacity-50"
+				onclick={handleRefresh}
+				disabled={refreshing}
 			>
-				<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-				</svg>
+				{#if refreshing}
+					<div class="spinner-sm"></div>
+				{:else}
+					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+					</svg>
+				{/if}
 				Refresh
 			</button>
 		</div>
