@@ -529,11 +529,37 @@ func (s *Scheduler) searchAndGrab(item *database.WantedItem) {
 		Categories: database.GetCategoriesForMediaType(mediaTypeForCategories),
 	}
 
+	// Add TMDB ID if available
 	if item.TmdbID > 0 {
 		params.TmdbID = strconv.FormatInt(item.TmdbID, 10)
 	}
 
-	log.Printf("Scheduler: searching with params: query=%s, type=%s, tmdbId=%s, categories=%v", params.Query, params.Type, params.TmdbID, params.Categories)
+	// Look up IMDB ID from the movie/show record for more accurate searches
+	imdbID := s.lookupImdbID(item.Type, item.TmdbID)
+	if imdbID != "" {
+		params.ImdbID = imdbID
+		log.Printf("Scheduler: found IMDB ID %s for %s (TMDB: %d)", imdbID, item.Title, item.TmdbID)
+	} else {
+		log.Printf("Scheduler: no IMDB ID found for %s (TMDB: %d) - using title search", item.Title, item.TmdbID)
+	}
+
+	// For TV shows/anime, also look up TVDB ID
+	if item.Type == "show" || item.Type == "anime" {
+		tvdbID := s.lookupTvdbID(item.TmdbID)
+		if tvdbID != "" {
+			params.TvdbID = tvdbID
+			log.Printf("Scheduler: found TVDB ID %s for %s", tvdbID, item.Title)
+		}
+	}
+
+	// Log search parameters for debugging
+	log.Printf("Scheduler: SEARCH PARAMS for '%s' (%s):", item.Title, item.Type)
+	log.Printf("  - Query: %s", params.Query)
+	log.Printf("  - Type: %s", params.Type)
+	log.Printf("  - IMDB ID: %s (enables exact matching)", params.ImdbID)
+	log.Printf("  - TVDB ID: %s", params.TvdbID)
+	log.Printf("  - TMDB ID: %s", params.TmdbID)
+	log.Printf("  - Categories: %v", params.Categories)
 
 	// Get indexers for this media type based on library tags
 	indexerIDs := s.getIndexerIDsForMediaType(item.Type)
@@ -552,6 +578,10 @@ func (s *Scheduler) searchAndGrab(item *database.WantedItem) {
 	}
 
 	log.Printf("Scheduler: found %d raw results for %s", len(results), item.Title)
+
+	// Filter out adult content (category 6000-6999)
+	results = filterAdultContent(results)
+	log.Printf("Scheduler: %d results after adult content filtering", len(results))
 
 	// Update last searched
 	s.db.UpdateWantedLastSearched(item.ID)
@@ -591,17 +621,26 @@ func (s *Scheduler) searchAndGrab(item *database.WantedItem) {
 		presetsToTry = append(presetsToTry, item.QualityPresetID)
 	}
 
-	// Then add other enabled presets as fallbacks (sorted by ID for consistency)
-	for i := range allPresets {
-		if !allPresets[i].Enabled {
+	// Sort presets by quality priority (highest quality first)
+	// Resolution priority: 2160p > 1080p > 720p > 480p > any
+	sortedPresets := sortPresetsByQuality(allPresets)
+
+	// Then add other enabled presets as fallbacks (sorted by quality priority)
+	for i := range sortedPresets {
+		if !sortedPresets[i].Enabled {
 			continue
 		}
 		// Skip if already added as primary
-		if item.QualityPresetID != nil && allPresets[i].ID == *item.QualityPresetID {
+		if item.QualityPresetID != nil && sortedPresets[i].ID == *item.QualityPresetID {
 			continue
 		}
-		id := allPresets[i].ID
+		id := sortedPresets[i].ID
 		presetsToTry = append(presetsToTry, &id)
+	}
+
+	// If no presets to try (item has no preset and no presets exist), use nil to score purely by quality
+	if len(presetsToTry) == 0 {
+		presetsToTry = append(presetsToTry, nil)
 	}
 
 	// Try each preset until we find an acceptable result
@@ -641,6 +680,9 @@ func (s *Scheduler) searchAndGrab(item *database.WantedItem) {
 			if item.QualityProfileID > 0 && !s.passesReleaseFilters(scoredResults[i].Title, item.QualityProfileID) {
 				continue
 			}
+
+			// Format validation now happens in scoreResultsWithPreset, so format-rejected
+			// releases will already have scored.Rejected = true and won't reach here
 
 			bestResult = &scoredResults[i]
 			usedPresetID = presetID
@@ -689,7 +731,7 @@ func (s *Scheduler) searchAndGrab(item *database.WantedItem) {
 	}
 
 	// Grab the best result
-	err = s.grabRelease(bestResult, item.Type)
+	err = s.grabRelease(bestResult, item.Type, item.TmdbID)
 	if err != nil {
 		log.Printf("Scheduler: grab failed for %s: %v", item.Title, err)
 		return
@@ -790,7 +832,7 @@ func (s *Scheduler) scoreResults(results []indexer.SearchResult, profileID int64
 	return scoredResults
 }
 
-func (s *Scheduler) grabRelease(result *indexer.ScoredSearchResult, mediaType string) error {
+func (s *Scheduler) grabRelease(result *indexer.ScoredSearchResult, mediaType string, mediaID int64) error {
 	var downloadURL string
 	if result.MagnetLink != "" {
 		downloadURL = result.MagnetLink
@@ -798,7 +840,11 @@ func (s *Scheduler) grabRelease(result *indexer.ScoredSearchResult, mediaType st
 		downloadURL = result.Link
 	}
 
-	isTorrent := result.IndexerType == "torznab" || result.MagnetLink != ""
+	// Prowlarr uses "prowlarr" as type, treat as torrent unless explicitly newznab
+	isTorrent := result.IndexerType == "torznab" || result.IndexerType == "prowlarr" || result.MagnetLink != ""
+	if result.IndexerType == "newznab" && result.MagnetLink == "" {
+		isTorrent = false
+	}
 
 	clients, err := s.db.GetEnabledDownloadClients()
 	if err != nil {
@@ -818,16 +864,59 @@ func (s *Scheduler) grabRelease(result *indexer.ScoredSearchResult, mediaType st
 	}
 
 	if targetClient == nil {
-		return nil // No suitable client, silently skip
+		return fmt.Errorf("no suitable download client found for %s", result.Title)
 	}
 
 	// Generate category based on media type
 	category := getCategoryForMediaType(mediaType)
 
+	// Attempt to add to download client
+	var grabErr error
 	if isTorrent {
-		return s.downloads.AddTorrent(targetClient.ID, downloadURL, category)
+		grabErr = s.downloads.AddTorrent(targetClient.ID, downloadURL, category)
+	} else {
+		grabErr = s.downloads.AddNZB(targetClient.ID, downloadURL, category)
 	}
-	return s.downloads.AddNZB(targetClient.ID, downloadURL, category)
+
+	// Record grab in history
+	indexerName := result.IndexerName
+	hdrStr := strings.Join(result.HDR, ",")
+	grabHistory := &database.GrabHistory{
+		MediaID:           mediaID,
+		MediaType:         mediaType,
+		ReleaseTitle:      result.Title,
+		IndexerID:         &result.IndexerID,
+		IndexerName:       &indexerName,
+		QualityResolution: strPtr(result.Resolution),
+		QualitySource:     strPtr(result.Source),
+		QualityCodec:      strPtr(result.Codec),
+		QualityAudio:      strPtr(result.AudioCodec),
+		QualityHDR:        strPtr(hdrStr),
+		ReleaseGroup:      strPtr(result.ReleaseGroup),
+		Size:              result.Size,
+		DownloadClientID:  &targetClient.ID,
+		Status:            "grabbed",
+	}
+
+	if grabErr != nil {
+		grabHistory.Status = "failed"
+		errMsg := grabErr.Error()
+		grabHistory.ErrorMessage = &errMsg
+	}
+
+	if dbErr := s.db.AddGrabHistory(grabHistory); dbErr != nil {
+		log.Printf("Scheduler: failed to record grab history: %v", dbErr)
+	}
+
+	return grabErr
+}
+
+// strPtr returns a pointer to a string, or nil if empty
+func strPtr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 // getCategoryForMediaType returns the download client category for a given media type
@@ -897,88 +986,51 @@ func (s *Scheduler) matchesPreset(parsed *parser.ParsedRelease, preset *database
 		return true, "" // No preset means accept all
 	}
 
-	// Check resolution
-	if preset.Resolution != "" && preset.Resolution != "any" {
-		releaseRes := strings.ToLower(parsed.Resolution)
-		presetRes := strings.ToLower(preset.Resolution)
+	// Check resolution - use minimum resolution instead of exact match
+	// This allows 4K presets to grab 1080p as fallback when 4K isn't available
+	// Resolution is used for scoring (higher = better), not strict filtering
+	minResolution := "720p" // Default minimum acceptable resolution
 
-		// Normalize resolution names
-		resMap := map[string]string{
-			"4k": "2160p", "uhd": "2160p", "2160p": "2160p",
-			"1080p": "1080p", "1080i": "1080p",
-			"720p": "720p",
-			"480p": "480p", "sd": "480p",
-		}
-
-		normalizedRelease := resMap[releaseRes]
-		normalizedPreset := resMap[presetRes]
-
-		if normalizedRelease == "" {
-			normalizedRelease = releaseRes
-		}
-		if normalizedPreset == "" {
-			normalizedPreset = presetRes
-		}
-
-		if normalizedRelease != normalizedPreset {
-			return false, fmt.Sprintf("resolution mismatch: want %s, got %s", preset.Resolution, parsed.Resolution)
-		}
+	// Resolution priority order (higher = better quality)
+	resOrder := map[string]int{
+		"2160p": 4, "4k": 4, "uhd": 4,
+		"1080p": 3, "1080i": 3,
+		"720p": 2,
+		"480p": 1, "sd": 1,
 	}
 
-	// Check source
-	if preset.Source != "" && preset.Source != "any" {
-		releaseSource := strings.ToLower(parsed.Source)
-		presetSource := strings.ToLower(preset.Source)
-
-		// Normalize source names
-		sourceMap := map[string]string{
-			"remux": "remux",
-			"bluray": "bluray", "bdrip": "bluray", "brrip": "bluray",
-			"web": "web", "webdl": "web", "webrip": "web",
-			"hdtv": "hdtv",
-			"dvd": "dvd", "dvdrip": "dvd",
-		}
-
-		normalizedRelease := sourceMap[releaseSource]
-		normalizedPreset := sourceMap[presetSource]
-
-		if normalizedRelease == "" {
-			normalizedRelease = releaseSource
-		}
-		if normalizedPreset == "" {
-			normalizedPreset = presetSource
-		}
-
-		if normalizedRelease != normalizedPreset {
-			return false, fmt.Sprintf("source mismatch: want %s, got %s", preset.Source, parsed.Source)
-		}
+	releaseRes := strings.ToLower(parsed.Resolution)
+	releaseOrder := resOrder[releaseRes]
+	if releaseOrder == 0 {
+		// Unknown resolution - accept but treat as low quality
+		releaseOrder = 1
 	}
 
-	// Check codec
-	if preset.Codec != "" && preset.Codec != "any" {
-		releaseCodec := strings.ToLower(parsed.Codec)
-		presetCodec := strings.ToLower(preset.Codec)
+	minOrder := resOrder[minResolution]
+	if releaseOrder < minOrder {
+		return false, fmt.Sprintf("resolution below minimum: %s (minimum: %s)", parsed.Resolution, minResolution)
+	}
 
-		// Normalize codec names
-		codecMap := map[string]string{
-			"hevc": "hevc", "x265": "hevc", "h265": "hevc",
-			"avc": "avc", "x264": "avc", "h264": "avc",
-			"av1": "av1",
-		}
+	// Source and codec are now preference-based, not rejection-based
+	// Scoring handles the preference (remux > bluray > web > hdtv)
+	// We only reject truly bad sources like CAM, TS, WORKPRINT
+	releaseSource := strings.ToLower(parsed.Source)
+	badSources := map[string]bool{
+		"cam": true, "ts": true, "tc": true, "screener": true,
+		"dvdscr": true, "r5": true, "workprint": true,
+	}
+	if badSources[releaseSource] {
+		return false, fmt.Sprintf("unacceptable source: %s", parsed.Source)
+	}
 
-		normalizedRelease := codecMap[releaseCodec]
-		normalizedPreset := codecMap[presetCodec]
-
-		if normalizedRelease == "" {
-			normalizedRelease = releaseCodec
-		}
-		if normalizedPreset == "" {
-			normalizedPreset = presetCodec
-		}
-
-		if normalizedRelease != normalizedPreset {
-			return false, fmt.Sprintf("codec mismatch: want %s, got %s", preset.Codec, parsed.Codec)
-		}
+	// Codec check is also preference-based now
+	// All modern codecs (hevc, av1, avc) are acceptable, scoring handles preference
+	releaseCodec := strings.ToLower(parsed.Codec)
+	badCodecs := map[string]bool{
+		"xvid": true, "divx": true, "mpeg2": true,
+	}
+	if badCodecs[releaseCodec] {
+		return false, fmt.Sprintf("unacceptable codec: %s", parsed.Codec)
 	}
 
 	// Check HDR formats (if preset has specific requirements)
@@ -1051,6 +1103,22 @@ func (s *Scheduler) scoreResultsWithPreset(results []indexer.SearchResult, prese
 		if parsed.ShouldBlock() {
 			scored.Rejected = true
 			scored.RejectionReason = parsed.BlockReason()
+		}
+
+		// Check format settings (container/disc/archive filtering)
+		if !scored.Rejected {
+			formatSettings, _ := s.db.GetFormatSettings()
+			if rejection := quality.ValidateFormat(parsed, formatSettings); rejection != nil {
+				scored.Rejected = true
+				scored.RejectionReason = rejection.Reason
+				// Auto-blocklist if configured
+				if formatSettings != nil && formatSettings.AutoBlocklist && rejection.Permanent {
+					s.db.AddToBlocklist(&database.BlocklistEntry{
+						ReleaseTitle: result.Title,
+						Reason:       rejection.Reason,
+					})
+				}
+			}
 		}
 
 		// Calculate base score based on quality tier
@@ -1314,7 +1382,7 @@ func (s *Scheduler) matchRSSResult(result indexer.SearchResult, items []database
 			continue
 		}
 
-		err := s.grabRelease(&scored[0], item.Type)
+		err := s.grabRelease(&scored[0], item.Type, item.TmdbID)
 		if err != nil {
 			log.Printf("Scheduler: RSS grab failed for %s: %v", item.Title, err)
 			continue
@@ -1343,6 +1411,65 @@ func (s *Scheduler) titleMatches(releaseTitle, wantedTitle string, year int) boo
 	}
 
 	return true
+}
+
+// lookupImdbID retrieves the IMDB ID for a movie or show from the database
+func (s *Scheduler) lookupImdbID(mediaType string, tmdbID int64) string {
+	if mediaType == "movie" {
+		movie, err := s.db.GetMovieByTmdb(tmdbID)
+		if err == nil && movie != nil && movie.ImdbID != nil {
+			return *movie.ImdbID
+		}
+	} else if mediaType == "show" || mediaType == "anime" {
+		show, err := s.db.GetShowByTmdb(tmdbID)
+		if err == nil && show != nil && show.ImdbID != nil {
+			return *show.ImdbID
+		}
+	}
+	return ""
+}
+
+// lookupTvdbID retrieves the TVDB ID for a show from the database
+func (s *Scheduler) lookupTvdbID(tmdbID int64) string {
+	show, err := s.db.GetShowByTmdb(tmdbID)
+	if err == nil && show != nil && show.TvdbID != nil {
+		return strconv.FormatInt(*show.TvdbID, 10)
+	}
+	return ""
+}
+
+// filterAdultContent removes results with adult category IDs (6000-6999)
+func filterAdultContent(results []indexer.SearchResult) []indexer.SearchResult {
+	filtered := make([]indexer.SearchResult, 0, len(results))
+	for _, r := range results {
+		if isAdultCategory(r.CategoryID) {
+			log.Printf("Scheduler: filtering adult content: %s (category: %s)", r.Title, r.CategoryID)
+			continue
+		}
+		filtered = append(filtered, r)
+	}
+	return filtered
+}
+
+// isAdultCategory checks if a category ID is in the adult range (6000-6999)
+func isAdultCategory(categoryID string) bool {
+	if categoryID == "" {
+		return false
+	}
+
+	// Category can be comma-separated list
+	for _, catStr := range strings.Split(categoryID, ",") {
+		catStr = strings.TrimSpace(catStr)
+		cat, err := strconv.Atoi(catStr)
+		if err != nil {
+			continue
+		}
+		// Adult categories are 6000-6999
+		if cat >= 6000 && cat < 7000 {
+			return true
+		}
+	}
+	return false
 }
 
 // Common words to remove from titles for comparison
@@ -1489,12 +1616,55 @@ func (s *Scheduler) verifyReleaseMatch(releaseTitle string, item *database.Wante
 	return true, ""
 }
 
+// Adult content keywords that should cause rejection
+var adultKeywords = []string{
+	"xxx", "adult", "porn", "18+", "explicit", "erotic",
+	"brazzers", "naughty", "bangbros", "realitykings",
+}
+
+// containsAdultKeyword checks if a release title contains adult content keywords
+func containsAdultKeyword(title string) bool {
+	titleLower := strings.ToLower(title)
+	for _, keyword := range adultKeywords {
+		// Check for keyword as separate word or surrounded by dots/dashes
+		patterns := []string{
+			" " + keyword + " ",
+			"." + keyword + ".",
+			"-" + keyword + "-",
+			" " + keyword + ".",
+			"." + keyword + " ",
+		}
+		for _, pattern := range patterns {
+			if strings.Contains(titleLower, pattern) {
+				return true
+			}
+		}
+		// Also check if title starts or ends with keyword
+		if strings.HasPrefix(titleLower, keyword+" ") || strings.HasPrefix(titleLower, keyword+".") ||
+			strings.HasSuffix(titleLower, " "+keyword) || strings.HasSuffix(titleLower, "."+keyword) {
+			return true
+		}
+	}
+	return false
+}
+
 // calculateMatchScore computes detailed match scores between release and wanted item
 func (s *Scheduler) calculateMatchScore(releaseTitle string, item *database.WantedItem) ReleaseMatchScore {
 	parsed := parser.Parse(releaseTitle)
 	score := ReleaseMatchScore{
 		YearScore: 100, // Default if no year comparison needed
 		TypeScore: 100, // Default if type matches
+	}
+
+	// 0. Check for adult content keywords (immediate rejection)
+	if containsAdultKeyword(releaseTitle) {
+		score.TitleScore = 0
+		score.YearScore = 0
+		score.TypeScore = 0
+		score.CombinedScore = 0
+		score.Reason = "contains adult content keywords"
+		log.Printf("DEBUG: Adult content detected in '%s'", releaseTitle)
+		return score
 	}
 
 	// 1. Title similarity score (0-100)
@@ -1510,6 +1680,7 @@ func (s *Scheduler) calculateMatchScore(releaseTitle string, item *database.Want
 	}
 
 	// 2. Year validation (0, 80, or 100)
+	// STRICT: Year mismatch >1 year should be an immediate disqualifier
 	if item.Year > 0 && parsed.Year > 0 {
 		yearDiff := item.Year - parsed.Year
 		if yearDiff < 0 {
@@ -1521,10 +1692,10 @@ func (s *Scheduler) calculateMatchScore(releaseTitle string, item *database.Want
 		case 1:
 			score.YearScore = 80 // Allow ±1 year tolerance
 		default:
+			// Year mismatch >1 year is a hard reject
 			score.YearScore = 0
-			if score.Reason == "" {
-				score.Reason = fmt.Sprintf("year mismatch: wanted %d, got %d", item.Year, parsed.Year)
-			}
+			score.Reason = fmt.Sprintf("year mismatch: wanted %d, got %d (diff: %d years)", item.Year, parsed.Year, yearDiff)
+			log.Printf("DEBUG: Year mismatch for '%s' - wanted %d, got %d", releaseTitle, item.Year, parsed.Year)
 		}
 	}
 	// If release doesn't have year, don't penalize (keep default 100)
@@ -1609,5 +1780,49 @@ func calculateTitleScore(releaseTitle, wantedTitle string) int {
 		return wordScore
 	}
 	return levenScore
+}
+
+// sortPresetsByQuality sorts presets by quality priority (highest quality first)
+func sortPresetsByQuality(presets []database.QualityPreset) []database.QualityPreset {
+	sorted := make([]database.QualityPreset, len(presets))
+	copy(sorted, presets)
+
+	// Quality priority map (higher = better)
+	resPriority := map[string]int{
+		"2160p": 100, "4k": 100, "uhd": 100,
+		"1080p": 80, "1080i": 75,
+		"720p": 60,
+		"480p": 40, "sd": 40,
+		"any": 50, "": 50, // "any" or empty goes in the middle
+	}
+
+	sourcePriority := map[string]int{
+		"remux": 100,
+		"bluray": 90, "bdrip": 85,
+		"webdl": 70, "web": 70,
+		"webrip": 60,
+		"hdtv": 50,
+		"dvd": 30, "dvdrip": 30,
+		"any": 50, "": 50,
+	}
+
+	// Bubble sort by quality priority
+	for i := 0; i < len(sorted)-1; i++ {
+		for j := i + 1; j < len(sorted); j++ {
+			// Calculate priority score for each preset
+			scoreI := resPriority[strings.ToLower(sorted[i].Resolution)] * 10
+			scoreI += sourcePriority[strings.ToLower(sorted[i].Source)]
+
+			scoreJ := resPriority[strings.ToLower(sorted[j].Resolution)] * 10
+			scoreJ += sourcePriority[strings.ToLower(sorted[j].Source)]
+
+			// Higher score = higher quality, should come first
+			if scoreJ > scoreI {
+				sorted[i], sorted[j] = sorted[j], sorted[i]
+			}
+		}
+	}
+
+	return sorted
 }
 

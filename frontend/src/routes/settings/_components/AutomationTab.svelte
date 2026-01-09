@@ -1,5 +1,7 @@
 <script lang="ts">
-	import type { ScheduledTask, StorageStatus } from '$lib/api';
+	import { onMount } from 'svelte';
+	import type { ScheduledTask, StorageStatus, FormatSettings } from '$lib/api';
+	import { getFormatSettings, saveFormatSettings } from '$lib/api';
 
 	interface Props {
 		tasks: ScheduledTask[];
@@ -24,6 +26,49 @@
 		onSaveTaskInterval,
 		onEditInterval
 	}: Props = $props();
+
+	// Format settings state
+	let formatSettings: FormatSettings | null = $state(null);
+	let savingFormats = $state(false);
+	let formatsSaved = $state(false);
+
+	// All available container formats
+	const allContainers = ['mkv', 'mp4', 'avi', 'mov', 'webm', 'm4v', 'ts', 'm2ts', 'wmv', 'flv'];
+
+	onMount(async () => {
+		await loadFormatSettings();
+	});
+
+	async function loadFormatSettings() {
+		try {
+			formatSettings = await getFormatSettings();
+		} catch (e) {
+			console.error('Failed to load format settings:', e);
+		}
+	}
+
+	async function handleSaveFormatSettings() {
+		if (!formatSettings) return;
+		savingFormats = true;
+		try {
+			await saveFormatSettings(formatSettings);
+			formatsSaved = true;
+			setTimeout(() => formatsSaved = false, 3000);
+		} catch (e) {
+			console.error('Failed to save format settings:', e);
+		} finally {
+			savingFormats = false;
+		}
+	}
+
+	function toggleContainer(container: string) {
+		if (!formatSettings) return;
+		if (formatSettings.acceptedContainers.includes(container)) {
+			formatSettings.acceptedContainers = formatSettings.acceptedContainers.filter(c => c !== container);
+		} else {
+			formatSettings.acceptedContainers = [...formatSettings.acceptedContainers, container];
+		}
+	}
 
 	function formatDuration(ms: number | null): string {
 		if (ms === null) return '-';
@@ -187,6 +232,84 @@
 	{/if}
 </section>
 
+<!-- Format Settings -->
+<section class="glass-card p-6 space-y-4">
+	<div class="flex items-center gap-3">
+		<div class="w-10 h-10 rounded-xl bg-red-600/20 flex items-center justify-center">
+			<svg class="w-5 h-5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+			</svg>
+		</div>
+		<div>
+			<h2 class="text-lg font-semibold text-text-primary">Format Filtering</h2>
+			<p class="text-sm text-text-secondary">Control which file formats can be downloaded</p>
+		</div>
+	</div>
+
+	{#if formatSettings}
+		<div class="space-y-4">
+			<div>
+				<label class="block text-sm text-text-secondary mb-2">Accepted Container Formats</label>
+				<p class="text-xs text-text-muted mb-3">Only releases with these formats will be downloaded. Others will be rejected.</p>
+				<div class="flex flex-wrap gap-2">
+					{#each allContainers as container}
+						<button
+							type="button"
+							class="px-3 py-1.5 text-sm rounded-lg transition-colors font-medium uppercase {formatSettings.acceptedContainers.includes(container) ? 'bg-green-600 text-white' : 'bg-bg-card text-text-muted hover:bg-bg-elevated'}"
+							onclick={() => toggleContainer(container)}
+						>
+							{container}
+						</button>
+					{/each}
+				</div>
+			</div>
+
+			<div class="grid sm:grid-cols-3 gap-4 pt-4 border-t border-white/5">
+				<label class="flex items-center gap-2 cursor-pointer">
+					<input type="checkbox" bind:checked={formatSettings.rejectDiscs} class="form-checkbox" />
+					<div>
+						<span class="text-sm text-text-secondary">Reject Disc Releases</span>
+						<p class="text-xs text-text-muted">BDMV, VIDEO_TS, ISO files</p>
+					</div>
+				</label>
+				<label class="flex items-center gap-2 cursor-pointer">
+					<input type="checkbox" bind:checked={formatSettings.rejectArchives} class="form-checkbox" />
+					<div>
+						<span class="text-sm text-text-secondary">Reject Archives</span>
+						<p class="text-xs text-text-muted">RAR, ZIP, 7z files</p>
+					</div>
+				</label>
+				<label class="flex items-center gap-2 cursor-pointer">
+					<input type="checkbox" bind:checked={formatSettings.autoBlocklist} class="form-checkbox" />
+					<div>
+						<span class="text-sm text-text-secondary">Auto-Blocklist</span>
+						<p class="text-xs text-text-muted">Add rejected to blocklist</p>
+					</div>
+				</label>
+			</div>
+
+			<div class="flex items-center gap-3 pt-4">
+				<button class="liquid-btn" onclick={handleSaveFormatSettings} disabled={savingFormats}>
+					{savingFormats ? 'Saving...' : 'Save Format Settings'}
+				</button>
+				{#if formatsSaved}
+					<span class="text-sm text-green-400 flex items-center gap-1">
+						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+						</svg>
+						Saved!
+					</span>
+				{/if}
+			</div>
+		</div>
+	{:else}
+		<div class="flex items-center gap-3 py-4">
+			<div class="spinner-md text-red-400"></div>
+			<span class="text-text-secondary">Loading format settings...</span>
+		</div>
+	{/if}
+</section>
+
 <!-- Storage Management -->
 <section class="glass-card p-6 space-y-4">
 	<div class="flex items-center gap-3">
@@ -204,7 +327,6 @@
 	{#if storageStatus}
 		{@const totalMedia = storageStatus.moviesSize + storageStatus.tvSize + storageStatus.musicSize + storageStatus.booksSize}
 
-		<!-- Media Usage Breakdown -->
 		<div class="grid grid-cols-2 gap-3">
 			{#if storageStatus.moviesSize > 0}
 				<div class="p-4 bg-bg-elevated/50 rounded-xl border border-white/5">
@@ -268,14 +390,12 @@
 			{/if}
 		</div>
 
-		<!-- Total Media -->
 		{#if totalMedia > 0}
 			<div class="text-sm text-text-secondary">
 				Total media: <span class="text-text-primary font-medium">{formatSize(totalMedia)}</span>
 			</div>
 		{/if}
 
-		<!-- Disk Space -->
 		{#if storageStatus.diskUsage}
 			{@const disk = storageStatus.diskUsage}
 			{@const totalGb = Math.round(disk.total / (1024 * 1024 * 1024))}

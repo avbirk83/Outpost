@@ -21,6 +21,8 @@ type Download struct {
 	ClientID      int64   `json:"clientId"`
 	ClientName    string  `json:"clientName"`
 	ClientType    string  `json:"clientType"`
+	Ratio         float64 `json:"ratio"`   // Seed ratio (torrent only)
+	Seeders       int     `json:"seeders"` // Number of seeders
 }
 
 // Client interface that all download clients must implement
@@ -180,4 +182,19 @@ func (m *Manager) AddNZB(clientID int64, url string, category string) error {
 	}
 
 	return client.AddNZB(url, category)
+}
+
+// DeleteDownload removes a download from a specific client
+func (m *Manager) DeleteDownload(clientID int64, externalID string, deleteFiles bool) error {
+	clientConfig, err := m.db.GetDownloadClient(clientID)
+	if err != nil {
+		return err
+	}
+
+	client, err := New(clientConfig)
+	if err != nil {
+		return err
+	}
+
+	return client.DeleteDownload(externalID, deleteFiles)
 }

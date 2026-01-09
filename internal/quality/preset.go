@@ -730,6 +730,37 @@ func FormatQualityBadge(release *parser.ParsedRelease) string {
 	return strings.Join(parts, " ")
 }
 
+// GetAudioScore returns a numeric score for audio codec quality
+func GetAudioScore(audio string) int {
+	audio = strings.ToLower(audio)
+	scores := map[string]int{
+		"truehd atmos": 100,
+		"truehd":       90,
+		"dts-hd ma":    85,
+		"dts-x":        85,
+		"dtshd":        85,
+		"atmos":        80,
+		"dts-hd":       75,
+		"flac":         70,
+		"pcm":          70,
+		"lpcm":         70,
+		"dts":          60,
+		"eac3":         55,
+		"dd+":          55,
+		"ddp":          55,
+		"ac3":          50,
+		"dd":           50,
+		"aac":          40,
+		"mp3":          30,
+	}
+	for codec, score := range scores {
+		if strings.Contains(audio, codec) {
+			return score
+		}
+	}
+	return 0
+}
+
 // IsUpgrade checks if a new release is an upgrade over existing quality
 func IsUpgrade(newRelease *parser.ParsedRelease, currentResolution, currentSource, currentHDR, currentAudio string, preset *Preset) bool {
 	// Create a mock current release for comparison

@@ -17,6 +17,7 @@ import (
 	"github.com/outpost/outpost/internal/auth"
 	"github.com/outpost/outpost/internal/config"
 	"github.com/outpost/outpost/internal/database"
+	"github.com/outpost/outpost/internal/download"
 	"github.com/outpost/outpost/internal/downloadclient"
 	"github.com/outpost/outpost/internal/indexer"
 	"github.com/outpost/outpost/internal/metadata"
@@ -40,6 +41,7 @@ type Server struct {
 	downloads     *downloadclient.Manager
 	indexers      *indexer.Manager
 	scheduler     Scheduler
+	acquisition   AcquisitionService
 	mux           *http.ServeMux
 	subtitleCache map[string][]byte
 	subtitleMu    sync.RWMutex
@@ -53,7 +55,14 @@ type Scheduler interface {
 	SearchWantedItem(tmdbID int64, mediaType string) error
 }
 
-func NewServer(cfg *config.Config, db *database.Database, scan *scanner.Scanner, meta *metadata.Service, authSvc *auth.Service, downloads *downloadclient.Manager, indexers *indexer.Manager, sched Scheduler) *Server {
+// AcquisitionService interface for download tracking
+type AcquisitionService interface {
+	GetActiveDownloads() ([]*download.TrackedDownload, error)
+	GetTrackedDownload(id int64) (*download.TrackedDownload, error)
+	DeleteTrackedDownload(id int64, deleteFromClient bool, deleteFiles bool) error
+}
+
+func NewServer(cfg *config.Config, db *database.Database, scan *scanner.Scanner, meta *metadata.Service, authSvc *auth.Service, downloads *downloadclient.Manager, indexers *indexer.Manager, sched Scheduler, acq AcquisitionService) *Server {
 	s := &Server{
 		config:        cfg,
 		db:            db,
@@ -63,6 +72,7 @@ func NewServer(cfg *config.Config, db *database.Database, scan *scanner.Scanner,
 		downloads:     downloads,
 		indexers:      indexers,
 		scheduler:     sched,
+		acquisition:   acq,
 		mux:           http.NewServeMux(),
 		subtitleCache: make(map[string][]byte),
 	}
@@ -159,6 +169,7 @@ func (s *Server) setupRoutes() {
 	// Settings routes (admin only)
 	s.mux.HandleFunc("/api/settings", s.requireAdmin(s.handleSettings))
 	s.mux.HandleFunc("/api/settings/", s.requireAdmin(s.handleSetting))
+	s.mux.HandleFunc("/api/settings/formats", s.requireAdmin(s.handleFormatSettings))
 
 	// TMDB search routes (admin only)
 	s.mux.HandleFunc("/api/tmdb/search/movie", s.requireAdmin(s.handleTmdbSearchMovie))
@@ -1517,6 +1528,36 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		json.NewEncoder(w).Encode(map[string]string{"status": "saved"})
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleFormatSettings manages acceptable file format settings
+func (s *Server) handleFormatSettings(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	switch r.Method {
+	case http.MethodGet:
+		settings, err := s.db.GetFormatSettings()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(settings)
+
+	case http.MethodPut, http.MethodPost:
+		var settings database.FormatSettings
+		if err := json.NewDecoder(r.Body).Decode(&settings); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := s.db.SaveFormatSettings(&settings); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(settings)
 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

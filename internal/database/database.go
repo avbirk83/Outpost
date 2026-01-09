@@ -14,6 +14,11 @@ type Database struct {
 	db *sql.DB
 }
 
+// DB returns the underlying sql.DB connection
+func (d *Database) DB() *sql.DB {
+	return d.db
+}
+
 type Library struct {
 	ID           int64  `json:"id"`
 	Name         string `json:"name"`
@@ -209,6 +214,7 @@ type WantedItem struct {
 	ID               int64      `json:"id"`
 	Type             string     `json:"type"`             // movie, show
 	TmdbID           int64      `json:"tmdbId"`
+	ImdbID           *string    `json:"imdbId,omitempty"` // IMDB ID for more accurate searches
 	Title            string     `json:"title"`
 	Year             int        `json:"year,omitempty"`
 	PosterPath       *string    `json:"posterPath,omitempty"`
@@ -374,6 +380,7 @@ type Download struct {
 	LastError        *string    `json:"lastError"`
 	FailedAt         *time.Time `json:"failedAt"`
 	RetryCount       *int       `json:"retryCount"`
+	StalledNotified  bool       `json:"stalledNotified"`
 	CreatedAt        time.Time  `json:"createdAt"`
 	UpdatedAt        time.Time  `json:"updatedAt"`
 }
@@ -797,6 +804,7 @@ func (d *Database) migrate() error {
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		type TEXT NOT NULL,
 		tmdb_id INTEGER NOT NULL,
+		imdb_id TEXT,
 		title TEXT NOT NULL,
 		year INTEGER,
 		poster_path TEXT,
@@ -826,6 +834,14 @@ func (d *Database) migrate() error {
 		FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
 		FOREIGN KEY (quality_profile_id) REFERENCES quality_profiles(id),
 		UNIQUE(user_id, type, tmdb_id)
+	);
+
+	-- Link requests to downloads
+	CREATE TABLE IF NOT EXISTS request_downloads (
+		request_id INTEGER NOT NULL REFERENCES requests(id) ON DELETE CASCADE,
+		download_id INTEGER NOT NULL REFERENCES tracked_downloads(id) ON DELETE CASCADE,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (request_id, download_id)
 	);
 
 	CREATE TABLE IF NOT EXISTS artists (
@@ -945,6 +961,64 @@ func (d *Database) migrate() error {
 		error TEXT,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	-- Tracked downloads (state machine with full lifecycle tracking)
+	CREATE TABLE IF NOT EXISTS tracked_downloads (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		download_client_id INTEGER NOT NULL REFERENCES download_clients(id),
+		external_id TEXT NOT NULL,
+		request_id INTEGER REFERENCES requests(id),
+		media_id INTEGER,
+		media_type TEXT,
+
+		state TEXT NOT NULL DEFAULT 'queued',
+		previous_state TEXT,
+		state_changed_at DATETIME,
+
+		title TEXT NOT NULL,
+		parsed_info TEXT,
+
+		size INTEGER DEFAULT 0,
+		downloaded INTEGER DEFAULT 0,
+		progress REAL DEFAULT 0,
+		speed INTEGER DEFAULT 0,
+		eta INTEGER DEFAULT 0,
+		seeders INTEGER DEFAULT 0,
+
+		download_path TEXT,
+		import_path TEXT,
+
+		quality TEXT,
+		custom_format_score INTEGER DEFAULT 0,
+
+		grabbed_at DATETIME,
+		completed_at DATETIME,
+		imported_at DATETIME,
+
+		warnings TEXT,
+		errors TEXT,
+		import_block_reason TEXT,
+
+		ratio REAL DEFAULT 0,
+		seeding_time INTEGER DEFAULT 0,
+		can_remove INTEGER DEFAULT 0,
+
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+		UNIQUE(download_client_id, external_id)
+	);
+
+	-- Download events (state change history)
+	CREATE TABLE IF NOT EXISTS download_events (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		download_id INTEGER NOT NULL REFERENCES tracked_downloads(id) ON DELETE CASCADE,
+		from_state TEXT,
+		to_state TEXT NOT NULL,
+		reason TEXT,
+		details TEXT,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
 	-- Naming templates
@@ -1182,6 +1256,8 @@ func (d *Database) migrate() error {
 		"ALTER TABLE quality_presets ADD COLUMN priority INTEGER DEFAULT 100",
 		// Wanted table preset support
 		"ALTER TABLE wanted ADD COLUMN quality_preset_id INTEGER",
+		// Wanted table IMDB ID support for better search matching
+		"ALTER TABLE wanted ADD COLUMN imdb_id TEXT",
 		// Media type for presets (movie, tv, anime)
 		"ALTER TABLE quality_presets ADD COLUMN media_type TEXT DEFAULT 'movie'",
 		// Anime preferences
@@ -1777,6 +1853,42 @@ func (d *Database) GetMovie(id int64) (*Movie, error) {
 	return &m, nil
 }
 
+// GetMovieByTmdb retrieves a movie by its TMDB ID
+func (d *Database) GetMovieByTmdb(tmdbID int64) (*Movie, error) {
+	var m Movie
+	err := d.db.QueryRow(`
+		SELECT id, library_id, tmdb_id, imdb_id, title, original_title, year, overview, tagline,
+			runtime, rating, content_rating, genres, "cast", crew, director, writer, editor, producers, status, budget, revenue,
+			country, original_language, theatrical_release, digital_release, studios, trailers, poster_path, backdrop_path, focal_x, focal_y, path, size, added_at, last_watched_at, play_count
+		FROM movies WHERE tmdb_id = ?`, tmdbID,
+	).Scan(&m.ID, &m.LibraryID, &m.TmdbID, &m.ImdbID, &m.Title, &m.OriginalTitle, &m.Year,
+		&m.Overview, &m.Tagline, &m.Runtime, &m.Rating, &m.ContentRating, &m.Genres, &m.Cast, &m.Crew,
+		&m.Director, &m.Writer, &m.Editor, &m.Producers, &m.Status, &m.Budget, &m.Revenue,
+		&m.Country, &m.OriginalLanguage, &m.TheatricalRelease, &m.DigitalRelease, &m.Studios, &m.Trailers,
+		&m.PosterPath, &m.BackdropPath, &m.FocalX, &m.FocalY, &m.Path, &m.Size, &m.AddedAt, &m.LastWatchedAt, &m.PlayCount)
+	if err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
+// GetShowByTmdb retrieves a show by its TMDB ID
+func (d *Database) GetShowByTmdb(tmdbID int64) (*Show, error) {
+	var s Show
+	err := d.db.QueryRow(`
+		SELECT id, library_id, tmdb_id, tvdb_id, imdb_id, title, original_title, year, overview,
+			status, rating, content_rating, genres, "cast", crew, network, poster_path, backdrop_path,
+			focal_x, focal_y, path, added_at
+		FROM shows WHERE tmdb_id = ?`, tmdbID,
+	).Scan(&s.ID, &s.LibraryID, &s.TmdbID, &s.TvdbID, &s.ImdbID, &s.Title, &s.OriginalTitle, &s.Year,
+		&s.Overview, &s.Status, &s.Rating, &s.ContentRating, &s.Genres, &s.Cast, &s.Crew, &s.Network,
+		&s.PosterPath, &s.BackdropPath, &s.FocalX, &s.FocalY, &s.Path, &s.AddedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
 // UpdateMoviePlayCount increments the play count and updates last watched time
 func (d *Database) UpdateMoviePlayCount(id int64) error {
 	now := time.Now().Format(time.RFC3339)
@@ -1823,6 +1935,48 @@ func (d *Database) GetAllSettings() (map[string]string, error) {
 		settings[key] = value
 	}
 	return settings, nil
+}
+
+// FormatSettings controls which file formats are acceptable for download
+type FormatSettings struct {
+	AcceptedContainers []string `json:"acceptedContainers"` // e.g., ["mkv", "mp4", "avi"]
+	RejectDiscs        bool     `json:"rejectDiscs"`        // Reject BDMV, VIDEO_TS, full disc releases
+	RejectArchives     bool     `json:"rejectArchives"`     // Reject RAR, ZIP releases
+	AutoBlocklist      bool     `json:"autoBlocklist"`      // Add rejected releases to blocklist
+}
+
+// DefaultFormatSettings returns sensible defaults
+func DefaultFormatSettings() *FormatSettings {
+	return &FormatSettings{
+		AcceptedContainers: []string{"mkv", "mp4", "avi", "mov", "webm", "m4v", "ts", "m2ts", "wmv", "flv"},
+		RejectDiscs:        true,
+		RejectArchives:     true,
+		AutoBlocklist:      true,
+	}
+}
+
+// GetFormatSettings retrieves format settings from database
+func (d *Database) GetFormatSettings() (*FormatSettings, error) {
+	value, err := d.GetSetting("format_settings")
+	if err != nil {
+		// Return defaults if not set
+		return DefaultFormatSettings(), nil
+	}
+
+	var settings FormatSettings
+	if err := json.Unmarshal([]byte(value), &settings); err != nil {
+		return DefaultFormatSettings(), nil
+	}
+	return &settings, nil
+}
+
+// SaveFormatSettings stores format settings in database
+func (d *Database) SaveFormatSettings(settings *FormatSettings) error {
+	data, err := json.Marshal(settings)
+	if err != nil {
+		return err
+	}
+	return d.SetSetting("format_settings", string(data))
 }
 
 // Progress operations
@@ -2308,9 +2462,9 @@ func (d *Database) DeleteCustomFormat(id int64) error {
 
 func (d *Database) CreateWantedItem(item *WantedItem) error {
 	result, err := d.db.Exec(`
-		INSERT INTO wanted (type, tmdb_id, title, year, poster_path, quality_profile_id, quality_preset_id, monitored, seasons)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		item.Type, item.TmdbID, item.Title, item.Year, item.PosterPath,
+		INSERT INTO wanted (type, tmdb_id, imdb_id, title, year, poster_path, quality_profile_id, quality_preset_id, monitored, seasons)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		item.Type, item.TmdbID, item.ImdbID, item.Title, item.Year, item.PosterPath,
 		item.QualityProfileID, item.QualityPresetID, item.Monitored, item.Seasons,
 	)
 	if err != nil {
@@ -2322,7 +2476,7 @@ func (d *Database) CreateWantedItem(item *WantedItem) error {
 
 func (d *Database) GetWantedItems() ([]WantedItem, error) {
 	rows, err := d.db.Query(`
-		SELECT id, type, tmdb_id, title, year, poster_path, quality_profile_id, quality_preset_id, monitored, seasons, last_searched, added_at
+		SELECT id, type, tmdb_id, imdb_id, title, year, poster_path, quality_profile_id, quality_preset_id, monitored, seasons, last_searched, added_at
 		FROM wanted ORDER BY added_at DESC`)
 	if err != nil {
 		return nil, err
@@ -2332,7 +2486,7 @@ func (d *Database) GetWantedItems() ([]WantedItem, error) {
 	var items []WantedItem
 	for rows.Next() {
 		var item WantedItem
-		if err := rows.Scan(&item.ID, &item.Type, &item.TmdbID, &item.Title, &item.Year,
+		if err := rows.Scan(&item.ID, &item.Type, &item.TmdbID, &item.ImdbID, &item.Title, &item.Year,
 			&item.PosterPath, &item.QualityProfileID, &item.QualityPresetID, &item.Monitored, &item.Seasons,
 			&item.LastSearched, &item.AddedAt); err != nil {
 			return nil, err
@@ -2345,9 +2499,9 @@ func (d *Database) GetWantedItems() ([]WantedItem, error) {
 func (d *Database) GetWantedItem(id int64) (*WantedItem, error) {
 	var item WantedItem
 	err := d.db.QueryRow(`
-		SELECT id, type, tmdb_id, title, year, poster_path, quality_profile_id, quality_preset_id, monitored, seasons, last_searched, added_at
+		SELECT id, type, tmdb_id, imdb_id, title, year, poster_path, quality_profile_id, quality_preset_id, monitored, seasons, last_searched, added_at
 		FROM wanted WHERE id = ?`, id,
-	).Scan(&item.ID, &item.Type, &item.TmdbID, &item.Title, &item.Year,
+	).Scan(&item.ID, &item.Type, &item.TmdbID, &item.ImdbID, &item.Title, &item.Year,
 		&item.PosterPath, &item.QualityProfileID, &item.QualityPresetID, &item.Monitored, &item.Seasons,
 		&item.LastSearched, &item.AddedAt)
 	if err != nil {
@@ -2359,9 +2513,9 @@ func (d *Database) GetWantedItem(id int64) (*WantedItem, error) {
 func (d *Database) GetWantedByTmdb(itemType string, tmdbID int64) (*WantedItem, error) {
 	var item WantedItem
 	err := d.db.QueryRow(`
-		SELECT id, type, tmdb_id, title, year, poster_path, quality_profile_id, quality_preset_id, monitored, seasons, last_searched, added_at
+		SELECT id, type, tmdb_id, imdb_id, title, year, poster_path, quality_profile_id, quality_preset_id, monitored, seasons, last_searched, added_at
 		FROM wanted WHERE type = ? AND tmdb_id = ?`, itemType, tmdbID,
-	).Scan(&item.ID, &item.Type, &item.TmdbID, &item.Title, &item.Year,
+	).Scan(&item.ID, &item.Type, &item.TmdbID, &item.ImdbID, &item.Title, &item.Year,
 		&item.PosterPath, &item.QualityProfileID, &item.QualityPresetID, &item.Monitored, &item.Seasons,
 		&item.LastSearched, &item.AddedAt)
 	if err != nil {
@@ -2372,7 +2526,7 @@ func (d *Database) GetWantedByTmdb(itemType string, tmdbID int64) (*WantedItem, 
 
 func (d *Database) GetMonitoredItems() ([]WantedItem, error) {
 	rows, err := d.db.Query(`
-		SELECT id, type, tmdb_id, title, year, poster_path, quality_profile_id, quality_preset_id, monitored, seasons, last_searched, added_at
+		SELECT id, type, tmdb_id, imdb_id, title, year, poster_path, quality_profile_id, quality_preset_id, monitored, seasons, last_searched, added_at
 		FROM wanted WHERE monitored = 1 ORDER BY added_at DESC`)
 	if err != nil {
 		return nil, err
@@ -2382,7 +2536,7 @@ func (d *Database) GetMonitoredItems() ([]WantedItem, error) {
 	var items []WantedItem
 	for rows.Next() {
 		var item WantedItem
-		if err := rows.Scan(&item.ID, &item.Type, &item.TmdbID, &item.Title, &item.Year,
+		if err := rows.Scan(&item.ID, &item.Type, &item.TmdbID, &item.ImdbID, &item.Title, &item.Year,
 			&item.PosterPath, &item.QualityProfileID, &item.QualityPresetID, &item.Monitored, &item.Seasons,
 			&item.LastSearched, &item.AddedAt); err != nil {
 			return nil, err
@@ -3627,7 +3781,7 @@ func (d *Database) GetDownloads() ([]Download, error) {
 	rows, err := d.db.Query(`
 		SELECT id, download_client_id, external_id, media_id, media_type, title,
 		       size, status, progress, download_path, imported_path, error,
-		       created_at, updated_at
+		       retry_count, COALESCE(stalled_notified, 0), created_at, updated_at
 		FROM downloads
 		ORDER BY created_at DESC
 	`)
@@ -3639,13 +3793,15 @@ func (d *Database) GetDownloads() ([]Download, error) {
 	var downloads []Download
 	for rows.Next() {
 		var dl Download
+		var stalledNotified int
 		if err := rows.Scan(
 			&dl.ID, &dl.DownloadClientID, &dl.ExternalID, &dl.MediaID, &dl.MediaType,
 			&dl.Title, &dl.Size, &dl.Status, &dl.Progress, &dl.DownloadPath,
-			&dl.ImportedPath, &dl.Error, &dl.CreatedAt, &dl.UpdatedAt,
+			&dl.ImportedPath, &dl.Error, &dl.RetryCount, &stalledNotified, &dl.CreatedAt, &dl.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
+		dl.StalledNotified = stalledNotified == 1
 		downloads = append(downloads, dl)
 	}
 	return downloads, nil
@@ -3663,6 +3819,9 @@ func (d *Database) GetDownloadByExternalID(clientID int64, externalID string) (*
 		&dl.Title, &dl.Size, &dl.Status, &dl.Progress, &dl.DownloadPath,
 		&dl.ImportedPath, &dl.Error, &dl.CreatedAt, &dl.UpdatedAt,
 	)
+	if err == sql.ErrNoRows {
+		return nil, nil // No existing download found - not an error
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -3695,6 +3854,24 @@ func (d *Database) UpdateDownload(dl *Download) error {
 
 func (d *Database) DeleteDownload(id int64) error {
 	_, err := d.db.Exec("DELETE FROM downloads WHERE id = ?", id)
+	return err
+}
+
+// MarkDownloadStalled marks a download as stalled (notified)
+func (d *Database) MarkDownloadStalled(id int64) error {
+	_, err := d.db.Exec("UPDATE downloads SET stalled_notified = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?", id)
+	return err
+}
+
+// UpdateDownloadStatus updates the status and error message of a download
+func (d *Database) UpdateDownloadStatus(id int64, status string, errorMsg string) error {
+	_, err := d.db.Exec(`
+		UPDATE downloads SET
+			status = ?, error = ?, last_error = ?,
+			failed_at = CASE WHEN ? = 'failed' THEN CURRENT_TIMESTAMP ELSE failed_at END,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, status, errorMsg, errorMsg, status, id)
 	return err
 }
 
@@ -4001,6 +4178,29 @@ func (d *Database) UpdateGrabHistoryStatus(id int64, status string, errorMsg *st
 	return err
 }
 
+// UpdateGrabHistoryByTitle updates grab history status for a release by its title
+func (d *Database) UpdateGrabHistoryByTitle(releaseTitle string, status string, errorMsg *string) error {
+	if status == "imported" {
+		_, err := d.db.Exec(`
+			UPDATE grab_history SET status = ?, error_message = ?, imported_at = CURRENT_TIMESTAMP
+			WHERE id = (
+				SELECT id FROM grab_history
+				WHERE release_title = ? AND status = 'grabbed'
+				ORDER BY grabbed_at DESC LIMIT 1
+			)
+		`, status, errorMsg, releaseTitle)
+		return err
+	}
+	_, err := d.db.Exec(`
+		UPDATE grab_history SET status = ?, error_message = ?
+		WHERE id = (
+			SELECT id FROM grab_history
+			WHERE release_title = ? AND status = 'grabbed'
+			ORDER BY grabbed_at DESC LIMIT 1
+		)
+	`, status, errorMsg, releaseTitle)
+	return err
+}
 // =====================
 // Blocked Groups Operations
 // =====================

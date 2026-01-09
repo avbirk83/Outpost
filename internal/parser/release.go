@@ -94,6 +94,12 @@ type ParsedRelease struct {
 	IsSyncfix bool // Audio sync fixed
 	IsDS4K    bool // Downscaled from 4K (good quality indicator)
 
+
+	// Container/Format detection (for pre-grab filtering)
+	Container string // "mkv", "mp4", "avi", "iso", "rar", etc. or empty if unknown
+	IsDisc    bool   // BDMV, VIDEO_TS, COMPLETE.BLURAY, full disc release
+	IsArchive bool   // RAR, ZIP, 7z archive release
+
 	// Raw
 	RawTitle string
 	Size     int64
@@ -271,6 +277,11 @@ var (
 	limitedPattern  = regexp.MustCompile(`(?i)\blimited\b`)
 	nukedPattern    = regexp.MustCompile(`(?i)\bnuked\b`)
 	ds4kPattern     = regexp.MustCompile(`(?i)\bds4k\b`)
+
+	// Container/Format patterns (for pre-grab filtering)
+	containerPattern = regexp.MustCompile(`(?i)(MKV|MP4|AVI|MOV|WEBM|M4V|TS|M2TS|WMV|FLV|ISO|RAR|ZIP|7Z)`)
+	discPattern      = regexp.MustCompile(`(?i)(BDMV|VIDEO_TS|COMPLETE.?BLURAY|DISCd*|FULL[._-]?DISC|UNTOUCHED|BD50|BD25|BD66|BD100)`)
+	archivePattern   = regexp.MustCompile(`(?i)(RAR|ZIP|7Z|ARCHIVE|COMPRESSED)`)
 
 	// Bad patterns
 	samplePattern   = regexp.MustCompile(`(?i)\bsample\b`)
@@ -605,6 +616,13 @@ func Parse(name string) *ParsedRelease {
 	r.IsLimited = limitedPattern.MatchString(name)
 	r.IsNuked = nukedPattern.MatchString(name)
 	r.IsDS4K = ds4kPattern.MatchString(name)
+
+	// Container/Format detection
+	if matches := containerPattern.FindStringSubmatch(name); len(matches) > 1 {
+		r.Container = strings.ToLower(matches[1])
+	}
+	r.IsDisc = discPattern.MatchString(name)
+	r.IsArchive = archivePattern.MatchString(name)
 
 	// Warnings
 	r.HasHardcodedSubs = hardcodedPattern.MatchString(name) || hardsubPattern.MatchString(name)

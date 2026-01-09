@@ -104,9 +104,11 @@ export {
 	refreshAllMetadata,
 	clearLibraryData,
 	getNamingTemplates,
-	updateNamingTemplate
+	updateNamingTemplate,
+	getFormatSettings,
+	saveFormatSettings
 } from './settings';
-export type { NamingTemplate } from './settings';
+export type { NamingTemplate, FormatSettings } from './settings';
 
 // Downloads
 export {
@@ -118,14 +120,21 @@ export {
 	getDownloads,
 	getDownloadItems,
 	deleteDownloadItem,
-	getImportHistory
+	getImportHistory,
+	getGrabHistory,
+	getBlocklist,
+	addToBlocklist,
+	removeFromBlocklist
 } from './downloads';
 export type {
 	DownloadClient,
 	Download,
 	TestConnectionResult,
 	DownloadItem,
-	ImportHistoryItem
+	DeleteDownloadOptions,
+	ImportHistoryItem,
+	GrabHistoryItem,
+	BlocklistEntry
 } from './downloads';
 
 // Indexers and Search

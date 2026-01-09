@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/outpost/outpost/internal/database"
 	"github.com/outpost/outpost/internal/parser"
 )
 
@@ -419,4 +420,68 @@ func ComputeQualityTier(release *parser.ParsedRelease) string {
 	default:
 		return "Unknown"
 	}
+}
+
+// FormatRejection represents a format validation failure
+type FormatRejection struct {
+	Reason    string
+	Permanent bool // If true, should be blocklisted
+}
+
+// ValidateFormat checks if a release's format is acceptable
+func ValidateFormat(release *parser.ParsedRelease, settings *database.FormatSettings) *FormatRejection {
+	if settings == nil {
+		return nil // No settings means accept all
+	}
+
+	// Check for disc releases
+	if settings.RejectDiscs && release.IsDisc {
+		return &FormatRejection{
+			Reason:    "Disc release not accepted (BDMV/VIDEO_TS/full disc)",
+			Permanent: true,
+		}
+	}
+
+	// Check for archive releases
+	if settings.RejectArchives && release.IsArchive {
+		return &FormatRejection{
+			Reason:    "Archive release not accepted (RAR/ZIP)",
+			Permanent: true,
+		}
+	}
+
+	// Check container if detected
+	if release.Container != "" && len(settings.AcceptedContainers) > 0 {
+		containerLower := strings.ToLower(release.Container)
+		
+		// Check if it's an unacceptable container (ISO, RAR, etc.)
+		if containerLower == "iso" || containerLower == "rar" || containerLower == "zip" || containerLower == "7z" {
+			return &FormatRejection{
+				Reason:    "Container type not accepted: " + release.Container,
+				Permanent: true,
+			}
+		}
+		
+		// Check if container is in accepted list
+		found := false
+		for _, accepted := range settings.AcceptedContainers {
+			if strings.ToLower(accepted) == containerLower {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return &FormatRejection{
+				Reason:    "Container type not in accepted list: " + release.Container,
+				Permanent: true,
+			}
+		}
+	}
+
+	return nil // Accepted
+}
+
+// IsAcceptableFormat is a convenience function for quick checks
+func IsAcceptableFormat(release *parser.ParsedRelease, settings *database.FormatSettings) bool {
+	return ValidateFormat(release, settings) == nil
 }

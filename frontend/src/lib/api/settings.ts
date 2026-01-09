@@ -64,3 +64,28 @@ export async function updateNamingTemplate(template: NamingTemplate): Promise<Na
 	if (!response.ok) throw new Error(`API error: ${response.status}`);
 	return response.json();
 }
+
+// Format Settings (pre-grab container/format filtering)
+
+export interface FormatSettings {
+	acceptedContainers: string[];
+	rejectDiscs: boolean;
+	rejectArchives: boolean;
+	autoBlocklist: boolean;
+}
+
+export async function getFormatSettings(): Promise<FormatSettings> {
+	const response = await apiFetch(`${API_BASE}/settings/formats`);
+	if (!response.ok) throw new Error(`API error: ${response.status}`);
+	return response.json();
+}
+
+export async function saveFormatSettings(settings: FormatSettings): Promise<FormatSettings> {
+	const response = await apiFetch(`${API_BASE}/settings/formats`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(settings),
+	});
+	if (!response.ok) throw new Error(`API error: ${response.status}`);
+	return response.json();
+}

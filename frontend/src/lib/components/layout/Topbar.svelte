@@ -551,7 +551,7 @@
 
 	<!-- Right: Actions + User -->
 	<div class="flex items-center gap-2">
-		<!-- Activity Indicator -->
+		<!-- Activity Indicator (running tasks) -->
 		{#if systemStatus && systemStatus.runningTasks.length > 0}
 			<div
 				class="btn-icon-circle !text-blue-400"
@@ -561,52 +561,18 @@
 			</div>
 		{/if}
 
-		<!-- Downloads (admin only) -->
-		{#if isAdmin}
-			<a
-				href="/downloads"
-				class="btn-icon-circle relative"
-				title="Downloads"
-			>
-				<svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-				</svg>
-				{#if systemStatus && systemStatus.activeDownloads > 0}
-					<span class="absolute -top-1 -right-1 min-w-[18px] h-[18px] rounded-full bg-blue-500 text-white text-[10px] font-bold flex items-center justify-center px-1">
-						{systemStatus.activeDownloads}
-					</span>
-				{/if}
-			</a>
-
-			<!-- Wanted (admin only) -->
-			<a
-				href="/wanted"
-				class="btn-icon-circle relative"
-				title="Wanted"
-			>
-				<svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-				</svg>
-				{#if systemStatus && systemStatus.wantedCount > 0}
-					<span class="absolute -top-1 -right-1 min-w-[18px] h-[18px] rounded-full bg-purple-500 text-white text-[10px] font-bold flex items-center justify-center px-1">
-						{systemStatus.wantedCount}
-					</span>
-				{/if}
-			</a>
-		{/if}
-
-		<!-- Requests -->
+		<!-- Activity (combined: queue, wanted, requests) -->
 		<a
-			href="/requests"
+			href="/activity"
 			class="btn-icon-circle relative"
-			title="Requests"
+			title="Activity"
 		>
 			<svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
 			</svg>
-			{#if systemStatus && systemStatus.pendingRequests > 0}
+			{#if (systemStatus?.activeDownloads || 0) + (systemStatus?.pendingRequests || 0) > 0}
 				<span class="absolute -top-1 -right-1 min-w-[18px] h-[18px] rounded-full bg-amber-500 text-white text-[10px] font-bold flex items-center justify-center px-1">
-					{systemStatus.pendingRequests}
+					{(systemStatus?.activeDownloads || 0) + (systemStatus?.pendingRequests || 0)}
 				</span>
 			{/if}
 		</a>

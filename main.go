@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/outpost/outpost/internal/acquisition"
 	"github.com/outpost/outpost/internal/api"
 	"github.com/outpost/outpost/internal/auth"
 	"github.com/outpost/outpost/internal/config"
@@ -59,11 +60,18 @@ func main() {
 	// Initialize scheduler
 	sched := scheduler.New(db, indexers, downloads, scan)
 
-	// Initialize server with scheduler
-	server := api.NewServer(cfg, db, scan, meta, authSvc, downloads, indexers, sched)
+	// Initialize acquisition service for download tracking and import
+	acqSvc := acquisition.NewService(db, db.DB(), downloads, indexers, nil)
+
+	// Initialize server with scheduler and acquisition service
+	server := api.NewServer(cfg, db, scan, meta, authSvc, downloads, indexers, sched, acqSvc)
 
 	// Start scheduler
 	sched.Start()
+
+	// Start acquisition service
+	acqSvc.Start()
+	log.Println("Acquisition service started")
 
 	// Handle graceful shutdown
 	sigChan := make(chan os.Signal, 1)
@@ -81,7 +89,8 @@ func main() {
 	<-sigChan
 	log.Println("Shutting down...")
 
-	// Stop scheduler
+	// Stop services
+	acqSvc.Stop()
 	sched.Stop()
 
 	log.Println("Goodbye!")

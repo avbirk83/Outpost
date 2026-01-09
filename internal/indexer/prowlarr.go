@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -142,6 +143,11 @@ func (c *ProwlarrClient) Search(params SearchParams) ([]SearchResult, error) {
 
 	u.RawQuery = q.Encode()
 
+	// DEBUG: Log the full search URL being sent to Prowlarr
+	log.Printf("DEBUG Prowlarr Search URL: %s", u.String())
+	log.Printf("DEBUG Search params: query=%q, type=%s, imdbId=%s, tmdbId=%s, tvdbId=%s, categories=%v",
+		params.Query, searchType, params.ImdbID, params.TmdbID, params.TvdbID, params.Categories)
+
 	req, err := http.NewRequest("GET", u.String(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -167,6 +173,19 @@ func (c *ProwlarrClient) Search(params SearchParams) ([]SearchResult, error) {
 	var searchResults []prowlarrSearchResult
 	if err := json.Unmarshal(body, &searchResults); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	// DEBUG: Log raw results count and first few results
+	log.Printf("DEBUG Prowlarr returned %d raw results", len(searchResults))
+	for i, r := range searchResults {
+		if i < 10 { // Only log first 10
+			catIDs := make([]int, len(r.Categories))
+			for j, c := range r.Categories {
+				catIDs[j] = c.ID
+			}
+			log.Printf("DEBUG Result[%d]: title=%q, indexer=%s, categories=%v, imdbId=%d",
+				i, r.Title, r.Indexer, catIDs, r.ImdbID)
+		}
 	}
 
 	return c.convertResults(searchResults), nil

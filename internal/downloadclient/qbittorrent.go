@@ -1,9 +1,12 @@
 package downloadclient
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
+	"mime/multipart"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -151,10 +154,103 @@ func (q *QBittorrent) mapState(state string) string {
 }
 
 func (q *QBittorrent) AddTorrent(torrentURL string, category string) error {
+	log.Printf("DEBUG qBit AddTorrent: starting, URL length=%d, category=%s", len(torrentURL), category)
+
 	if err := q.login(); err != nil {
+		log.Printf("DEBUG qBit AddTorrent: login failed: %v", err)
+		return err
+	}
+	log.Printf("DEBUG qBit AddTorrent: login successful")
+
+	// Check if this is a magnet link or HTTP URL
+	if strings.HasPrefix(torrentURL, "magnet:") {
+		// Magnet links can be sent directly via URL
+		log.Printf("DEBUG qBit AddTorrent: detected magnet link, sending directly")
+		return q.addTorrentByURL(torrentURL, category)
+	}
+
+	// For HTTP URLs (like Prowlarr download links), we need to resolve them first
+	// They may redirect to magnet links or return .torrent files
+	log.Printf("DEBUG qBit AddTorrent: resolving download URL")
+	resolvedURL, torrentData, err := q.resolveDownloadURL(torrentURL)
+	if err != nil {
+		log.Printf("DEBUG qBit AddTorrent: failed to resolve URL: %v", err)
 		return err
 	}
 
+	// If we got a magnet link, send it directly
+	if strings.HasPrefix(resolvedURL, "magnet:") {
+		log.Printf("DEBUG qBit AddTorrent: URL resolved to magnet link, sending directly")
+		return q.addTorrentByURL(resolvedURL, category)
+	}
+
+	// If we got torrent data, upload it
+	if len(torrentData) > 0 {
+		log.Printf("DEBUG qBit AddTorrent: got %d bytes of torrent data, uploading", len(torrentData))
+		return q.addTorrentByFile(torrentData, category)
+	}
+
+	// Shouldn't get here, but fall back to URL method
+	log.Printf("DEBUG qBit AddTorrent: falling back to URL method")
+	return q.addTorrentByURL(torrentURL, category)
+}
+
+// resolveDownloadURL follows redirects and returns either a magnet link or torrent file data
+func (q *QBittorrent) resolveDownloadURL(downloadURL string) (string, []byte, error) {
+	// Create a client that doesn't auto-follow redirects so we can catch magnet redirects
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			// Check if redirecting to a magnet link
+			if strings.HasPrefix(req.URL.String(), "magnet:") {
+				return http.ErrUseLastResponse
+			}
+			// Allow up to 10 redirects for HTTP URLs
+			if len(via) >= 10 {
+				return fmt.Errorf("too many redirects")
+			}
+			return nil
+		},
+	}
+
+	resp, err := client.Get(downloadURL)
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to fetch: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Check if we got redirected to a magnet link
+	if resp.StatusCode == http.StatusFound || resp.StatusCode == http.StatusMovedPermanently || resp.StatusCode == http.StatusTemporaryRedirect {
+		location := resp.Header.Get("Location")
+		if strings.HasPrefix(location, "magnet:") {
+			log.Printf("DEBUG qBit resolveDownloadURL: got magnet redirect: %s", location[:min(100, len(location))])
+			return location, nil, nil
+		}
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", nil, fmt.Errorf("download failed with status %d", resp.StatusCode)
+	}
+
+	// Read the response body
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Check if the response is a magnet link (some APIs return magnet as plain text)
+	dataStr := strings.TrimSpace(string(data))
+	if strings.HasPrefix(dataStr, "magnet:") {
+		log.Printf("DEBUG qBit resolveDownloadURL: response body is magnet link")
+		return dataStr, nil, nil
+	}
+
+	// Otherwise it should be torrent file data
+	log.Printf("DEBUG qBit resolveDownloadURL: got %d bytes of torrent data", len(data))
+	return "", data, nil
+}
+
+func (q *QBittorrent) addTorrentByURL(torrentURL string, category string) error {
 	data := url.Values{
 		"urls": {torrentURL},
 	}
@@ -164,14 +260,65 @@ func (q *QBittorrent) AddTorrent(torrentURL string, category string) error {
 		data.Set("category", q.config.Category)
 	}
 
+	log.Printf("DEBUG qBit addTorrentByURL: sending to %s/api/v2/torrents/add", q.baseURL)
 	resp, err := q.client.PostForm(q.baseURL+"/api/v2/torrents/add", data)
 	if err != nil {
+		log.Printf("DEBUG qBit addTorrentByURL: request failed: %v", err)
 		return fmt.Errorf("failed to add torrent: %w", err)
 	}
 	defer resp.Body.Close()
 
+	body, _ := io.ReadAll(resp.Body)
+	log.Printf("DEBUG qBit addTorrentByURL: response status=%d, body=%q", resp.StatusCode, string(body))
+
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed to add torrent: %s", string(body))
+	}
+
+	return nil
+}
+
+func (q *QBittorrent) addTorrentByFile(torrentData []byte, category string) error {
+	// Create multipart form
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+
+	// Add the torrent file
+	part, err := writer.CreateFormFile("torrents", "download.torrent")
+	if err != nil {
+		return fmt.Errorf("failed to create form file: %w", err)
+	}
+	if _, err := part.Write(torrentData); err != nil {
+		return fmt.Errorf("failed to write torrent data: %w", err)
+	}
+
+	// Add category
+	if category != "" {
+		writer.WriteField("category", category)
+	} else if q.config.Category != "" {
+		writer.WriteField("category", q.config.Category)
+	}
+
+	writer.Close()
+
+	req, err := http.NewRequest("POST", q.baseURL+"/api/v2/torrents/add", &buf)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	log.Printf("DEBUG qBit addTorrentByFile: uploading torrent file to %s/api/v2/torrents/add", q.baseURL)
+	resp, err := q.client.Do(req)
+	if err != nil {
+		log.Printf("DEBUG qBit addTorrentByFile: request failed: %v", err)
+		return fmt.Errorf("failed to add torrent: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	log.Printf("DEBUG qBit addTorrentByFile: response status=%d, body=%q", resp.StatusCode, string(body))
+
+	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("failed to add torrent: %s", string(body))
 	}
 
