@@ -210,6 +210,14 @@
 					</svg>
 					<span>Found {search.totalResults} results</span>
 				</div>
+			{:else if status.activeSearch}
+				<div class="flex items-center gap-2 text-purple-400">
+					<div class="spinner-xs"></div>
+					<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+					</svg>
+					<span>Searching: {status.activeSearch}</span>
+				</div>
 			{:else if status.runningTasks.length > 0}
 				<div class="flex items-center gap-2 text-blue-400">
 					<div class="spinner-xs"></div>

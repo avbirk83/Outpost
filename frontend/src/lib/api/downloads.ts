@@ -122,6 +122,9 @@ export interface TrackedDownload {
 	requestId?: number;
 	mediaId?: number;
 	mediaType: string;
+	tmdbId?: number;
+	posterPath?: string;
+	year?: number;
 
 	state: DownloadState;
 	previousState?: DownloadState;

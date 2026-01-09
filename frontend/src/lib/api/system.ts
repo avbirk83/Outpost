@@ -32,6 +32,7 @@ export interface SystemStatus {
 	pendingRequests: number;
 	activeDownloads: number;
 	runningTasks: string[];
+	activeSearch: string;
 	diskUsed: number;
 	diskTotal: number;
 }

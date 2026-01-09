@@ -371,8 +371,11 @@ type Download struct {
 	MediaID          *int64     `json:"mediaId"`
 	MediaType        *string    `json:"mediaType"`
 	Title            string     `json:"title"`
+	TmdbID           int64      `json:"tmdbId,omitempty"`
+	PosterPath       string     `json:"posterPath,omitempty"`
+	Year             int        `json:"year,omitempty"`
 	Size             int64      `json:"size"`
-	Status           string     `json:"status"` // downloading, completed, importing, imported, failed, unmatched
+	State            string     `json:"state"` // downloading, completed, importing, imported, failed, unmatched
 	Progress         float64    `json:"progress"`
 	DownloadPath     *string    `json:"downloadPath"`
 	ImportedPath     *string    `json:"importedPath"`
@@ -3796,7 +3799,7 @@ func (d *Database) GetDownloads() ([]Download, error) {
 		var stalledNotified int
 		if err := rows.Scan(
 			&dl.ID, &dl.DownloadClientID, &dl.ExternalID, &dl.MediaID, &dl.MediaType,
-			&dl.Title, &dl.Size, &dl.Status, &dl.Progress, &dl.DownloadPath,
+			&dl.Title, &dl.Size, &dl.State, &dl.Progress, &dl.DownloadPath,
 			&dl.ImportedPath, &dl.Error, &dl.RetryCount, &stalledNotified, &dl.CreatedAt, &dl.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -3816,7 +3819,7 @@ func (d *Database) GetDownloadByExternalID(clientID int64, externalID string) (*
 		FROM downloads WHERE download_client_id = ? AND external_id = ?
 	`, clientID, externalID).Scan(
 		&dl.ID, &dl.DownloadClientID, &dl.ExternalID, &dl.MediaID, &dl.MediaType,
-		&dl.Title, &dl.Size, &dl.Status, &dl.Progress, &dl.DownloadPath,
+		&dl.Title, &dl.Size, &dl.State, &dl.Progress, &dl.DownloadPath,
 		&dl.ImportedPath, &dl.Error, &dl.CreatedAt, &dl.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -3834,7 +3837,7 @@ func (d *Database) CreateDownload(dl *Download) error {
 		                       title, size, status, progress, download_path)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, dl.DownloadClientID, dl.ExternalID, dl.MediaID, dl.MediaType,
-		dl.Title, dl.Size, dl.Status, dl.Progress, dl.DownloadPath)
+		dl.Title, dl.Size, dl.State, dl.Progress, dl.DownloadPath)
 	if err != nil {
 		return err
 	}
@@ -3848,7 +3851,7 @@ func (d *Database) UpdateDownload(dl *Download) error {
 			status = ?, progress = ?, download_path = ?, imported_path = ?,
 			error = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
-	`, dl.Status, dl.Progress, dl.DownloadPath, dl.ImportedPath, dl.Error, dl.ID)
+	`, dl.State, dl.Progress, dl.DownloadPath, dl.ImportedPath, dl.Error, dl.ID)
 	return err
 }
 

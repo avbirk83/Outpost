@@ -37,6 +37,9 @@ type Scheduler struct {
 	// Task tracking
 	taskRunning map[string]bool
 	taskMu      sync.RWMutex
+
+	// Active search tracking for UI
+	activeSearch string
 }
 
 func New(db *database.Database, indexers *indexer.Manager, downloads *downloadclient.Manager, scan *scanner.Scanner) *Scheduler {
@@ -191,6 +194,27 @@ func (s *Scheduler) GetStatus() []database.ScheduledTask {
 	}
 
 	return tasks
+}
+
+// GetActiveSearch returns the title of the item currently being searched
+func (s *Scheduler) GetActiveSearch() string {
+	s.taskMu.RLock()
+	defer s.taskMu.RUnlock()
+	return s.activeSearch
+}
+
+// GetRunningTaskNames returns a list of currently running task names
+func (s *Scheduler) GetRunningTaskNames() []string {
+	s.taskMu.RLock()
+	defer s.taskMu.RUnlock()
+
+	var names []string
+	for name, running := range s.taskRunning {
+		if running {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 // TriggerTask manually triggers a task by ID
@@ -392,13 +416,15 @@ func (s *Scheduler) SearchWantedItem(tmdbID int64, mediaType string) error {
 
 	// Run search in background goroutine with task tracking
 	go func() {
-		taskName := "Request Search"
+		taskName := fmt.Sprintf("Searching: %s", item.Title)
 		s.taskMu.Lock()
 		s.taskRunning[taskName] = true
+		s.activeSearch = item.Title
 		s.taskMu.Unlock()
 		defer func() {
 			s.taskMu.Lock()
 			s.taskRunning[taskName] = false
+			s.activeSearch = ""
 			s.taskMu.Unlock()
 		}()
 
@@ -730,14 +756,51 @@ func (s *Scheduler) searchAndGrab(item *database.WantedItem) {
 		return
 	}
 
-	// Grab the best result
-	err = s.grabRelease(bestResult, item.Type, item.TmdbID)
-	if err != nil {
-		log.Printf("Scheduler: grab failed for %s: %v", item.Title, err)
-		return
+	// Try to grab with failover - if first choice fails, try alternatives
+	// Collect all acceptable results for failover
+	var acceptableResults []*indexer.ScoredSearchResult
+	for _, presetID := range presetsToTry {
+		scoredResults := s.scoreResultsWithPreset(results, presetID)
+		for i := range scoredResults {
+			if scoredResults[i].Rejected || scoredResults[i].TotalScore <= 0 {
+				continue
+			}
+			matches, _ := s.verifyReleaseMatch(scoredResults[i].Title, item)
+			if !matches {
+				continue
+			}
+			blocked, _ := s.db.IsReleaseBlocklisted(scoredResults[i].Title)
+			if blocked {
+				continue
+			}
+			if libraryID > 0 {
+				excluded, _ := s.db.IsIndexerExcludedForLibrary(scoredResults[i].IndexerID, libraryID)
+				if excluded {
+					continue
+				}
+			}
+			if item.QualityProfileID > 0 && !s.passesReleaseFilters(scoredResults[i].Title, item.QualityProfileID) {
+				continue
+			}
+			acceptableResults = append(acceptableResults, &scoredResults[i])
+		}
 	}
 
-	log.Printf("Scheduler: grabbed %s for %s (score: %d)", bestResult.Title, item.Title, bestResult.TotalScore)
+	// Try each acceptable result until one succeeds
+	var grabbed bool
+	for _, result := range acceptableResults {
+		err = s.grabRelease(result, item.Type, item.TmdbID)
+		if err == nil {
+			log.Printf("Scheduler: grabbed %s for %s (score: %d)", result.Title, item.Title, result.TotalScore)
+			grabbed = true
+			break
+		}
+		log.Printf("Scheduler: grab failed for %s, trying next: %v", result.Title, err)
+	}
+
+	if !grabbed {
+		log.Printf("Scheduler: all grab attempts failed for %s", item.Title)
+	}
 }
 
 func (s *Scheduler) scoreResults(results []indexer.SearchResult, profileID int64) []indexer.ScoredSearchResult {

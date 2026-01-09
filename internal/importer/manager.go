@@ -30,7 +30,7 @@ func NewManager(db *database.Database) *Manager {
 // ProcessImport processes a completed download
 func (m *Manager) ProcessImport(download *database.Download, sourcePath string) error {
 	// Update status
-	download.Status = "importing"
+	download.State = "importing"
 	if err := m.db.UpdateDownload(download); err != nil {
 		return err
 	}
@@ -86,7 +86,7 @@ func (m *Manager) ProcessImport(download *database.Download, sourcePath string) 
 		}
 
 		// Update download status
-		download.Status = "imported"
+		download.State = "imported"
 		importedPath := destPath
 		download.ImportedPath = &importedPath
 		if err := m.db.UpdateDownload(download); err != nil {
@@ -368,7 +368,7 @@ func (m *Manager) handleUnmatched(download *database.Download, files []string) e
 	// Get a library path for unmatched files
 	libraries, err := m.db.GetLibraries()
 	if err != nil || len(libraries) == 0 {
-		download.Status = "unmatched"
+		download.State = "unmatched"
 		download.Error = stringPtr("No library configured")
 		return m.db.UpdateDownload(download)
 	}
@@ -384,7 +384,7 @@ func (m *Manager) handleUnmatched(download *database.Download, files []string) e
 		m.moveFile(f, dest)
 	}
 
-	download.Status = "unmatched"
+	download.State = "unmatched"
 	importedPath := destDir
 	download.ImportedPath = &importedPath
 	return m.db.UpdateDownload(download)
@@ -392,7 +392,7 @@ func (m *Manager) handleUnmatched(download *database.Download, files []string) e
 
 // failImport marks an import as failed
 func (m *Manager) failImport(download *database.Download, err error) error {
-	download.Status = "failed"
+	download.State = "failed"
 	errMsg := err.Error()
 	download.Error = &errMsg
 	m.db.UpdateDownload(download)
@@ -491,7 +491,7 @@ func (t *DownloadTracker) checkDownloads() {
 	}
 
 	for _, dl := range downloads {
-		if dl.Status == "completed" && dl.DownloadPath != nil {
+		if dl.State == "completed" && dl.DownloadPath != nil {
 			go t.importer.ProcessImport(&dl, *dl.DownloadPath)
 		}
 	}

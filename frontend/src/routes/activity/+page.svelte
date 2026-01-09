@@ -437,32 +437,53 @@
 					{@const dl = item.data}
 					<div class="bg-bg-card border border-border-subtle rounded-xl p-4 {['failed', 'import_blocked'].includes(dl.state) ? 'border-l-2 border-l-red-500' : ''}">
 						<div class="flex items-start gap-3">
-							<div class="w-8 h-8 rounded-lg {getStateBg(dl.state)} flex items-center justify-center flex-shrink-0 mt-0.5">
-								{#if dl.state === 'downloading'}
-									<svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-								{:else if dl.state === 'importing' || dl.state === 'import_pending'}
-									<div class="spinner-sm text-yellow-400"></div>
-								{:else if dl.state === 'imported'}
-									<svg class="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>
-								{:else if dl.state === 'failed' || dl.state === 'import_blocked'}
-									<svg class="w-4 h-4 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
-								{:else}
-									<svg class="w-4 h-4 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-								{/if}
-							</div>
+							{#if dl.posterPath}
+								<div class="w-12 h-18 flex-shrink-0 rounded-lg overflow-hidden bg-bg-elevated relative">
+									<img
+										src={getTmdbImageUrl(dl.posterPath, 'w92')}
+										alt={dl.title}
+										class="w-full h-full object-cover"
+									/>
+									<div class="absolute inset-0 flex items-center justify-center bg-black/50">
+										{#if dl.state === 'downloading'}
+											<svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+										{:else if dl.state === 'importing' || dl.state === 'import_pending'}
+											<div class="spinner-sm text-yellow-400"></div>
+										{:else if dl.state === 'imported'}
+											<svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>
+										{:else if dl.state === 'failed' || dl.state === 'import_blocked'}
+											<svg class="w-5 h-5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+										{/if}
+									</div>
+								</div>
+							{:else}
+								<div class="w-8 h-8 rounded-lg {getStateBg(dl.state)} flex items-center justify-center flex-shrink-0 mt-0.5">
+									{#if dl.state === 'downloading'}
+										<svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+									{:else if dl.state === 'importing' || dl.state === 'import_pending'}
+										<div class="spinner-sm text-yellow-400"></div>
+									{:else if dl.state === 'imported'}
+										<svg class="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>
+									{:else if dl.state === 'failed' || dl.state === 'import_blocked'}
+										<svg class="w-4 h-4 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+									{:else}
+										<svg class="w-4 h-4 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+									{/if}
+								</div>
+							{/if}
 							<div class="flex-1 min-w-0">
 								<div class="flex items-start justify-between gap-2">
 									<div class="min-w-0">
 										<h3 class="font-medium text-text-primary truncate">{dl.title}</h3>
 										<div class="flex items-center gap-2 mt-1 text-xs text-text-muted">
-											<span class="{getStateColor(dl.state)} capitalize">{dl.state.replace('_', ' ')}</span>
+											<span class="{getStateColor(dl.state)} capitalize">{(dl.state || 'unknown').replace('_', ' ')}</span>
 											{#if dl.size > 0}<span>·</span><span>{formatBytes(dl.size)}</span>{/if}
 											<span>·</span><span>{formatRelativeTime(dl.updatedAt)}</span>
 										</div>
 									</div>
 									{#if ['queued', 'downloading', 'paused', 'stalled'].includes(dl.state)}
 										<button class="px-2 py-1 text-xs rounded-lg bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors disabled:opacity-50" onclick={() => cancelDownload(dl.id)} disabled={processingIds.has(`dl-${dl.id}`)}>{processingIds.has(`dl-${dl.id}`) ? '...' : 'Cancel'}</button>
-									{:else if ['failed', 'import_blocked', 'imported'].includes(dl.state)}
+									{:else if ['failed', 'import_blocked', 'imported', 'unknown'].includes(dl.state || 'unknown')}
 										<button class="px-2 py-1 text-xs rounded-lg bg-white/5 text-text-secondary hover:text-text-primary hover:bg-white/10 transition-colors disabled:opacity-50" onclick={() => cancelDownload(dl.id)} disabled={processingIds.has(`dl-${dl.id}`)}>{processingIds.has(`dl-${dl.id}`) ? '...' : 'Remove'}</button>
 									{/if}
 								</div>

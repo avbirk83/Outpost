@@ -53,6 +53,8 @@ type Scheduler interface {
 	TriggerTask(taskID int64) error
 	UpdateTask(taskID int64, enabled bool, intervalMinutes int) error
 	SearchWantedItem(tmdbID int64, mediaType string) error
+	GetActiveSearch() string
+	GetRunningTaskNames() []string
 }
 
 // AcquisitionService interface for download tracking
@@ -5997,6 +5999,20 @@ func (s *Server) handleDownloadItems(w http.ResponseWriter, r *http.Request) {
 		downloads = []database.Download{}
 	}
 
+	// Enrich downloads with poster info from wanted items
+	for i := range downloads {
+		if downloads[i].MediaID != nil && downloads[i].MediaType != nil {
+			wanted, _ := s.db.GetWantedByTmdb(*downloads[i].MediaType, *downloads[i].MediaID)
+			if wanted != nil {
+				downloads[i].TmdbID = wanted.TmdbID
+				if wanted.PosterPath != nil {
+					downloads[i].PosterPath = *wanted.PosterPath
+				}
+				downloads[i].Year = wanted.Year
+			}
+		}
+	}
+
 	json.NewEncoder(w).Encode(downloads)
 }
 
@@ -6749,12 +6765,12 @@ func (s *Server) handleSystemStatus(w http.ResponseWriter, r *http.Request) {
 	downloads, _ := s.db.GetDownloads()
 	activeDownloads := 0
 	for _, d := range downloads {
-		if d.Status == "downloading" || d.Status == "pending" {
+		if d.State == "downloading" || d.State == "pending" {
 			activeDownloads++
 		}
 	}
 
-	// Get running tasks
+	// Get running tasks (includes dynamic names like "Searching: Movie Title")
 	tasks := s.scheduler.GetStatus()
 	runningTasks := []string{}
 	for _, t := range tasks {
@@ -6762,6 +6778,24 @@ func (s *Server) handleSystemStatus(w http.ResponseWriter, r *http.Request) {
 			runningTasks = append(runningTasks, t.Name)
 		}
 	}
+	// Add dynamic task names (e.g., "Searching: Movie Title")
+	dynamicTasks := s.scheduler.GetRunningTaskNames()
+	for _, name := range dynamicTasks {
+		// Avoid duplicates from scheduled tasks
+		found := false
+		for _, existing := range runningTasks {
+			if existing == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			runningTasks = append(runningTasks, name)
+		}
+	}
+
+	// Get active search title
+	activeSearch := s.scheduler.GetActiveSearch()
 
 	// Get disk usage
 	var diskUsed, diskTotal int64
@@ -6778,12 +6812,14 @@ func (s *Server) handleSystemStatus(w http.ResponseWriter, r *http.Request) {
 		PendingRequests int      `json:"pendingRequests"`
 		ActiveDownloads int      `json:"activeDownloads"`
 		RunningTasks    []string `json:"runningTasks"`
+		ActiveSearch    string   `json:"activeSearch"`
 		DiskUsed        int64    `json:"diskUsed"`
 		DiskTotal       int64    `json:"diskTotal"`
 	}{
 		PendingRequests: pendingRequests,
 		ActiveDownloads: activeDownloads,
 		RunningTasks:    runningTasks,
+		ActiveSearch:    activeSearch,
 		DiskUsed:        diskUsed,
 		DiskTotal:       diskTotal,
 	}
