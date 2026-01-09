@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { getTmdbImageUrl, getImageUrl } from '$lib/api';
 	import { formatRuntime, getYear, formatMoneyFull, getLanguageName, getCountryName, getCountryFlag, getStatusColor } from '$lib/utils';
 	import PersonModal from './PersonModal.svelte';
@@ -235,7 +236,7 @@
 	});
 
 	// Determine recommendation link path
-	const recLinkPrefix = $derived(source === 'library' ? '/discover' : '/discover');
+	const recLinkPrefix = $derived(source === 'library' ? '/explore' : '/explore');
 	const recMediaPath = $derived(mediaType === 'movie' ? 'movie' : 'show');
 </script>
 
@@ -293,7 +294,7 @@
 						{/if}
 					</div>
 					<!-- Action Buttons Row -->
-					<div class="p-3 flex justify-center gap-2 border-t border-border-subtle">
+					<div class="p-3 flex flex-wrap justify-center gap-2 border-t border-border-subtle">
 						{#if actionButtons}
 							{@render actionButtons()}
 						{/if}
@@ -332,9 +333,9 @@
 				{#if genres.length > 0}
 					<div class="flex flex-wrap gap-2 mb-4">
 						{#each genres as genre}
-							<a href="/discover?tab={mediaType === 'movie' ? 'movies' : 'shows'}&genre={encodeURIComponent(genre)}" class="px-3 py-1.5 text-xs font-medium rounded-full bg-glass border border-border-subtle text-text-primary hover:bg-glass-hover transition-all">
+							<button onclick={() => goto(`/explore?tab=${mediaType === 'movie' ? 'movies' : 'shows'}&genre=${encodeURIComponent(genre)}`)} class="px-3 py-1.5 text-xs font-medium rounded-full bg-glass border border-border-subtle text-text-primary hover:bg-glass-hover transition-all">
 								{genre}
-							</a>
+							</button>
 						{/each}
 					</div>
 				{/if}

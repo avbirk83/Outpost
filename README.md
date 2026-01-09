@@ -10,7 +10,6 @@
   <a href="#features">Features</a> •
   <a href="#installation">Installation</a> •
   <a href="#configuration">Configuration</a> •
-  <a href="#automation">Automation</a> •
   <a href="#tech-stack">Tech Stack</a>
 </p>
 
@@ -24,9 +23,9 @@
 - **Watch Status Tracking** — Track what you've watched across movies and TV shows
 - **Quality Detection** — Automatic parsing of resolution, source, HDR, audio format, and more
 
-### Discovery & Requests
-- **Discover** — Browse trending, popular, and top-rated content from TMDB
-- **Request System** — Users can request content with admin approval workflow
+### Explore & Requests
+- **Explore** — Browse trending, popular, and top-rated content from TMDB with detailed views
+- **Request System** — Users can request content with admin approval workflow and season selection for TV
 - **Watchlist** — Save content to watch later, even before it's in your library
 
 ### Quality Management
@@ -34,6 +33,7 @@
 - **Custom Formats** — Create custom scoring rules based on resolution, source, codec, audio, HDR, release groups
 - **Auto-Upgrade** — Automatically upgrade to better quality when available
 - **Cutoff System** — Stop upgrading after reaching target quality
+- **Per-Item Monitoring** — Toggle monitoring for individual movies or TV seasons
 
 ### Automation
 - **Prowlarr Integration** — Sync indexers directly from Prowlarr with auto-sync support

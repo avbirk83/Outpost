@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import {
 		getTrendingMovies,
@@ -253,7 +254,7 @@
 		if (item.inLibrary) {
 			return item.type === 'movie' ? `/movies/${item.libraryId}` : `/tv/${item.libraryId}`;
 		}
-		return item.type === 'movie' ? `/discover/movie/${item.id}` : `/discover/show/${item.id}`;
+		return item.type === 'movie' ? `/explore/movie/${item.id}` : `/explore/show/${item.id}`;
 	}
 </script>
 
@@ -317,26 +318,26 @@
 						<!-- Circular action buttons -->
 						<div class="flex items-center gap-2">
 							<!-- Details -->
-							<a
-								href={activeTab === 'movies' ? `/discover/movie/${currentHero.id}` : `/discover/show/${currentHero.id}`}
+							<button
+								onclick={() => goto(activeTab === 'movies' ? `/explore/movie/${currentHero.id}` : `/explore/show/${currentHero.id}`)}
 								class="btn-icon-glass-lg"
 								title="View Details"
 							>
 								<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
 								</svg>
-							</a>
+							</button>
 							<!-- Request -->
 							{#if currentHero.inLibrary}
-								<a
-									href={activeTab === 'movies' ? `/movies/${currentHero.libraryId}` : `/tv/${currentHero.libraryId}`}
+								<button
+									onclick={() => goto(activeTab === 'movies' ? `/movies/${currentHero.libraryId}` : `/tv/${currentHero.libraryId}`)}
 									class="btn-hero-library"
 									title="In Library"
 								>
 									<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
 									</svg>
-								</a>
+								</button>
 							{:else if currentHero.requested || currentHero.requestStatus}
 								<button class="btn-hero-pending" title="Request Pending" disabled>
 									<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

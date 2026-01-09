@@ -6,10 +6,11 @@
 		getShow, refreshShowMetadata, getImageUrl,
 		getQualityProfiles, getWatchStatus, markAsWatched, markAsUnwatched,
 		getShowSuggestions, addToWatchlist, removeFromWatchlist, isInWatchlist,
-		deleteEpisode,
-		type ShowDetail, type QualityProfile, type TMDBShowResult
+		deleteEpisode, getShowQuality, setShowQuality,
+		type ShowDetail, type QualityProfile, type TMDBShowResult, type QualityInfo
 	} from '$lib/api';
 	import { auth } from '$lib/stores/auth';
+	import { toast } from '$lib/stores/toast';
 	import { getOfficialTrailer, parseGenres, parseCast, parseCrew } from '$lib/utils';
 	import TrailerModal from '$lib/components/TrailerModal.svelte';
 	import IconButton from '$lib/components/IconButton.svelte';
@@ -29,6 +30,11 @@
 	let showTrailerModal = $state(false);
 	let selectedSeasonIndex = $state(0);
 	let recommendations: TMDBShowResult[] = $state([]);
+	let qualityInfo: QualityInfo | null = $state(null);
+	let monitored = $state(true);
+	let monitoringLoading = $state(false);
+	let monitoredSeasons = $state<Set<number>>(new Set());
+	let togglingSeasonMonitor: number | null = $state(null);
 
 	auth.subscribe((value) => {
 		user = value;
@@ -45,6 +51,24 @@
 			if (show?.tmdbId) {
 				inWatchlist = await isInWatchlist(show.tmdbId, 'tv').catch(() => false);
 			}
+			// Load quality/monitoring info
+			try {
+				qualityInfo = await getShowQuality(id);
+				if (qualityInfo?.override) {
+					monitored = qualityInfo.override.monitored;
+					// Parse monitored seasons
+					if (qualityInfo.override.monitoredSeasons) {
+						try {
+							const seasons = JSON.parse(qualityInfo.override.monitoredSeasons);
+							monitoredSeasons = new Set(seasons);
+						} catch { /* Invalid JSON, treat as all monitored */ }
+					}
+				}
+				// If no monitored seasons set, default to all seasons
+				if (monitoredSeasons.size === 0 && show?.seasons) {
+					monitoredSeasons = new Set(show.seasons.map(s => s.seasonNumber));
+				}
+			} catch { /* Quality info is optional */ }
 			// Load suggestions
 			if (show) {
 				try {
@@ -155,6 +179,48 @@
 			console.error('Failed to update watchlist:', e);
 		} finally {
 			watchlistLoading = false;
+		}
+	}
+
+	async function handleToggleMonitoring() {
+		if (!show) return;
+		monitoringLoading = true;
+		try {
+			const newMonitored = !monitored;
+			await setShowQuality(show.id, {
+				monitored: newMonitored,
+				monitoredSeasons: JSON.stringify(Array.from(monitoredSeasons))
+			});
+			monitored = newMonitored;
+			toast.success(newMonitored ? 'Monitoring enabled' : 'Monitoring disabled');
+		} catch (e) {
+			console.error('Failed to update monitoring:', e);
+			toast.error('Failed to update monitoring');
+		} finally {
+			monitoringLoading = false;
+		}
+	}
+
+	async function handleToggleSeasonMonitoring(seasonNumber: number) {
+		if (!show) return;
+		togglingSeasonMonitor = seasonNumber;
+		try {
+			const newMonitoredSeasons = new Set(monitoredSeasons);
+			if (newMonitoredSeasons.has(seasonNumber)) {
+				newMonitoredSeasons.delete(seasonNumber);
+			} else {
+				newMonitoredSeasons.add(seasonNumber);
+			}
+			await setShowQuality(show.id, {
+				monitored: monitored,
+				monitoredSeasons: JSON.stringify(Array.from(newMonitoredSeasons))
+			});
+			monitoredSeasons = newMonitoredSeasons;
+		} catch (e) {
+			console.error('Failed to update season monitoring:', e);
+			toast.error('Failed to update season monitoring');
+		} finally {
+			togglingSeasonMonitor = null;
 		}
 	}
 
@@ -307,6 +373,7 @@
 		trailersJson={show.trailers}
 	>
 		{#snippet actionButtons()}
+			<!-- Watchlist -->
 			<IconButton
 				onclick={handleToggleWatchlist}
 				disabled={watchlistLoading}
@@ -416,17 +483,40 @@
 				<h2 class="text-lg font-semibold text-text-primary mb-4">Episodes</h2>
 
 				<!-- Season Pills -->
-				{#if show.seasons && show.seasons.length > 1}
+				{#if show.seasons && show.seasons.length > 0}
 					<div class="flex gap-2 mb-4 overflow-x-auto pb-2 scrollbar-thin">
 						{#each show.seasons as season, i}
-							<button
-								onclick={() => selectedSeasonIndex = i}
-								class="flex-shrink-0 px-4 py-2 rounded-full text-sm font-medium transition-all {selectedSeasonIndex === i
-									? 'bg-[#f5f5dc] text-black'
-									: 'bg-glass border border-border-subtle text-text-secondary hover:bg-glass-hover hover:text-text-primary'}"
-							>
-								Season {season.seasonNumber}
-							</button>
+							<div class="flex-shrink-0 flex items-center gap-1">
+								<button
+									onclick={() => selectedSeasonIndex = i}
+									class="px-4 py-2 rounded-l-full text-sm font-medium transition-all {selectedSeasonIndex === i
+										? 'bg-[#f5f5dc] text-black'
+										: 'bg-glass border border-border-subtle border-r-0 text-text-secondary hover:bg-glass-hover hover:text-text-primary'}"
+								>
+									Season {season.seasonNumber}
+								</button>
+								<button
+									onclick={() => handleToggleSeasonMonitoring(season.seasonNumber)}
+									disabled={togglingSeasonMonitor === season.seasonNumber}
+									class="px-2 py-2 rounded-r-full text-sm transition-all {selectedSeasonIndex === i
+										? 'bg-[#f5f5dc] text-black'
+										: 'bg-glass border border-border-subtle border-l-0 text-text-secondary hover:bg-glass-hover'} {monitoredSeasons.has(season.seasonNumber) ? '' : 'opacity-50'}"
+									title={monitoredSeasons.has(season.seasonNumber) ? 'Monitored (click to disable)' : 'Not monitored (click to enable)'}
+								>
+									{#if togglingSeasonMonitor === season.seasonNumber}
+										<div class="spinner-sm"></div>
+									{:else if monitoredSeasons.has(season.seasonNumber)}
+										<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+										</svg>
+									{:else}
+										<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+										</svg>
+									{/if}
+								</button>
+							</div>
 						{/each}
 					</div>
 				{/if}

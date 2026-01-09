@@ -254,6 +254,7 @@ func (s *Server) setupRoutes() {
 
 	// Request routes
 	s.mux.HandleFunc("/api/requests", s.requireAuth(s.handleRequests))
+	s.mux.HandleFunc("/api/requests/clear-denied", s.requireAdmin(s.handleClearDeniedRequests))
 	s.mux.HandleFunc("/api/requests/", s.requireAuth(s.handleRequest))
 
 	// Watchlist routes
@@ -886,6 +887,23 @@ func (s *Server) handleMovie(w http.ResponseWriter, r *http.Request) {
 			movie, _ = s.db.GetMovie(id)
 		}
 		json.NewEncoder(w).Encode(movie)
+		return
+	}
+
+	// Handle DELETE
+	if r.Method == http.MethodDelete {
+		// Delete the file if it exists
+		if movie.Path != "" {
+			if err := os.Remove(movie.Path); err != nil && !os.IsNotExist(err) {
+				log.Printf("Failed to delete movie file: %v", err)
+			}
+		}
+		// Delete from database
+		if err := s.db.DeleteMovie(id); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 
@@ -4880,6 +4898,22 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) handleClearDeniedRequests(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	count, err := s.db.DeleteDeniedRequests()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]int64{"deleted": count})
+}
+
 // Watchlist handlers
 
 func (s *Server) handleWatchlist(w http.ResponseWriter, r *http.Request) {
@@ -6761,8 +6795,8 @@ func (s *Server) handleSystemStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get pending requests count
-	requests, _ := s.db.GetRequestsByStatus("pending")
+	// Get pending requests count (status is "requested" not "pending")
+	requests, _ := s.db.GetRequestsByStatus("requested")
 	pendingRequests := len(requests)
 
 	// Get active downloads

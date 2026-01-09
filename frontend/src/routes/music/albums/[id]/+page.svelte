@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/stores';
+	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { getAlbum, type AlbumDetail, type Track } from '$lib/api';
 
@@ -92,9 +93,9 @@
 			<div>
 				<h1 class="text-3xl font-bold">{album.title}</h1>
 				{#if album.artist}
-					<a href="/music/artists/{album.artist.id}" class="text-blue-400 hover:underline text-lg">
+					<button onclick={() => goto(`/music/artists/${album.artist.id}`)} class="text-blue-400 hover:underline text-lg">
 						{album.artist.name}
-					</a>
+					</button>
 				{/if}
 				{#if album.year}
 					<p class="text-gray-400 mt-1">{album.year}</p>

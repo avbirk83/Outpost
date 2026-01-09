@@ -19,6 +19,7 @@ export {
 	getMovie,
 	refreshMovieMetadata,
 	matchMovie,
+	deleteMovie,
 	// Shows
 	getShows,
 	getShow,
@@ -33,7 +34,13 @@ export {
 	getTrack,
 	// Books
 	getBooks,
-	getBook
+	getBook,
+	// Quality Override
+	getMovieQuality,
+	setMovieQuality,
+	deleteMovieQuality,
+	getShowQuality,
+	setShowQuality
 } from './media';
 export type {
 	Movie,
@@ -46,7 +53,10 @@ export type {
 	Track,
 	ArtistDetail,
 	AlbumDetail,
-	Book
+	Book,
+	MediaQualityStatus,
+	MediaQualityOverride,
+	QualityInfo
 } from './media';
 
 // Streaming
@@ -253,6 +263,7 @@ export type {
 	CastMember,
 	CrewMember,
 	RecommendedItem,
+	SeasonSummary,
 	DiscoverMovieDetail,
 	DiscoverShowDetail,
 	DiscoverMovieDetailWithStatus,

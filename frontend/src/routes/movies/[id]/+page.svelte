@@ -3,12 +3,14 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import {
-		getMovie, refreshMovieMetadata, getImageUrl,
+		getMovie, refreshMovieMetadata, deleteMovie, getImageUrl,
 		getQualityProfiles, getWatchStatus, markAsWatched, markAsUnwatched,
 		getMediaInfo, getMovieSuggestions, addToWatchlist, removeFromWatchlist, isInWatchlist,
-		type Movie, type QualityProfile, type MediaInfo, type TMDBMovieResult
+		getMovieQuality, setMovieQuality,
+		type Movie, type QualityProfile, type MediaInfo, type TMDBMovieResult, type QualityInfo
 	} from '$lib/api';
 	import { auth } from '$lib/stores/auth';
+	import { toast } from '$lib/stores/toast';
 	import {
 		formatRuntime, getOfficialTrailer, parseGenres, parseCast, parseCrew,
 		formatResolution, formatAudioChannels, getLanguageName
@@ -32,9 +34,14 @@
 	let showManageMenu = $state(false);
 	let inWatchlist = $state(false);
 	let watchlistLoading = $state(false);
+	let confirmingDelete = $state(false);
+	let deleting = $state(false);
 	let showTrailerModal = $state(false);
 	let selectedVideo = $state(0);
 	let recommendations: TMDBMovieResult[] = $state([]);
+	let qualityInfo: QualityInfo | null = $state(null);
+	let monitored = $state(true);
+	let monitoringLoading = $state(false);
 
 	auth.subscribe((value) => {
 		user = value;
@@ -56,6 +63,13 @@
 			if (movie?.tmdbId) {
 				inWatchlist = await isInWatchlist(movie.tmdbId, 'movie').catch(() => false);
 			}
+			// Load quality/monitoring info
+			try {
+				qualityInfo = await getMovieQuality(id);
+				if (qualityInfo?.override) {
+					monitored = qualityInfo.override.monitored;
+				}
+			} catch { /* Quality info is optional */ }
 			// Load suggestions based on genres, excluding library items
 			if (movie) {
 				try {
@@ -80,6 +94,25 @@
 			error = e instanceof Error ? e.message : 'Failed to refresh';
 		} finally {
 			refreshing = false;
+		}
+	}
+
+	function handleDeleteClick() {
+		showManageMenu = false;
+		confirmingDelete = true;
+	}
+
+	async function handleConfirmDelete() {
+		if (!movie) return;
+		deleting = true;
+		try {
+			await deleteMovie(movie.id);
+			goto('/library');
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to delete';
+			confirmingDelete = false;
+		} finally {
+			deleting = false;
 		}
 	}
 
@@ -124,6 +157,22 @@
 			console.error('Failed to update watchlist:', e);
 		} finally {
 			watchlistLoading = false;
+		}
+	}
+
+	async function handleToggleMonitoring() {
+		if (!movie) return;
+		monitoringLoading = true;
+		try {
+			const newMonitored = !monitored;
+			await setMovieQuality(movie.id, { monitored: newMonitored });
+			monitored = newMonitored;
+			toast.success(newMonitored ? 'Monitoring enabled' : 'Monitoring disabled');
+		} catch (e) {
+			console.error('Failed to update monitoring:', e);
+			toast.error('Failed to update monitoring');
+		} finally {
+			monitoringLoading = false;
 		}
 	}
 
@@ -207,6 +256,7 @@
 		trailersJson={movie.trailers}
 	>
 		{#snippet actionButtons()}
+			<!-- Watchlist -->
 			<IconButton
 				onclick={handleToggleWatchlist}
 				disabled={watchlistLoading}
@@ -224,6 +274,7 @@
 				{/if}
 			</IconButton>
 
+			<!-- Mark Watched -->
 			<IconButton
 				onclick={handleToggleWatched}
 				disabled={togglingWatched}
@@ -283,7 +334,7 @@
 						<button class="w-full text-left px-4 py-2.5 text-sm text-text-secondary hover:bg-white/10 hover:text-text-primary transition-colors" onclick={() => showManageMenu = false}>Edit Metadata</button>
 						<button class="w-full text-left px-4 py-2.5 text-sm text-text-secondary hover:bg-white/10 hover:text-text-primary transition-colors" onclick={() => showManageMenu = false}>Fix Match</button>
 						<div class="border-t border-border-subtle my-1"></div>
-						<button class="w-full text-left px-4 py-2.5 text-sm text-red-400 hover:bg-white/10 hover:text-red-300 transition-colors" onclick={() => showManageMenu = false}>Delete</button>
+						<button class="w-full text-left px-4 py-2.5 text-sm text-red-400 hover:bg-white/10 hover:text-red-300 transition-colors" onclick={handleDeleteClick}>Delete</button>
 					</div>
 				{/if}
 			</div>
@@ -357,9 +408,31 @@
 		{#snippet extraSections()}
 			{#if mediaInfo}
 				<section class="px-[60px]">
-					<h2 class="text-lg font-semibold text-text-primary mb-3">Files</h2>
+					<h2 class="text-lg font-semibold text-text-primary mb-4">Files</h2>
 					<div class="flex gap-4">
-						<button onclick={handlePlay} class="group relative w-72 md:w-80">
+						<div class="relative w-72 md:w-80">
+							<!-- Monitor badge -->
+							<button
+								onclick={handleToggleMonitoring}
+								disabled={monitoringLoading}
+								class="absolute top-2 right-2 z-10 px-2 py-1 rounded-lg text-xs font-medium transition-all flex items-center gap-1 {monitored ? 'bg-black/70 text-white' : 'bg-black/50 text-white/50'} hover:bg-black/80"
+								title={monitored ? 'Monitored (click to disable)' : 'Not monitored (click to enable)'}
+							>
+								{#if monitoringLoading}
+									<div class="spinner-sm"></div>
+								{:else if monitored}
+									<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+									</svg>
+								{:else}
+									<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+									</svg>
+								{/if}
+								<span>{monitored ? 'Monitored' : 'Not Monitored'}</span>
+							</button>
+							<button onclick={handlePlay} class="group w-full">
 							<div class="relative aspect-video bg-bg-card overflow-hidden rounded-xl">
 								{#if movie.backdropPath}
 									<img
@@ -419,6 +492,7 @@
 								</div>
 							</div>
 						</button>
+						</div>
 					</div>
 				</section>
 			{/if}
@@ -431,4 +505,32 @@
 		trailersJson={movie?.trailers}
 		title={movie?.title}
 	/>
+
+	<!-- Delete Confirmation Modal -->
+	{#if confirmingDelete}
+		<div class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+			<div class="bg-bg-card border border-border-subtle rounded-2xl p-6 max-w-md w-full">
+				<h3 class="text-lg font-semibold text-text-primary mb-2">Delete Movie</h3>
+				<p class="text-text-secondary mb-4">
+					Are you sure you want to delete "{movie?.title}"? This will remove the file from disk and cannot be undone.
+				</p>
+				<div class="flex gap-3 justify-end">
+					<button
+						class="px-4 py-2 rounded-lg bg-white/5 text-text-secondary hover:text-text-primary hover:bg-white/10 transition-colors"
+						onclick={() => confirmingDelete = false}
+						disabled={deleting}
+					>
+						Cancel
+					</button>
+					<button
+						class="px-4 py-2 rounded-lg bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors disabled:opacity-50"
+						onclick={handleConfirmDelete}
+						disabled={deleting}
+					>
+						{deleting ? 'Deleting...' : 'Delete'}
+					</button>
+				</div>
+			</div>
+		</div>
+	{/if}
 {/if}

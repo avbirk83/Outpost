@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import TypeBadge from './TypeBadge.svelte';
 
 	interface Props {
@@ -21,7 +22,7 @@
 </script>
 
 <div class="group relative">
-	<a href={link} class="block">
+	<button onclick={() => goto(link)} class="block w-full text-left">
 		<div class="relative aspect-video bg-bg-card overflow-hidden rounded-xl">
 			<!-- Backdrop/Poster image -->
 			{#if backdropUrl}
@@ -86,7 +87,7 @@
 				{/if}
 			</div>
 		</div>
-	</a>
+	</button>
 
 	<!-- Remove button - top right, on hover -->
 	{#if onRemove}

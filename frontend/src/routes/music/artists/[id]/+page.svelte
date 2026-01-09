@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/stores';
+	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { getArtist, type ArtistDetail } from '$lib/api';
 
@@ -66,7 +67,7 @@
 			{:else}
 				<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
 					{#each artist.albums as album}
-						<a href="/music/albums/{album.id}" class="group">
+						<button onclick={() => goto(`/music/albums/${album.id}`)} class="group text-left">
 							<div class="aspect-square bg-gray-800 rounded-lg overflow-hidden">
 								{#if album.coverPath}
 									<img
@@ -86,7 +87,7 @@
 							{#if album.year}
 								<p class="text-sm text-gray-400">{album.year}</p>
 							{/if}
-						</a>
+						</button>
 					{/each}
 				</div>
 			{/if}

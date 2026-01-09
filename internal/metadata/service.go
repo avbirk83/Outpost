@@ -756,6 +756,16 @@ type DiscoverMovieDetail struct {
 	Recommendations     []RecommendedItem  `json:"recommendations,omitempty"`
 }
 
+// SeasonSummary contains summary info for a TV season
+type SeasonSummary struct {
+	SeasonNumber int    `json:"season_number"`
+	Name         string `json:"name"`
+	Overview     string `json:"overview,omitempty"`
+	PosterPath   string `json:"poster_path,omitempty"`
+	AirDate      string `json:"air_date,omitempty"`
+	EpisodeCount int    `json:"episode_count"`
+}
+
 // DiscoverShowDetail contains detailed info for a TV show from TMDB
 type DiscoverShowDetail struct {
 	ID                  int64              `json:"id"`
@@ -771,6 +781,7 @@ type DiscoverShowDetail struct {
 	Networks            []string           `json:"networks"`
 	Seasons             int                `json:"seasons"`
 	Episodes            int                `json:"episodes"`
+	SeasonDetails       []SeasonSummary    `json:"seasonDetails,omitempty"`
 	Cast                []CastMember       `json:"cast"`
 	Crew                []CrewMember       `json:"crew"`
 	IMDbID              string             `json:"imdbId,omitempty"`
@@ -993,10 +1004,19 @@ func (s *Service) GetShowDetail(tmdbID int64) (*DiscoverShowDetail, error) {
 		})
 	}
 
-	// Count total episodes
+	// Count total episodes and build season details
 	totalEpisodes := 0
+	seasonDetails := make([]SeasonSummary, 0)
 	for _, s := range details.Seasons {
 		totalEpisodes += s.EpisodeCount
+		seasonDetails = append(seasonDetails, SeasonSummary{
+			SeasonNumber: s.SeasonNumber,
+			Name:         s.Name,
+			Overview:     s.Overview,
+			PosterPath:   s.PosterPath,
+			AirDate:      s.AirDate,
+			EpisodeCount: s.EpisodeCount,
+		})
 	}
 
 	return &DiscoverShowDetail{
@@ -1013,6 +1033,7 @@ func (s *Service) GetShowDetail(tmdbID int64) (*DiscoverShowDetail, error) {
 		Networks:            networks,
 		Seasons:             len(details.Seasons),
 		Episodes:            totalEpisodes,
+		SeasonDetails:       seasonDetails,
 		Cast:                cast,
 		Crew:                crew,
 		IMDbID:              details.ExternalIDs.ImdbID,

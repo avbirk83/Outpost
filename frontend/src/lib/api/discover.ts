@@ -100,6 +100,15 @@ export interface RecommendedItem {
 	contentRating?: string;
 }
 
+export interface SeasonSummary {
+	season_number: number;
+	name: string;
+	overview?: string;
+	poster_path?: string;
+	air_date?: string;
+	episode_count: number;
+}
+
 export interface DiscoverMovieDetail {
 	id: number;
 	title: string;
@@ -147,6 +156,7 @@ export interface DiscoverShowDetail {
 	productionCountries?: string[];
 	trailerKey?: string;
 	recommendations?: RecommendedItem[];
+	seasonDetails?: SeasonSummary[];
 }
 
 export interface DiscoverMovieDetailWithStatus extends DiscoverMovieDetail {

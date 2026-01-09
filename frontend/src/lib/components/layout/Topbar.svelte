@@ -17,10 +17,12 @@
 	// System status
 	let systemStatus: SystemStatus | null = $state(null);
 	let statusInterval: ReturnType<typeof setInterval> | null = null;
+	let prevPendingRequests = $state(-1); // -1 indicates initial load not done yet
+	let hasNewRequest = $state(false);
 
 	onMount(() => {
 		loadSystemStatus();
-		statusInterval = setInterval(loadSystemStatus, 10000);
+		statusInterval = setInterval(loadSystemStatus, 5000); // Check more frequently
 	});
 
 	onDestroy(() => {
@@ -29,10 +31,21 @@
 
 	async function loadSystemStatus() {
 		try {
-			systemStatus = await getSystemStatus();
+			const newStatus = await getSystemStatus();
+			// Check if pending requests increased (skip first load when prevPendingRequests is -1)
+			if (prevPendingRequests >= 0 && newStatus.pendingRequests > prevPendingRequests) {
+				hasNewRequest = true;
+			}
+			prevPendingRequests = newStatus.pendingRequests;
+			systemStatus = newStatus;
 		} catch (e) {
 			// Silently fail
 		}
+	}
+
+	function handleActivityClick() {
+		hasNewRequest = false;
+		goto('/activity');
 	}
 
 	// Search state
@@ -60,7 +73,7 @@
 	const navItems = [
 		{ href: '/', label: 'Home', match: (path: string) => path === '/' },
 		{ href: '/library', label: 'Library', match: (path: string) => path.startsWith('/library') || path.startsWith('/movies') || path.startsWith('/tv') || path.startsWith('/music') || path.startsWith('/books') },
-		{ href: '/discover', label: 'Explore', match: (path: string) => path.startsWith('/discover') },
+		{ href: '/explore', label: 'Explore', match: (path: string) => path.startsWith('/explore') },
 	];
 
 	// Close dropdowns on navigation
@@ -306,8 +319,8 @@
 			else if (item.type === 'artist') path = `/music/artists/${item.id}`;
 			else if (item.type === 'book') path = `/books/${item.id}`;
 		} else {
-			if (item.type === 'movie') path = `/discover/movie/${item.id}`;
-			else if (item.type === 'show') path = `/discover/show/${item.id}`;
+			if (item.type === 'movie') path = `/explore/movie/${item.id}`;
+			else if (item.type === 'show') path = `/explore/show/${item.id}`;
 		}
 		if (path) goto(path);
 	}
@@ -358,22 +371,22 @@
 	<!-- Left: Logo + Nav -->
 	<div class="flex items-center gap-8">
 		<!-- Logo Banner -->
-		<a href="/" class="flex items-center mr-4">
+		<button onclick={() => goto('/')} class="flex items-center mr-4">
 			<img src="/outpost-banner.png" alt="Outpost" class="h-10 w-auto object-contain" />
-		</a>
+		</button>
 
 		<!-- Navigation Tabs -->
 		<nav class="flex items-center gap-1">
 			{#each navItems as item}
-				<a
-					href={item.href}
+				<button
+					onclick={() => goto(item.href)}
 					class="px-5 py-2 text-sm font-medium rounded-full transition-all flex items-center
 						{isActive(item)
 							? 'text-black bg-amber-400'
 							: 'text-text-secondary hover:text-cream hover:bg-cream/10'}"
 				>
 					{item.label}
-				</a>
+				</button>
 			{/each}
 		</nav>
 	</div>
@@ -562,25 +575,25 @@
 		{/if}
 
 		<!-- Activity (combined: queue, wanted, requests) -->
-		<a
-			href="/activity"
-			class="btn-icon-circle relative"
+		<button
+			onclick={handleActivityClick}
+			class="btn-icon-circle relative {hasNewRequest ? 'ring-2 ring-amber-400 ring-offset-2 ring-offset-[#0a0a0a]' : ''}"
 			title="Activity"
 		>
 			<svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
 			</svg>
 			{#if (systemStatus?.activeDownloads || 0) + (systemStatus?.pendingRequests || 0) > 0}
-				<span class="absolute -top-1 -right-1 min-w-[18px] h-[18px] rounded-full bg-amber-500 text-white text-[10px] font-bold flex items-center justify-center px-1">
+				<span class="absolute -top-1 -right-1 min-w-[18px] h-[18px] rounded-full bg-amber-500 text-white text-[10px] font-bold flex items-center justify-center px-1 {hasNewRequest ? 'animate-pulse' : ''}">
 					{(systemStatus?.activeDownloads || 0) + (systemStatus?.pendingRequests || 0)}
 				</span>
 			{/if}
-		</a>
+		</button>
 
 		<!-- Settings (admin only) -->
 		{#if isAdmin}
-			<a
-				href="/settings"
+			<button
+				onclick={() => goto('/settings')}
 				class="btn-icon-circle"
 				title="Settings"
 			>
@@ -588,7 +601,7 @@
 					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
 					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
 				</svg>
-			</a>
+			</button>
 		{/if}
 
 		<!-- GitHub Sponsor -->
@@ -627,27 +640,27 @@
 						<p class="text-sm font-medium text-text-primary">{username}</p>
 						<p class="text-xs text-text-muted">{isAdmin ? 'Administrator' : 'User'}</p>
 					</div>
-					<a
-						href="/profile"
-						class="flex items-center gap-2.5 px-3 py-2 mx-1 mt-1 rounded-lg text-text-muted hover:text-cream hover:bg-cream/10 transition-all"
-						onclick={closeUserMenu}
+					<button
+						onclick={() => { closeUserMenu(); goto('/profile'); }}
+						class="w-full flex items-center gap-2.5 px-3 py-2 mx-1 mt-1 rounded-lg text-text-muted hover:text-cream hover:bg-cream/10 transition-all"
+						style="width: calc(100% - 8px);"
 					>
 						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
 						</svg>
 						<span class="text-sm">Profile</span>
-					</a>
+					</button>
 					{#if isAdmin}
-						<a
-							href="/users"
-							class="flex items-center gap-2.5 px-3 py-2 mx-1 rounded-lg text-text-muted hover:text-cream hover:bg-cream/10 transition-all"
-							onclick={closeUserMenu}
+						<button
+							onclick={() => { closeUserMenu(); goto('/users'); }}
+							class="w-full flex items-center gap-2.5 px-3 py-2 mx-1 rounded-lg text-text-muted hover:text-cream hover:bg-cream/10 transition-all"
+							style="width: calc(100% - 8px);"
 						>
 							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
 							</svg>
 							<span class="text-sm">Manage Users</span>
-						</a>
+						</button>
 					{/if}
 					<div class="my-1 mx-2 h-px bg-border-subtle"></div>
 					<button

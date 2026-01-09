@@ -338,12 +338,13 @@ type QualityPreset struct {
 }
 
 type MediaQualityOverride struct {
-	ID        int64     `json:"id"`
-	MediaID   int64     `json:"mediaId"`
-	MediaType string    `json:"mediaType"`
-	PresetID  *int64    `json:"presetId"`
-	Monitored bool      `json:"monitored"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID               int64     `json:"id"`
+	MediaID          int64     `json:"mediaId"`
+	MediaType        string    `json:"mediaType"`
+	PresetID         *int64    `json:"presetId"`
+	Monitored        bool      `json:"monitored"`
+	MonitoredSeasons string    `json:"monitoredSeasons,omitempty"` // JSON array of season numbers, empty = all
+	CreatedAt        time.Time `json:"createdAt"`
 }
 
 type MediaQualityStatus struct {
@@ -927,6 +928,7 @@ func (d *Database) migrate() error {
 		media_type TEXT NOT NULL,
 		preset_id INTEGER REFERENCES quality_presets(id),
 		monitored INTEGER DEFAULT 1,
+		monitored_seasons TEXT DEFAULT '',
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
@@ -1267,6 +1269,8 @@ func (d *Database) migrate() error {
 		"ALTER TABLE quality_presets ADD COLUMN prefer_dual_audio INTEGER DEFAULT 0",
 		"ALTER TABLE quality_presets ADD COLUMN prefer_dubbed INTEGER DEFAULT 0",
 		"ALTER TABLE quality_presets ADD COLUMN preferred_language TEXT DEFAULT 'any'",
+		// Per-season monitoring
+		"ALTER TABLE media_quality_override ADD COLUMN monitored_seasons TEXT DEFAULT ''",
 	}
 	for _, m := range migrations {
 		// Ignore errors (column may already exist)
@@ -1813,6 +1817,30 @@ func (d *Database) DeleteEpisode(id int64) error {
 	return err
 }
 
+// GetEpisodesByLibrary retrieves all episodes for a library (for cleanup)
+func (d *Database) GetEpisodesByLibrary(libraryID int64) ([]Episode, error) {
+	rows, err := d.db.Query(`
+		SELECT e.id, e.episode_number, e.path
+		FROM episodes e
+		JOIN seasons sea ON e.season_id = sea.id
+		JOIN shows s ON sea.show_id = s.id
+		WHERE s.library_id = ?`, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var episodes []Episode
+	for rows.Next() {
+		var e Episode
+		if err := rows.Scan(&e.ID, &e.EpisodeNumber, &e.Path); err != nil {
+			continue
+		}
+		episodes = append(episodes, e)
+	}
+	return episodes, nil
+}
+
 func (d *Database) UpdateEpisodeSize(id int64, size int64) error {
 	_, err := d.db.Exec("UPDATE episodes SET size = ? WHERE id = ?", size, id)
 	return err
@@ -1854,6 +1882,31 @@ func (d *Database) GetMovie(id int64) (*Movie, error) {
 		return nil, err
 	}
 	return &m, nil
+}
+
+// DeleteMovie removes a movie from the database
+func (d *Database) DeleteMovie(id int64) error {
+	_, err := d.db.Exec("DELETE FROM movies WHERE id = ?", id)
+	return err
+}
+
+// GetMoviesByLibrary retrieves all movies for a library (for cleanup)
+func (d *Database) GetMoviesByLibrary(libraryID int64) ([]Movie, error) {
+	rows, err := d.db.Query(`SELECT id, title, path FROM movies WHERE library_id = ?`, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var movies []Movie
+	for rows.Next() {
+		var m Movie
+		if err := rows.Scan(&m.ID, &m.Title, &m.Path); err != nil {
+			continue
+		}
+		movies = append(movies, m)
+	}
+	return movies, nil
 }
 
 // GetMovieByTmdb retrieves a movie by its TMDB ID
@@ -2593,6 +2646,7 @@ func (d *Database) GetRequests() ([]Request, error) {
 		       r.poster_path, r.backdrop_path, r.quality_profile_id, r.quality_preset_id, r.status, r.status_reason, r.requested_at, r.updated_at
 		FROM requests r
 		LEFT JOIN users u ON r.user_id = u.id
+		WHERE r.status != 'denied'
 		ORDER BY r.requested_at DESC`)
 	if err != nil {
 		return nil, err
@@ -2618,7 +2672,7 @@ func (d *Database) GetRequestsByUser(userID int64) ([]Request, error) {
 		       r.poster_path, r.backdrop_path, r.quality_profile_id, r.quality_preset_id, r.status, r.status_reason, r.requested_at, r.updated_at
 		FROM requests r
 		LEFT JOIN users u ON r.user_id = u.id
-		WHERE r.user_id = ?
+		WHERE r.user_id = ? AND r.status != 'denied'
 		ORDER BY r.requested_at DESC`, userID)
 	if err != nil {
 		return nil, err
@@ -2708,6 +2762,14 @@ func (d *Database) UpdateRequestStatus(id int64, status string, reason *string) 
 func (d *Database) DeleteRequest(id int64) error {
 	_, err := d.db.Exec("DELETE FROM requests WHERE id = ?", id)
 	return err
+}
+
+func (d *Database) DeleteDeniedRequests() (int64, error) {
+	result, err := d.db.Exec("DELETE FROM requests WHERE status = 'denied'")
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 // Artist operations
@@ -3295,10 +3357,10 @@ func (d *Database) GetMovieStatusByTmdbID(tmdbID int64) (*ItemStatus, error) {
 		status.LibraryID = &libraryID
 	}
 
-	// Check if requested
+	// Check if requested (exclude denied so users can re-request)
 	var requestID int64
 	var requestStatus string
-	err = d.db.QueryRow("SELECT id, status FROM requests WHERE type = 'movie' AND tmdb_id = ?", tmdbID).Scan(&requestID, &requestStatus)
+	err = d.db.QueryRow("SELECT id, status FROM requests WHERE type = 'movie' AND status != 'denied' AND tmdb_id = ?", tmdbID).Scan(&requestID, &requestStatus)
 	if err == nil {
 		status.Requested = true
 		status.RequestID = &requestID
@@ -3320,10 +3382,10 @@ func (d *Database) GetShowStatusByTmdbID(tmdbID int64) (*ItemStatus, error) {
 		status.LibraryID = &libraryID
 	}
 
-	// Check if requested
+	// Check if requested (exclude denied so users can re-request)
 	var requestID int64
 	var requestStatus string
-	err = d.db.QueryRow("SELECT id, status FROM requests WHERE type = 'tv' AND tmdb_id = ?", tmdbID).Scan(&requestID, &requestStatus)
+	err = d.db.QueryRow("SELECT id, status FROM requests WHERE type = 'tv' AND status != 'denied' AND tmdb_id = ?", tmdbID).Scan(&requestID, &requestStatus)
 	if err == nil {
 		status.Requested = true
 		status.RequestID = &requestID
@@ -3371,8 +3433,8 @@ func (d *Database) GetBulkMovieStatus(tmdbIDs []int64) (map[int64]*ItemStatus, e
 		}
 	}
 
-	// Check request status
-	rows2, err := d.db.Query("SELECT id, tmdb_id, status FROM requests WHERE type = 'movie' AND tmdb_id IN ("+placeholderStr+")", args...)
+	// Check request status (exclude denied requests so users can re-request)
+	rows2, err := d.db.Query("SELECT id, tmdb_id, status FROM requests WHERE type = 'movie' AND status != 'denied' AND tmdb_id IN ("+placeholderStr+")", args...)
 	if err != nil {
 		return nil, err
 	}
@@ -3432,8 +3494,8 @@ func (d *Database) GetBulkShowStatus(tmdbIDs []int64) (map[int64]*ItemStatus, er
 		}
 	}
 
-	// Check request status
-	rows2, err := d.db.Query("SELECT id, tmdb_id, status FROM requests WHERE type = 'tv' AND tmdb_id IN ("+placeholderStr+")", args...)
+	// Check request status (exclude denied requests so users can re-request)
+	rows2, err := d.db.Query("SELECT id, tmdb_id, status FROM requests WHERE type = 'tv' AND status != 'denied' AND tmdb_id IN ("+placeholderStr+")", args...)
 	if err != nil {
 		return nil, err
 	}
@@ -4561,11 +4623,11 @@ func (d *Database) IsIndexerExcludedForLibrary(indexerID, libraryID int64) (bool
 func (d *Database) GetMediaQualityOverride(mediaID int64, mediaType string) (*MediaQualityOverride, error) {
 	var override MediaQualityOverride
 	err := d.db.QueryRow(`
-		SELECT id, media_id, media_type, preset_id, monitored, created_at
+		SELECT id, media_id, media_type, preset_id, monitored, COALESCE(monitored_seasons, ''), created_at
 		FROM media_quality_override
 		WHERE media_id = ? AND media_type = ?`, mediaID, mediaType).Scan(
 		&override.ID, &override.MediaID, &override.MediaType,
-		&override.PresetID, &override.Monitored, &override.CreatedAt)
+		&override.PresetID, &override.Monitored, &override.MonitoredSeasons, &override.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -4577,9 +4639,9 @@ func (d *Database) GetMediaQualityOverride(mediaID int64, mediaType string) (*Me
 
 func (d *Database) SetMediaQualityOverride(override *MediaQualityOverride) error {
 	result, err := d.db.Exec(`
-		INSERT OR REPLACE INTO media_quality_override (media_id, media_type, preset_id, monitored)
-		VALUES (?, ?, ?, ?)`,
-		override.MediaID, override.MediaType, override.PresetID, override.Monitored)
+		INSERT OR REPLACE INTO media_quality_override (media_id, media_type, preset_id, monitored, monitored_seasons)
+		VALUES (?, ?, ?, ?, ?)`,
+		override.MediaID, override.MediaType, override.PresetID, override.Monitored, override.MonitoredSeasons)
 	if err != nil {
 		return err
 	}

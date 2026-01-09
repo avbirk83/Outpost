@@ -146,11 +146,11 @@
 				goto(`/tv/${item.id}`);
 			}
 		} else {
-			// Discover item - go to discover detail page
+			// Discover item - go to explore detail page
 			if (item.type === 'movie') {
-				goto(`/discover/movie/${item.id}`);
+				goto(`/explore/movie/${item.id}`);
 			} else if (item.type === 'show') {
-				goto(`/discover/show/${item.id}`);
+				goto(`/explore/show/${item.id}`);
 			}
 		}
 		onClose?.();

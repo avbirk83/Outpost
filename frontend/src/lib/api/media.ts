@@ -247,6 +247,13 @@ export async function deleteEpisode(episodeId: number): Promise<void> {
 	if (!response.ok) throw new Error(`API error: ${response.status}`);
 }
 
+export async function deleteMovie(movieId: number): Promise<void> {
+	const response = await apiFetch(`${API_BASE}/movies/${movieId}`, {
+		method: 'DELETE'
+	});
+	if (!response.ok) throw new Error(`API error: ${response.status}`);
+}
+
 // Music API functions
 
 export async function getArtists(): Promise<Artist[]> {
@@ -289,6 +296,76 @@ export async function getBooks(): Promise<Book[]> {
 
 export async function getBook(id: number): Promise<Book> {
 	const response = await apiFetch(`${API_BASE}/books/${id}`);
+	if (!response.ok) throw new Error(`API error: ${response.status}`);
+	return response.json();
+}
+
+// Quality Override types and functions
+
+export interface MediaQualityStatus {
+	id?: number;
+	mediaId: number;
+	mediaType: string;
+	currentResolution?: string;
+	currentSource?: string;
+	currentHdr?: string;
+	currentAudio?: string;
+	currentEdition?: string;
+	targetMet: boolean;
+	upgradeAvailable: boolean;
+	lastSearch?: string;
+}
+
+export interface MediaQualityOverride {
+	id?: number;
+	mediaId: number;
+	mediaType: string;
+	presetId?: number | null;
+	monitored: boolean;
+	monitoredSeasons?: string; // JSON array of season numbers, empty = all
+	createdAt?: string;
+}
+
+export interface QualityInfo {
+	status: MediaQualityStatus | null;
+	override: MediaQualityOverride | null;
+}
+
+export async function getMovieQuality(movieId: number): Promise<QualityInfo> {
+	const response = await apiFetch(`${API_BASE}/movies/quality/${movieId}`);
+	if (!response.ok) throw new Error(`API error: ${response.status}`);
+	return response.json();
+}
+
+export async function setMovieQuality(movieId: number, override: Partial<MediaQualityOverride>): Promise<MediaQualityOverride> {
+	const response = await apiFetch(`${API_BASE}/movies/quality/${movieId}`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(override)
+	});
+	if (!response.ok) throw new Error(`API error: ${response.status}`);
+	return response.json();
+}
+
+export async function deleteMovieQuality(movieId: number): Promise<void> {
+	const response = await apiFetch(`${API_BASE}/movies/quality/${movieId}`, {
+		method: 'DELETE'
+	});
+	if (!response.ok) throw new Error(`API error: ${response.status}`);
+}
+
+export async function getShowQuality(showId: number): Promise<QualityInfo> {
+	const response = await apiFetch(`${API_BASE}/shows/quality/${showId}`);
+	if (!response.ok) throw new Error(`API error: ${response.status}`);
+	return response.json();
+}
+
+export async function setShowQuality(showId: number, override: Partial<MediaQualityOverride>): Promise<MediaQualityOverride> {
+	const response = await apiFetch(`${API_BASE}/shows/quality/${showId}`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(override)
+	});
 	if (!response.ok) throw new Error(`API error: ${response.status}`);
 	return response.json();
 }

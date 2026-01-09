@@ -832,9 +832,23 @@ input, input:focus, input:active {
   border-radius: 16px;
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
   overflow: hidden;
-  max-width: 28rem;
+  max-width: 32rem;
   width: 100%;
   margin: 1rem;
+}
+
+@utility modal-container-lg {
+  background: var(--color-bg-base);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+  overflow: hidden;
+  max-width: 40rem;
+  width: 100%;
+  margin: 1rem;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
 }
 
 @utility modal-header {

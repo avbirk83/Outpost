@@ -229,9 +229,8 @@
 							</h3>
 							<div class="flex gap-3 overflow-x-auto pb-2 scrollbar-thin">
 								{#each person.credits.slice(0, 12) as credit}
-									<a
-										href="/discover/{credit.mediaType === 'movie' ? 'movie' : 'show'}/{credit.id}"
-										onclick={() => onClose()}
+									<button
+										onclick={() => { onClose(); goto(`/explore/${credit.mediaType === 'movie' ? 'movie' : 'show'}/${credit.id}`); }}
 										class="flex-shrink-0 w-24 group text-left focus:outline-none"
 									>
 										<div class="aspect-[2/3] rounded-lg overflow-hidden bg-bg-elevated group-hover:ring-2 group-focus:ring-2 ring-white/30 transition-all">
@@ -253,7 +252,7 @@
 										{#if credit.character}
 											<p class="text-[10px] text-text-muted truncate">{credit.character}</p>
 										{/if}
-									</a>
+									</button>
 								{/each}
 							</div>
 						</div>

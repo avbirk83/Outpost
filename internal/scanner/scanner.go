@@ -121,6 +121,56 @@ func (s *Scanner) FixMissingSizes() {
 	}
 }
 
+// cleanupOrphanedMovies removes movies from database whose files no longer exist
+func (s *Scanner) cleanupOrphanedMovies(libraryID int64) {
+	movies, err := s.db.GetMoviesByLibrary(libraryID)
+	if err != nil {
+		log.Printf("Failed to get movies for cleanup: %v", err)
+		return
+	}
+
+	removed := 0
+	for _, movie := range movies {
+		if movie.Path == "" {
+			continue
+		}
+		if _, err := os.Stat(movie.Path); os.IsNotExist(err) {
+			if err := s.db.DeleteMovie(movie.ID); err == nil {
+				removed++
+				log.Printf("Removed orphaned movie: %s (file no longer exists)", movie.Title)
+			}
+		}
+	}
+	if removed > 0 {
+		log.Printf("Cleaned up %d orphaned movies", removed)
+	}
+}
+
+// cleanupOrphanedEpisodes removes episodes from database whose files no longer exist
+func (s *Scanner) cleanupOrphanedEpisodes(libraryID int64) {
+	episodes, err := s.db.GetEpisodesByLibrary(libraryID)
+	if err != nil {
+		log.Printf("Failed to get episodes for cleanup: %v", err)
+		return
+	}
+
+	removed := 0
+	for _, ep := range episodes {
+		if ep.Path == "" {
+			continue
+		}
+		if _, err := os.Stat(ep.Path); os.IsNotExist(err) {
+			if err := s.db.DeleteEpisode(ep.ID); err == nil {
+				removed++
+				log.Printf("Removed orphaned episode: E%02d (file no longer exists)", ep.EpisodeNumber)
+			}
+		}
+	}
+	if removed > 0 {
+		log.Printf("Cleaned up %d orphaned episodes", removed)
+	}
+}
+
 func (s *Scanner) GetProgress() ScanProgress {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -203,6 +253,9 @@ func (s *Scanner) scanMovies(lib *database.Library) error {
 
 	var added, skipped, errors int
 
+	// Phase 0: Clean up orphaned entries (files that no longer exist)
+	s.cleanupOrphanedMovies(lib.ID)
+
 	// Phase 1: Count video files
 	s.setProgress(lib.Name, "counting", 0, 0)
 	var videoFiles []string
@@ -274,6 +327,9 @@ func (s *Scanner) scanTV(lib *database.Library) error {
 	defer s.clearProgress()
 
 	var added, skipped, errors int
+
+	// Phase 0: Clean up orphaned entries (files that no longer exist)
+	s.cleanupOrphanedEpisodes(lib.ID)
 
 	// Phase 1: Count video files
 	s.setProgress(lib.Name, "counting", 0, 0)

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import { onMount, onDestroy } from 'svelte';
 	import {
 		getTrendingMovies,
@@ -300,7 +301,7 @@
 		if (item.inLibrary && item.libraryId) {
 			return item.mediaType === 'movie' ? `/movies/${item.libraryId}` : `/tv/${item.libraryId}`;
 		}
-		return item.mediaType === 'movie' ? `/discover/movie/${item.tmdbId}` : `/discover/show/${item.tmdbId}`;
+		return item.mediaType === 'movie' ? `/explore/movie/${item.tmdbId}` : `/explore/show/${item.tmdbId}`;
 	}
 </script>
 
@@ -374,15 +375,15 @@
 							<!-- Action buttons -->
 							<div class="flex items-center gap-2">
 								<!-- Details -->
-								<a
-									href={hero.mediaType === 'movie' ? `/discover/movie/${hero.id}` : `/discover/show/${hero.id}`}
+								<button
+									onclick={() => goto(hero.mediaType === 'movie' ? `/explore/movie/${hero.id}` : `/explore/show/${hero.id}`)}
 									class="btn-icon-glass-lg"
 									title="View Details"
 								>
 									<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
 									</svg>
-								</a>
+								</button>
 
 								<!-- Request -->
 								{#if hero.requestStatus === 'approved'}
@@ -502,11 +503,11 @@
 
 			<!-- On Your Radar (Watchlist items not yet in library) -->
 			{#if wantedItems.length > 0}
-				<ScrollSection title="On Your Radar" linkText="View All" linkHref="/discover">
+				<ScrollSection title="On Your Radar" linkText="View All" linkHref="/explore">
 					{#each wantedItems as item}
-						<a
-							href="/discover/{item.mediaType === 'movie' ? 'movie' : 'show'}/{item.tmdbId}"
-							class="flex-shrink-0 flex gap-3.5 p-3.5 w-[300px] bg-glass backdrop-blur-xl border border-border-subtle rounded-xl cursor-pointer transition-all hover:bg-glass-hover hover:translate-x-1 scroll-snap-align-start"
+						<button
+							onclick={() => goto(`/explore/${item.mediaType === 'movie' ? 'movie' : 'show'}/${item.tmdbId}`)}
+							class="flex-shrink-0 flex gap-3.5 p-3.5 w-[300px] bg-glass backdrop-blur-xl border border-border-subtle rounded-xl cursor-pointer transition-all hover:bg-glass-hover hover:translate-x-1 scroll-snap-align-start text-left"
 						>
 							<div class="w-[60px] h-[90px] rounded-lg overflow-hidden flex-shrink-0 bg-gradient-to-br from-[#1a1a2e] to-[#2d2d44]">
 								{#if item.posterPath}
@@ -528,7 +529,7 @@
 									{item.mediaType === 'movie' ? 'Movie' : 'TV Show'} • {item.year || ''}
 								</div>
 							</div>
-						</a>
+						</button>
 					{/each}
 				</ScrollSection>
 			{/if}
@@ -544,7 +545,7 @@
 							imagePath={request.posterPath ? getTmdbImageUrl(request.posterPath, 'w300') : undefined}
 							isLocal={false}
 							requestStatus={request.status === 'approved' ? 'available' : request.status === 'requested' ? 'pending' : undefined}
-							href={request.type === 'movie' ? `/discover/movie/${request.tmdbId}` : `/discover/show/${request.tmdbId}`}
+							href={request.type === 'movie' ? `/explore/movie/${request.tmdbId}` : `/explore/show/${request.tmdbId}`}
 						/>
 					{/each}
 				</ScrollSection>

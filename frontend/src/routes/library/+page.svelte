@@ -702,9 +702,9 @@
 					</div>
 					<h2 class="text-xl font-semibold text-text-primary mb-2">No movies found</h2>
 					<p class="text-text-secondary mb-6">Add a library and scan it in Settings to get started.</p>
-					<a href="/settings" class="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-glass border border-border-subtle text-text-primary hover:bg-glass-hover transition-all">
+					<button onclick={() => goto('/settings')} class="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-glass border border-border-subtle text-text-primary hover:bg-glass-hover transition-all">
 						Go to Settings
-					</a>
+					</button>
 				</div>
 			{:else if movieViewMode === 'grid'}
 				{#if filteredMovies().length === 0}
@@ -911,9 +911,9 @@
 					</div>
 					<h2 class="text-xl font-semibold text-text-primary mb-2">No TV shows found</h2>
 					<p class="text-text-secondary mb-6">Add a library and scan it in Settings to get started.</p>
-					<a href="/settings" class="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-glass border border-border-subtle text-text-primary hover:bg-glass-hover transition-all">
+					<button onclick={() => goto('/settings')} class="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-glass border border-border-subtle text-text-primary hover:bg-glass-hover transition-all">
 						Go to Settings
-					</a>
+					</button>
 				</div>
 			{:else if showViewMode === 'grid'}
 				{#if filteredShows().length === 0}

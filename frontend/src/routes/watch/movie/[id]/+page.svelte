@@ -43,7 +43,7 @@
 	<div class="flex items-center justify-center h-screen bg-black">
 		<div class="text-center">
 			<p class="text-text-secondary mb-4">{error}</p>
-			<a href="/library" class="text-text-secondary hover:text-text-primary">Back to Library</a>
+			<button onclick={() => goto('/library')} class="text-text-secondary hover:text-text-primary">Back to Library</button>
 		</div>
 	</div>
 {:else if movie}

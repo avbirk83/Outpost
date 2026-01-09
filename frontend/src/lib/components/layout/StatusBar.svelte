@@ -174,67 +174,10 @@
 	{/if}
 
 	<!-- Main Status Bar -->
-	<div class="fixed bottom-0 left-0 right-0 h-8 bg-[#111111]/95 backdrop-blur-sm border-t border-white/10 flex items-center justify-between px-4 text-xs z-40">
-		<!-- Left: Activity / Search Status -->
-		<button
-			class="flex items-center gap-4 hover:bg-white/5 -ml-2 px-2 py-1 rounded transition-colors"
-			onclick={toggleExpanded}
-			aria-label="Toggle activity feed"
-		>
-			{#if search.state === 'searching'}
-				<!-- Search in progress -->
-				<div class="flex items-center gap-2 text-purple-400">
-					<div class="spinner-xs"></div>
-					<span>Searching {stats.total} indexers...</span>
-					<div class="flex items-center gap-1 text-xs">
-						{#if stats.success > 0}
-							<span class="text-green-400">{stats.success}</span>
-						{/if}
-						{#if stats.failed > 0}
-							<span class="text-red-400">{stats.failed}</span>
-						{/if}
-						{#if stats.pending > 0}
-							<span class="text-text-muted">{stats.pending}</span>
-						{/if}
-					</div>
-				</div>
-			{:else if search.state === 'scoring'}
-				<div class="flex items-center gap-2 text-amber-400">
-					<div class="spinner-xs"></div>
-					<span>Scoring {search.totalResults} results...</span>
-				</div>
-			{:else if search.totalResults > 0}
-				<div class="flex items-center gap-2 text-green-400">
-					<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-					</svg>
-					<span>Found {search.totalResults} results</span>
-				</div>
-			{:else if status.activeSearch}
-				<div class="flex items-center gap-2 text-purple-400">
-					<div class="spinner-xs"></div>
-					<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-					</svg>
-					<span>Searching: {status.activeSearch}</span>
-				</div>
-			{:else if status.runningTasks.length > 0}
-				<div class="flex items-center gap-2 text-blue-400">
-					<div class="spinner-xs"></div>
-					<span>{status.runningTasks.join(', ')}</span>
-				</div>
-			{:else}
-				<span class="text-text-muted flex items-center gap-1.5">
-					<svg class="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
-						<circle cx="12" cy="12" r="3" />
-					</svg>
-					Idle
-				</span>
-			{/if}
-		</button>
-
-		<!-- Center: Quick stats (clickable) -->
+	<div class="fixed bottom-0 left-0 right-0 h-8 bg-[#111111]/95 backdrop-blur-sm border-t border-white/10 flex items-center justify-end px-4 text-xs z-40">
+		<!-- All content on right side -->
 		<div class="flex items-center gap-4">
+			<!-- Downloads/Pending stats -->
 			{#if status.activeDownloads > 0}
 				<button
 					class="flex items-center gap-1.5 text-blue-400 hover:text-blue-300 transition-colors"
@@ -250,7 +193,7 @@
 			{#if status.pendingRequests > 0}
 				<button
 					class="flex items-center gap-1.5 text-amber-400 hover:text-amber-300 transition-colors"
-					onclick={() => goto('/requests')}
+					onclick={() => goto('/activity')}
 					aria-label="View pending requests"
 				>
 					<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -259,35 +202,100 @@
 					<span>{status.pendingRequests} pending</span>
 				</button>
 			{/if}
-		</div>
 
-		<!-- Right: Disk usage (clickable) -->
-		<button
-			class="flex items-center gap-2 hover:bg-white/5 -mr-2 px-2 py-1 rounded transition-colors {getDiskWarning() ? 'text-red-400' : ''}"
-			onclick={() => goto('/settings?tab=storage')}
-			aria-label="View storage settings"
-		>
-			{#if getDiskWarning()}
-				<svg class="w-3.5 h-3.5 text-red-400 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-				</svg>
-			{:else}
-				<svg class="w-3.5 h-3.5 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
-				</svg>
+			<!-- Separator if we have stats -->
+			{#if status.activeDownloads > 0 || status.pendingRequests > 0}
+				<div class="w-px h-4 bg-white/10"></div>
 			{/if}
-			<div class="flex items-center gap-1.5">
-				<div class="w-20 h-1.5 rounded-full bg-white/10 overflow-hidden">
-					<div
-						class="h-full rounded-full transition-all duration-300 {getDiskPercent() > 90 ? 'bg-red-500' : getDiskPercent() > 75 ? 'bg-amber-500' : 'bg-green-500'}"
-						style="width: {getDiskPercent()}%"
-					></div>
+
+			<!-- Activity / Search Status -->
+			<button
+				class="flex items-center gap-2 hover:bg-white/5 px-2 py-1 rounded transition-colors"
+				onclick={toggleExpanded}
+				aria-label="Toggle activity feed"
+			>
+				{#if search.state === 'searching'}
+					<div class="flex items-center gap-2 text-purple-400">
+						<div class="spinner-xs"></div>
+						<span>Searching {stats.total} indexers...</span>
+						<div class="flex items-center gap-1 text-xs">
+							{#if stats.success > 0}
+								<span class="text-green-400">{stats.success}</span>
+							{/if}
+							{#if stats.failed > 0}
+								<span class="text-red-400">{stats.failed}</span>
+							{/if}
+							{#if stats.pending > 0}
+								<span class="text-text-muted">{stats.pending}</span>
+							{/if}
+						</div>
+					</div>
+				{:else if search.state === 'scoring'}
+					<div class="flex items-center gap-2 text-amber-400">
+						<div class="spinner-xs"></div>
+						<span>Scoring {search.totalResults} results...</span>
+					</div>
+				{:else if search.totalResults > 0}
+					<div class="flex items-center gap-2 text-green-400">
+						<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+						</svg>
+						<span>Found {search.totalResults} results</span>
+					</div>
+				{:else if status.activeSearch}
+					<div class="flex items-center gap-2 text-purple-400">
+						<div class="spinner-xs"></div>
+						<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+						</svg>
+						<span>Searching: {status.activeSearch}</span>
+					</div>
+				{:else if status.runningTasks.length > 0}
+					<div class="flex items-center gap-2 text-blue-400">
+						<div class="spinner-xs"></div>
+						<span>{status.runningTasks.join(', ')}</span>
+					</div>
+				{:else}
+					<span class="text-text-muted flex items-center gap-1.5">
+						<svg class="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
+							<circle cx="12" cy="12" r="3" />
+						</svg>
+						Idle
+					</span>
+				{/if}
+			</button>
+
+			<!-- Separator -->
+			<div class="w-px h-4 bg-white/10"></div>
+
+			<!-- Disk usage -->
+			<button
+				class="flex items-center gap-2 hover:bg-white/5 -mr-2 px-2 py-1 rounded transition-colors {getDiskWarning() ? 'text-red-400' : ''}"
+				onclick={() => goto('/settings?tab=storage')}
+				aria-label="View storage settings"
+			>
+				{#if getDiskWarning()}
+					<svg class="w-3.5 h-3.5 text-red-400 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+					</svg>
+				{:else}
+					<svg class="w-3.5 h-3.5 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
+					</svg>
+				{/if}
+				<div class="flex items-center gap-1.5">
+					<div class="w-20 h-1.5 rounded-full bg-white/10 overflow-hidden">
+						<div
+							class="h-full rounded-full transition-all duration-300 {getDiskPercent() > 90 ? 'bg-red-500' : getDiskPercent() > 75 ? 'bg-amber-500' : 'bg-green-500'}"
+							style="width: {getDiskPercent()}%"
+						></div>
+					</div>
+					<span class="text-text-muted">
+						{formatBytes(status.diskUsed)} / {formatBytes(status.diskTotal)}
+					</span>
 				</div>
-				<span class="text-text-muted">
-					{formatBytes(status.diskUsed)} / {formatBytes(status.diskTotal)}
-				</span>
-			</div>
-		</button>
+			</button>
+		</div>
 	</div>
 {/if}
 
