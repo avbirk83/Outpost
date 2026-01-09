@@ -139,7 +139,6 @@ Supported download clients:
 |--------|------|
 | qBittorrent | Torrent |
 | Transmission | Torrent |
-| Deluge | Torrent |
 | SABnzbd | Usenet |
 | NZBGet | Usenet |
 
