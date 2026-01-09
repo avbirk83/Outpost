@@ -505,9 +505,13 @@
 					{@const w = item.data}
 					<div class="bg-bg-card border border-border-subtle rounded-xl p-4">
 						<div class="flex items-start gap-3">
-							<div class="w-8 h-8 rounded-lg bg-purple-500/20 flex items-center justify-center flex-shrink-0 mt-0.5">
-								<svg class="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-							</div>
+							{#if w.posterPath}
+								<img src={getTmdbImageUrl(w.posterPath, 'w92')} alt="" class="w-10 h-14 rounded-lg object-cover flex-shrink-0" />
+							{:else}
+								<div class="w-10 h-14 rounded-lg bg-purple-500/20 flex items-center justify-center flex-shrink-0">
+									<svg class="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+								</div>
+							{/if}
 							<div class="flex-1 min-w-0">
 								<div class="flex items-start justify-between gap-2">
 									<div class="min-w-0">
