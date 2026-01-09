@@ -5989,26 +5989,26 @@ func (s *Server) handleDownloadItems(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	downloads, err := s.db.GetDownloads()
+	downloads, err := s.acquisition.GetActiveDownloads()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	if downloads == nil {
-		downloads = []database.Download{}
+		downloads = []*download.TrackedDownload{}
 	}
 
 	// Enrich downloads with poster info from wanted items
-	for i := range downloads {
-		if downloads[i].MediaID != nil && downloads[i].MediaType != nil {
-			wanted, _ := s.db.GetWantedByTmdb(*downloads[i].MediaType, *downloads[i].MediaID)
+	for _, dl := range downloads {
+		if dl.MediaID != nil {
+			wanted, _ := s.db.GetWantedByTmdb(dl.MediaType, *dl.MediaID)
 			if wanted != nil {
-				downloads[i].TmdbID = wanted.TmdbID
+				dl.TmdbID = wanted.TmdbID
 				if wanted.PosterPath != nil {
-					downloads[i].PosterPath = *wanted.PosterPath
+					dl.PosterPath = *wanted.PosterPath
 				}
-				downloads[i].Year = wanted.Year
+				dl.Year = wanted.Year
 			}
 		}
 	}
@@ -6029,7 +6029,11 @@ func (s *Server) handleDownloadItem(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodDelete:
-		if err := s.db.DeleteDownload(id); err != nil {
+		// Parse query parameters for delete options
+		deleteFromClient := r.URL.Query().Get("deleteFromClient") != "false"
+		deleteFiles := r.URL.Query().Get("deleteFiles") == "true"
+
+		if err := s.acquisition.DeleteTrackedDownload(id, deleteFromClient, deleteFiles); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

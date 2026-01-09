@@ -47,6 +47,9 @@ type TrackedDownload struct {
 	RequestID        *int64        `json:"requestId,omitempty"`
 	MediaID          *int64        `json:"mediaId,omitempty"`
 	MediaType        string        `json:"mediaType"`
+	TmdbID           int64         `json:"tmdbId,omitempty"`
+	PosterPath       string        `json:"posterPath,omitempty"`
+	Year             int           `json:"year,omitempty"`
 
 	State          DownloadState `json:"state"`
 	PreviousState  DownloadState `json:"previousState,omitempty"`
