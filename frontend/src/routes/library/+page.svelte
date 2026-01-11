@@ -7,33 +7,34 @@
 		getShows,
 		getCollections,
 		createCollection,
-		getSmartPlaylists,
 		getImageUrl,
 		type Movie,
 		type Show,
-		type Collection,
-		type SmartPlaylist
+		type Collection
 	} from '$lib/api';
 	import MediaCard from '$lib/components/media/MediaCard.svelte';
 	import Select from '$lib/components/ui/Select.svelte';
 	import { auth } from '$lib/stores/auth';
 
 	// Tab state from URL
-	type TabType = 'movies' | 'tv' | 'collections' | 'playlists';
+	type TabType = 'movies' | 'tv' | 'collections';
 	let activeTab = $state<TabType>('movies');
 
 	// Data states
 	let movies: Movie[] = $state([]);
 	let shows: Show[] = $state([]);
 	let collections: Collection[] = $state([]);
-	let playlists: SmartPlaylist[] = $state([]);
 
 	// Loading states per tab
 	let loadingMovies = $state(false);
 	let loadingShows = $state(false);
 	let loadingCollections = $state(false);
-	let loadingPlaylists = $state(false);
 	let loadedTabs = $state<Set<TabType>>(new Set());
+
+	// Preset filter state
+	type PresetFilter = 'all' | 'unwatched' | 'inProgress' | 'topRated';
+	let moviePreset = $state<PresetFilter>('all');
+	let showPreset = $state<PresetFilter>('all');
 
 	// Get current user for admin check
 	const user = $derived($auth);
@@ -51,12 +52,14 @@
 	let autoplayTimer: ReturnType<typeof setInterval> | null = null;
 	const AUTOPLAY_INTERVAL = 15000; // 15 seconds
 
-	// Get hero items based on active tab - only movies and TV have backdrops
+	// Get hero items based on active tab
 	const heroItems = $derived(() => {
 		if (activeTab === 'movies') {
 			return movies.filter(m => m.backdropPath).slice(0, 10);
 		} else if (activeTab === 'tv') {
 			return shows.filter(s => s.backdropPath).slice(0, 10);
+		} else if (activeTab === 'collections') {
+			return collections.filter(c => c.backdropPath).slice(0, 10);
 		}
 		return [];
 	});
@@ -128,6 +131,10 @@
 	let showRatingMin = $state(0);
 	let showRatingMax = $state(10);
 	let showFiltersExpanded = $state(false);
+
+	// Collection filter state
+	let collectionSearch = $state('');
+	let collectionType = $state<'all' | 'tmdb' | 'custom'>('all');
 
 	// Content rating options
 	const movieContentRatingOptions = ['G', 'PG', 'PG-13', 'R', 'NC-17', 'NR'];
@@ -259,7 +266,7 @@
 	});
 
 	// Valid tabs for URL handling
-	const validTabs: TabType[] = ['movies', 'tv', 'collections', 'playlists'];
+	const validTabs: TabType[] = ['movies', 'tv', 'collections'];
 
 	// Reactively sync tab from URL (handles back/forward navigation)
 	$effect(() => {
@@ -317,10 +324,6 @@
 					loadingCollections = true;
 					collections = await getCollections();
 					break;
-				case 'playlists':
-					loadingPlaylists = true;
-					playlists = await getSmartPlaylists();
-					break;
 			}
 			loadedTabs.add(tab);
 		} catch (e) {
@@ -329,7 +332,6 @@
 			loadingMovies = false;
 			loadingShows = false;
 			loadingCollections = false;
-			loadingPlaylists = false;
 		}
 	}
 
@@ -391,6 +393,14 @@
 	// Filtered/sorted data
 	const filteredMovies = $derived(() => {
 		let result = [...movies];
+		// Preset filter
+		if (moviePreset === 'unwatched') {
+			result = result.filter(m => m.watchState === 'unwatched' || !m.watchState);
+		} else if (moviePreset === 'inProgress') {
+			result = result.filter(m => m.watchState === 'partial');
+		} else if (moviePreset === 'topRated') {
+			result = result.filter(m => (m.rating || 0) >= 7.5);
+		}
 		// Genre filter
 		if (movieGenreFilter !== 'all') {
 			result = result.filter(m => parseGenres(m.genres).includes(movieGenreFilter));
@@ -443,6 +453,14 @@
 
 	const filteredShows = $derived(() => {
 		let result = [...shows];
+		// Preset filter
+		if (showPreset === 'unwatched') {
+			result = result.filter(s => s.watchState === 'unwatched' || !s.watchState);
+		} else if (showPreset === 'inProgress') {
+			result = result.filter(s => s.watchState === 'partial');
+		} else if (showPreset === 'topRated') {
+			result = result.filter(s => (s.rating || 0) >= 7.5);
+		}
 		// Genre filter
 		if (showGenreFilter !== 'all') {
 			result = result.filter(s => parseGenres(s.genres).includes(showGenreFilter));
@@ -499,6 +517,30 @@
 		return result;
 	});
 
+	// Filtered collections
+	const filteredCollections = $derived(() => {
+		let result = [...collections];
+		// Type filter
+		if (collectionType === 'tmdb') {
+			result = result.filter(c => c.isAuto);
+		} else if (collectionType === 'custom') {
+			result = result.filter(c => !c.isAuto);
+		}
+		// Search filter
+		if (collectionSearch) {
+			const query = collectionSearch.toLowerCase();
+			result = result.filter(c => c.name.toLowerCase().includes(query));
+		}
+		// Sort by name
+		result.sort((a, b) => a.name.localeCompare(b.name));
+		return result;
+	});
+
+	// Collection hero items
+	const collectionHeroItems = $derived(() => {
+		return collections.filter(c => c.backdropPath).slice(0, 10);
+	});
+
 	function getStatusColor(status: string | undefined): string {
 		switch (status?.toLowerCase()) {
 			case 'returning series':
@@ -516,8 +558,15 @@
 		{ id: 'movies' as TabType, label: 'Movies', count: movies.length },
 		{ id: 'tv' as TabType, label: 'TV Shows', count: shows.length },
 		{ id: 'collections' as TabType, label: 'Collections', count: collections.length },
-		{ id: 'playlists' as TabType, label: 'Playlists', count: playlists.length },
 	]);
+
+	// Preset filter options
+	const presetFilters = [
+		{ id: 'all' as PresetFilter, label: 'All' },
+		{ id: 'unwatched' as PresetFilter, label: 'Unwatched' },
+		{ id: 'inProgress' as PresetFilter, label: 'In Progress' },
+		{ id: 'topRated' as PresetFilter, label: 'Top Rated' },
+	];
 </script>
 
 <svelte:head>
@@ -525,8 +574,8 @@
 </svelte:head>
 
 <div class="space-y-6">
-	<!-- Hero Background - Only for Movies and TV -->
-	{#if (activeTab === 'movies' || activeTab === 'tv') && heroItems().length > 0}
+	<!-- Hero Background -->
+	{#if (activeTab === 'movies' || activeTab === 'tv' || activeTab === 'collections') && heroItems().length > 0}
 		{@const hero = currentHero()}
 		{#if hero}
 			<section class="relative h-[35vh] min-h-[280px] overflow-hidden">
@@ -547,7 +596,7 @@
 		{/if}
 	{/if}
 
-	<div class="px-[60px] space-y-6 {(activeTab === 'movies' || activeTab === 'tv') && heroItems().length > 0 ? '-mt-56 relative z-10' : ''}">
+	<div class="px-[60px] space-y-6 {(activeTab === 'movies' || activeTab === 'tv' || activeTab === 'collections') && heroItems().length > 0 ? '-mt-56 relative z-10' : ''}">
 		<!-- Filter Pills -->
 		<div class="flex flex-wrap gap-2">
 			<!-- Media type pills -->
@@ -566,31 +615,71 @@
 				</button>
 			{/each}
 
-			<div class="w-px h-8 bg-border-subtle self-center mx-1"></div>
+			<!-- Preset filter pills for Movies/TV -->
+			{#if activeTab === 'movies' || activeTab === 'tv'}
+				<div class="w-px h-8 bg-border-subtle self-center mx-1"></div>
 
-			<!-- Genre quick-filter pills -->
-			{#if activeTab === 'movies'}
-				{#each ['Action', 'Comedy', 'Drama', 'Sci-Fi', 'Horror', 'Thriller'] as genre}
+				{#each presetFilters as preset}
 					<button
-						onclick={() => movieGenreFilter = movieGenreFilter === genre ? 'all' : genre}
+						onclick={() => {
+							if (activeTab === 'movies') {
+								moviePreset = moviePreset === preset.id ? 'all' : preset.id;
+							} else {
+								showPreset = showPreset === preset.id ? 'all' : preset.id;
+							}
+						}}
 						class="px-4 py-2.5 text-sm font-medium transition-all rounded-full min-h-[44px] flex items-center
-							{movieGenreFilter === genre
-								? 'bg-text-primary text-black border border-text-primary'
+							{(activeTab === 'movies' ? moviePreset : showPreset) === preset.id
+								? 'bg-amber-500 text-black border border-amber-500'
 								: 'bg-glass backdrop-blur-xl border border-border-subtle text-text-secondary hover:bg-glass-hover hover:text-text-primary'}"
 					>
-						{genre}
+						{preset.label}
 					</button>
 				{/each}
-			{:else if activeTab === 'tv'}
-				{#each ['Action & Adventure', 'Comedy', 'Drama', 'Crime', 'Sci-Fi & Fantasy', 'Mystery'] as genre}
+
+				<div class="w-px h-8 bg-border-subtle self-center mx-1"></div>
+
+				<!-- Genre quick-filter pills -->
+				{#if activeTab === 'movies'}
+					{#each ['Action', 'Comedy', 'Drama', 'Sci-Fi', 'Horror', 'Thriller'] as genre}
+						<button
+							onclick={() => movieGenreFilter = movieGenreFilter === genre ? 'all' : genre}
+							class="px-4 py-2.5 text-sm font-medium transition-all rounded-full min-h-[44px] flex items-center
+								{movieGenreFilter === genre
+									? 'bg-text-primary text-black border border-text-primary'
+									: 'bg-glass backdrop-blur-xl border border-border-subtle text-text-secondary hover:bg-glass-hover hover:text-text-primary'}"
+						>
+							{genre}
+						</button>
+					{/each}
+				{:else if activeTab === 'tv'}
+					{#each ['Action & Adventure', 'Comedy', 'Drama', 'Crime', 'Sci-Fi & Fantasy', 'Mystery'] as genre}
+						<button
+							onclick={() => showGenreFilter = showGenreFilter === genre ? 'all' : genre}
+							class="px-4 py-2.5 text-sm font-medium transition-all rounded-full min-h-[44px] flex items-center
+								{showGenreFilter === genre
+									? 'bg-text-primary text-black border border-text-primary'
+									: 'bg-glass backdrop-blur-xl border border-border-subtle text-text-secondary hover:bg-glass-hover hover:text-text-primary'}"
+						>
+							{genre}
+						</button>
+					{/each}
+				{/if}
+			{/if}
+
+			<!-- Collection type filter pills -->
+			{#if activeTab === 'collections'}
+				<div class="w-px h-8 bg-border-subtle self-center mx-1"></div>
+
+				{#each [{ id: 'all', label: 'All' }, { id: 'tmdb', label: 'TMDB' }, { id: 'custom', label: 'Custom' }] as typeFilter}
 					<button
-						onclick={() => showGenreFilter = showGenreFilter === genre ? 'all' : genre}
+						onclick={() => collectionType = collectionType === typeFilter.id ? 'all' : typeFilter.id as typeof collectionType}
 						class="px-4 py-2.5 text-sm font-medium transition-all rounded-full min-h-[44px] flex items-center
-							{showGenreFilter === genre
-								? 'bg-text-primary text-black border border-text-primary'
+							{collectionType === typeFilter.id
+								? 'bg-amber-500 text-black border border-amber-500'
 								: 'bg-glass backdrop-blur-xl border border-border-subtle text-text-secondary hover:bg-glass-hover hover:text-text-primary'}"
 					>
-						{genre}
+						{typeFilter.label}
 					</button>
 				{/each}
 			{/if}
@@ -1034,12 +1123,22 @@
 	<!-- Collections Tab -->
 	{#if activeTab === 'collections'}
 		<div class="space-y-6">
-			<!-- Header with Create button -->
-			<div class="flex items-center justify-between">
-				<h2 class="text-xl font-semibold text-text-primary">
-					Collections
-					<span class="text-sm text-text-muted font-normal ml-2">({collections.length})</span>
-				</h2>
+			<!-- Controls -->
+			<div class="flex flex-wrap items-center gap-3">
+				<div class="inline-flex items-center gap-2 p-1.5 rounded-xl bg-bg-card border border-border-subtle">
+					<div class="relative">
+						<svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+						</svg>
+						<input
+							type="text"
+							placeholder="Search collections..."
+							bind:value={collectionSearch}
+							class="bg-transparent pl-9 pr-3 py-1.5 w-48 text-sm text-text-primary placeholder-text-muted focus:outline-none"
+						/>
+					</div>
+				</div>
+				<div class="flex-1"></div>
 				{#if user?.role === 'admin'}
 					<button
 						onclick={() => showCreateModal = true}
@@ -1071,9 +1170,16 @@
 						</button>
 					{/if}
 				</div>
+			{:else if filteredCollections().length === 0}
+				<div class="text-center py-20">
+					<p class="text-text-muted">No collections match your search.</p>
+					<button onclick={() => { collectionSearch = ''; collectionType = 'all'; }} class="mt-2 text-accent-primary hover:underline">
+						Clear filters
+					</button>
+				</div>
 			{:else}
 				<div class="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4">
-					{#each collections as collection}
+					{#each filteredCollections() as collection}
 						<a
 							href="/collections/{collection.id}"
 							class="group bg-bg-card border border-border-subtle rounded-xl overflow-hidden hover:border-border-hover transition-all hover:shadow-lg"
@@ -1109,99 +1215,6 @@
 								</h3>
 								{#if collection.description}
 									<p class="text-sm text-text-muted mt-1 line-clamp-2">{collection.description}</p>
-								{/if}
-							</div>
-						</a>
-					{/each}
-				</div>
-			{/if}
-		</div>
-	{/if}
-
-	<!-- Playlists Tab -->
-	{#if activeTab === 'playlists'}
-		<div class="space-y-6">
-			<!-- Header with Create button -->
-			<div class="flex items-center justify-between">
-				<h2 class="text-xl font-semibold text-text-primary">
-					Smart Playlists
-					<span class="text-sm text-text-muted font-normal ml-2">({playlists.length})</span>
-				</h2>
-				<a
-					href="/playlists/new"
-					class="px-4 py-2 rounded-lg bg-accent-primary text-white font-medium hover:bg-accent-primary/90 transition-colors flex items-center gap-2"
-				>
-					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-					</svg>
-					Create Playlist
-				</a>
-			</div>
-
-			{#if loadingPlaylists}
-				<div class="flex items-center justify-center py-20">
-					<div class="animate-spin w-8 h-8 border-2 border-accent-primary border-t-transparent rounded-full"></div>
-				</div>
-			{:else if playlists.length === 0}
-				<div class="text-center py-20">
-					<div class="text-6xl mb-4">🎬</div>
-					<h3 class="text-xl font-medium text-text-primary mb-2">No Playlists Yet</h3>
-					<p class="text-text-muted mb-6">Create smart playlists with custom rules to organize your media.<br/>Filter by genre, year, rating, and more.</p>
-					<a
-						href="/playlists/new"
-						class="inline-block px-6 py-3 rounded-lg bg-accent-primary text-white font-medium hover:bg-accent-primary/90 transition-colors"
-					>
-						Create Your First Playlist
-					</a>
-				</div>
-			{:else}
-				<div class="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4">
-					{#each playlists as playlist}
-						<a
-							href="/playlists/{playlist.id}"
-							class="group bg-bg-card border border-border-subtle rounded-xl overflow-hidden hover:border-border-hover transition-all hover:shadow-lg"
-						>
-							<!-- Playlist preview images -->
-							<div class="relative aspect-video bg-bg-tertiary overflow-hidden">
-								{#if playlist.previewItems && playlist.previewItems.length > 0}
-									<div class="grid grid-cols-3 h-full">
-										{#each playlist.previewItems.slice(0, 3) as item, i}
-											<div class="relative overflow-hidden {i === 1 ? 'border-x border-bg-tertiary' : ''}">
-												{#if item.posterPath}
-													<img
-														src={getImageUrl(item.posterPath)}
-														alt=""
-														class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-													/>
-												{:else}
-													<div class="w-full h-full bg-bg-elevated"></div>
-												{/if}
-											</div>
-										{/each}
-									</div>
-								{:else}
-									<div class="w-full h-full flex items-center justify-center text-4xl text-text-muted">🎬</div>
-								{/if}
-								<!-- Gradient overlay -->
-								<div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>
-								<!-- System badge -->
-								{#if playlist.isSystem}
-									<div class="absolute top-3 left-3 px-2 py-1 rounded bg-blue-500/90 text-white text-xs font-medium">
-										System
-									</div>
-								{/if}
-								<!-- Count badge -->
-								<div class="absolute bottom-3 right-3 px-2 py-1 rounded bg-black/60 text-white text-sm font-medium">
-									{playlist.itemCount} items
-								</div>
-							</div>
-							<!-- Info -->
-							<div class="p-4">
-								<h3 class="font-semibold text-text-primary group-hover:text-accent-primary transition-colors truncate">
-									{playlist.name}
-								</h3>
-								{#if playlist.description}
-									<p class="text-sm text-text-muted mt-1 line-clamp-2">{playlist.description}</p>
 								{/if}
 							</div>
 						</a>
