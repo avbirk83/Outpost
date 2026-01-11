@@ -249,18 +249,19 @@
 		<div class="bg-bg-card border border-border-subtle rounded-xl p-5">
 			<h3 class="text-sm font-medium text-text-secondary uppercase tracking-wide mb-3">Rules</h3>
 			<div class="flex flex-wrap gap-2">
-				{@const rules = parseRules(playlist.rules)}
-				<span class="px-3 py-1.5 rounded-lg bg-bg-tertiary text-text-muted text-sm">
-					Match: {rules.match === 'all' ? 'All conditions' : 'Any condition'}
-				</span>
-				{#each getRulesDescription(playlist.rules) as rule}
-					<span class="px-3 py-1.5 rounded-lg bg-accent-primary/20 text-accent-primary text-sm">
-						{rule}
+				{#each [parseRules(playlist.rules)] as rules}
+					<span class="px-3 py-1.5 rounded-lg bg-bg-tertiary text-text-muted text-sm">
+						Match: {rules.match === 'all' ? 'All conditions' : 'Any condition'}
 					</span>
+					{#each getRulesDescription(playlist.rules) as rule}
+						<span class="px-3 py-1.5 rounded-lg bg-accent-primary/20 text-accent-primary text-sm">
+							{rule}
+						</span>
+					{/each}
+					{#if rules.conditions.length === 0}
+						<span class="text-text-muted text-sm">No rules defined - matches all media</span>
+					{/if}
 				{/each}
-				{#if rules.conditions.length === 0}
-					<span class="text-text-muted text-sm">No rules defined - matches all media</span>
-				{/if}
 			</div>
 		</div>
 
