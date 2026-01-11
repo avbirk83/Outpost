@@ -20,6 +20,7 @@
 	import MediaDetail from '$lib/components/MediaDetail.svelte';
 	import Dropdown from '$lib/components/Dropdown.svelte';
 	import AddToCollectionButton from '$lib/components/AddToCollectionButton.svelte';
+	import SubtitleSearchModal from '$lib/components/SubtitleSearchModal.svelte';
 
 	let show: ShowDetail | null = $state(null);
 	let loading = $state(true);
@@ -44,6 +45,9 @@
 	let selectedPresetId: number | null = $state(null);
 	let preferredAudioLang = $state<string>('');
 	let preferredSubtitleLang = $state<string>('');
+
+	// Subtitle search
+	let subtitleSearchEpisode = $state<{ id: number; title: string; seasonNumber: number; episodeNumber: number } | null>(null);
 
 	// Skip segments
 	let skipSegments = $state<SkipSegments>({});
@@ -827,6 +831,18 @@
 						/>
 					</div>
 				{/if}
+				{#if qualityInfo?.status && !qualityInfo.status.targetMet}
+					<a
+						href="/upgrades"
+						class="ml-2 px-2 py-1 rounded-lg text-xs font-medium bg-orange-500/20 text-orange-400 hover:bg-orange-500/30 transition-colors flex items-center gap-1.5"
+						title="Quality is below cutoff - click to view upgrades"
+					>
+						<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18" />
+						</svg>
+						Upgrade Available
+					</a>
+				{/if}
 			</div>
 		{/snippet}
 
@@ -959,6 +975,16 @@
 												{/if}
 											</button>
 											{#if user?.role === 'admin'}
+												<!-- Subtitle search button -->
+												<button
+													onclick={(e) => { e.stopPropagation(); subtitleSearchEpisode = { id: episode.id, title: episode.title || `Episode ${episode.episodeNumber}`, seasonNumber: selectedSeason?.seasonNumber || 1, episodeNumber: episode.episodeNumber }; }}
+													class="p-1.5 rounded-full text-text-muted hover:bg-purple-500/20 hover:text-purple-400 transition-colors"
+													title="Search subtitles"
+												>
+													<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+														<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
+													</svg>
+												</button>
 												{#if confirmingDeleteEpisodeId === episode.id}
 													<!-- Confirm button (checkmark) -->
 													<button
@@ -1247,4 +1273,24 @@
 		trailersJson={show?.trailers}
 		title={show?.title}
 	/>
+
+	<!-- Subtitle Search Modal -->
+	{#if subtitleSearchEpisode && show}
+		<SubtitleSearchModal
+			media={{
+				type: 'episode',
+				mediaId: show.id,
+				title: subtitleSearchEpisode.title,
+				tmdbId: show.tmdbId ?? undefined,
+				episodeId: subtitleSearchEpisode.id,
+				seasonNumber: subtitleSearchEpisode.seasonNumber,
+				episodeNumber: subtitleSearchEpisode.episodeNumber,
+				showTitle: show.title
+			}}
+			onClose={() => subtitleSearchEpisode = null}
+			onDownloaded={() => {
+				toast.success('Subtitle downloaded successfully');
+			}}
+		/>
+	{/if}
 {/if}

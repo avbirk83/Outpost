@@ -36,6 +36,7 @@
 - **Quality Presets** — Built-in presets for movies, TV, and anime with customizable options
 - **Custom Formats** — Create custom scoring rules based on resolution, source, codec, audio, HDR, release groups
 - **Auto-Upgrade** — Automatically upgrade to better quality when available
+- **Upgrade Search** — View all upgradeable items with one-click search for better quality
 - **Cutoff System** — Stop upgrading after reaching target quality
 - **Per-Item Monitoring** — Toggle monitoring for individual movies or TV seasons
 - **Delay Profiles** — Wait for preferred quality before grabbing
@@ -56,13 +57,20 @@
 - **Skip Segments** — Configure intro/credits skip for TV shows
 - **Chapter Support** — Navigate by chapters
 - **Progress Sync** — Resume where you left off across devices
+- **OpenSubtitles** — Search and download subtitles from OpenSubtitles with auto-download on import
+
+### Integrations
+- **Trakt.tv** — Sync watch history and ratings with Trakt (bidirectional sync)
+- **OpenSubtitles** — Automatic subtitle downloading with language preferences
 
 ### Multi-User
 - **User Accounts** — Create accounts for family and friends
+- **Profiles** — Multiple profiles per user with individual watch history and preferences
 - **Role-Based Access** — Admin and user roles with different permissions
 - **Content Ratings** — Restrict content by rating (G, PG, PG-13, R, NC-17)
 - **PIN Protection** — Optional PIN for user profiles
 - **Per-User Tracking** — Individual watch history and watchlists
+- **Smart Playlists** — Dynamic playlists with custom rules (recently added, unwatched, 4K, top rated, etc.)
 
 ### System Administration
 - **Health Monitoring** — Real-time health checks for database, indexers, download clients, disk space

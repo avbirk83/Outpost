@@ -17,6 +17,7 @@ import (
 	"github.com/outpost/outpost/internal/quality"
 	"github.com/outpost/outpost/internal/scanner"
 	"github.com/outpost/outpost/internal/storage"
+	"github.com/outpost/outpost/internal/trakt"
 )
 
 type Scheduler struct {
@@ -99,6 +100,20 @@ func (s *Scheduler) initDefaultTasks() {
 			Name:            "Library Scan",
 			Description:     "Scan library folders for new and changed files",
 			TaskType:        "library_scan",
+			Enabled:         true,
+			IntervalMinutes: 60, // 1 hour
+		},
+		{
+			Name:            "Upgrade Search",
+			Description:     "Search for better quality versions of owned media",
+			TaskType:        "upgrade_search",
+			Enabled:         false, // Disabled by default
+			IntervalMinutes: 720,   // 12 hours
+		},
+		{
+			Name:            "Trakt Sync",
+			Description:     "Sync watch history and ratings with Trakt.tv",
+			TaskType:        "trakt_sync",
 			Enabled:         true,
 			IntervalMinutes: 60, // 1 hour
 		},
@@ -278,6 +293,10 @@ func (s *Scheduler) executeTask(task *database.ScheduledTask) {
 		itemsProcessed = s.runMetadataRefreshTask()
 	case "library_scan":
 		itemsProcessed = s.runLibraryScanTask()
+	case "upgrade_search":
+		itemsProcessed, itemsFound = s.runUpgradeSearchTask()
+	case "trakt_sync":
+		itemsProcessed = s.runTraktSyncTask()
 	}
 
 	finishedAt := time.Now()
@@ -404,6 +423,131 @@ func (s *Scheduler) runLibraryScanTask() int {
 
 	return scanned
 }
+
+// runUpgradeSearchTask searches for better quality versions of owned media
+func (s *Scheduler) runUpgradeSearchTask() (processed, found int) {
+	// Get upgrade search settings
+	settings, err := s.db.GetAllSettings()
+	if err != nil {
+		log.Printf("Scheduler: failed to get settings: %v", err)
+		return 0, 0
+	}
+
+	// Check if upgrade search is enabled
+	if val, ok := settings["upgrade_search_enabled"]; ok && val != "true" {
+		log.Printf("Scheduler: upgrade search is disabled")
+		return 0, 0
+	}
+
+	// Get limit from settings (default 10)
+	limit := 10
+	if val, ok := settings["upgrade_search_limit"]; ok {
+		if parsed, err := strconv.Atoi(val); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+
+	log.Printf("Scheduler: searching for %d upgradeable items", limit)
+
+	// Get upgradeable movies
+	movies, err := s.db.GetUpgradeableMovies(limit / 2)
+	if err != nil {
+		log.Printf("Scheduler: failed to get upgradeable movies: %v", err)
+	} else {
+		for _, item := range movies {
+			movie, err := s.db.GetMovie(item.ID)
+			if err != nil {
+				continue
+			}
+
+			var imdbID string
+			if movie.ImdbID != nil {
+				imdbID = *movie.ImdbID
+			}
+
+			// Get quality preset
+			var qualityPresetID int64
+			override, _ := s.db.GetMediaQualityOverride(item.ID, "movie")
+			if override != nil && override.PresetID != nil {
+				qualityPresetID = *override.PresetID
+			} else {
+				presets, _ := s.db.GetQualityPresets()
+				for _, p := range presets {
+					if p.IsDefault && p.MediaType == "movie" {
+						qualityPresetID = p.ID
+						break
+					}
+				}
+			}
+
+			if movie.TmdbID != nil && qualityPresetID > 0 {
+				err := s.db.CreateUpgradeWantedItem("movie", *movie.TmdbID, imdbID, movie.Title, movie.Year, "", qualityPresetID, item.ID)
+				if err == nil {
+					processed++
+					s.db.UpdateUpgradeSearched(item.ID, "movie", false)
+					// Search for the item
+					s.SearchWantedItem(*movie.TmdbID, "movie")
+				}
+			}
+		}
+	}
+
+	// Get upgradeable episodes
+	episodes, err := s.db.GetUpgradeableEpisodes(limit / 2)
+	if err != nil {
+		log.Printf("Scheduler: failed to get upgradeable episodes: %v", err)
+	} else {
+		for _, item := range episodes {
+			episode, err := s.db.GetEpisode(item.ID)
+			if err != nil {
+				continue
+			}
+			season, err := s.db.GetSeasonByID(episode.SeasonID)
+			if err != nil {
+				continue
+			}
+			show, err := s.db.GetShow(season.ShowID)
+			if err != nil {
+				continue
+			}
+
+			var imdbID string
+			if show.ImdbID != nil {
+				imdbID = *show.ImdbID
+			}
+
+			// Get quality preset
+			var qualityPresetID int64
+			override, _ := s.db.GetMediaQualityOverride(show.ID, "show")
+			if override != nil && override.PresetID != nil {
+				qualityPresetID = *override.PresetID
+			} else {
+				presets, _ := s.db.GetQualityPresets()
+				for _, p := range presets {
+					if p.IsDefault && p.MediaType == "tv" {
+						qualityPresetID = p.ID
+						break
+					}
+				}
+			}
+
+			if show.TmdbID != nil && qualityPresetID > 0 {
+				title := fmt.Sprintf("%s S%02dE%02d", show.Title, season.SeasonNumber, episode.EpisodeNumber)
+				err := s.db.CreateUpgradeWantedItem("episode", *show.TmdbID, imdbID, title, show.Year, "", qualityPresetID, item.ID)
+				if err == nil {
+					processed++
+					s.db.UpdateUpgradeSearched(item.ID, "episode", false)
+					// Search for the item
+					s.SearchWantedItem(*show.TmdbID, "show")
+				}
+			}
+		}
+	}
+
+	log.Printf("Scheduler: upgrade search complete - processed %d items", processed)
+	return processed, found
+}
+
 // SearchWantedItem searches for a specific wanted item by TMDB ID and type
 func (s *Scheduler) SearchWantedItem(tmdbID int64, mediaType string) error {
 	item, err := s.db.GetWantedByTmdb(mediaType, tmdbID)
@@ -1920,5 +2064,188 @@ func sortPresetsByQuality(presets []database.QualityPreset) []database.QualityPr
 	}
 
 	return sorted
+}
+
+// runTraktSyncTask syncs watch history with Trakt.tv for all enabled users
+func (s *Scheduler) runTraktSyncTask() int {
+	configs, err := s.db.GetAllTraktConfigs()
+	if err != nil {
+		log.Printf("Failed to get Trakt configs: %v", err)
+		return 0
+	}
+
+	if len(configs) == 0 {
+		return 0
+	}
+
+	clientID, _ := s.db.GetSetting("trakt_client_id")
+	clientSecret, _ := s.db.GetSetting("trakt_client_secret")
+
+	if clientID == "" || clientSecret == "" {
+		log.Printf("Trakt client ID or secret not configured")
+		return 0
+	}
+
+	processed := 0
+	for _, config := range configs {
+		if !config.SyncEnabled || config.AccessToken == "" {
+			continue
+		}
+
+		// Get user's default profile
+		profile, err := s.db.GetDefaultProfile(config.UserID)
+		if err != nil || profile == nil {
+			log.Printf("No default profile for user %d, skipping Trakt sync", config.UserID)
+			continue
+		}
+
+		client := trakt.NewClient(clientID, clientSecret)
+		client.SetTokens(config.AccessToken, config.RefreshToken, *config.ExpiresAt)
+
+		// Refresh token if needed
+		if client.NeedsRefresh() {
+			tokenResp, err := client.RefreshAccessToken()
+			if err != nil {
+				log.Printf("Trakt token refresh failed for user %d: %v", config.UserID, err)
+				continue
+			}
+			expiresAt := time.Unix(tokenResp.CreatedAt, 0).Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
+			config.AccessToken = tokenResp.AccessToken
+			config.RefreshToken = tokenResp.RefreshToken
+			config.ExpiresAt = &expiresAt
+			s.db.SaveTraktConfig(&config)
+		}
+
+		// Sync watched status
+		if config.SyncWatched {
+			processed += s.syncTraktWatched(profile.ID, client)
+		}
+
+		// Update last synced time
+		s.db.UpdateTraktSyncTime(config.UserID)
+	}
+
+	return processed
+}
+
+// syncTraktWatched syncs watched status between Trakt and local database
+func (s *Scheduler) syncTraktWatched(profileID int64, client *trakt.Client) int {
+	synced := 0
+
+	// Pull watched movies from Trakt
+	watchedMovies, err := client.GetWatchedMovies()
+	if err == nil {
+		for _, wm := range watchedMovies {
+			movie, err := s.db.GetMovieByTmdb(int64(wm.Movie.IDs.TMDB))
+			if err != nil || movie == nil {
+				continue
+			}
+			// Check if already watched
+			progress, _ := s.db.GetProgress(profileID, "movie", movie.ID)
+			if progress == nil || (progress.Duration > 0 && progress.Position/progress.Duration < 0.9) {
+				// Mark as watched
+				s.db.SaveProgress(&database.Progress{
+					ProfileID: profileID,
+					MediaType: "movie",
+					MediaID:   movie.ID,
+					Position:  100,
+					Duration:  100,
+				})
+				synced++
+			}
+		}
+	}
+
+	// Pull watched shows from Trakt
+	watchedShows, err := client.GetWatchedShows()
+	if err == nil {
+		for _, ws := range watchedShows {
+			show, err := s.db.GetShowByTmdb(int64(ws.Show.IDs.TMDB))
+			if err != nil || show == nil {
+				continue
+			}
+			for _, season := range ws.Seasons {
+				for _, ep := range season.Episodes {
+					episode, err := s.db.GetEpisodeByShowSeasonEpisode(show.ID, season.Number, ep.Number)
+					if err != nil || episode == nil {
+						continue
+					}
+					progress, _ := s.db.GetProgress(profileID, "episode", episode.ID)
+					if progress == nil || (progress.Duration > 0 && progress.Position/progress.Duration < 0.9) {
+						s.db.SaveProgress(&database.Progress{
+							ProfileID: profileID,
+							MediaType: "episode",
+							MediaID:   episode.ID,
+							Position:  100,
+							Duration:  100,
+						})
+						synced++
+					}
+				}
+			}
+		}
+	}
+
+	// Push unsynced watch history to Trakt
+	unsyncedHistory, err := s.db.GetUnsyncedWatchHistory(profileID)
+	if err == nil && len(unsyncedHistory) > 0 {
+		var movieItems []trakt.HistoryItem
+		var episodeItems []trakt.HistoryItem
+		var syncedIDs []int64
+
+		for _, item := range unsyncedHistory {
+			if item.MediaType == "movie" {
+				movie, err := s.db.GetMovie(item.MediaID)
+				if err != nil || movie == nil || movie.TmdbID == nil {
+					continue
+				}
+				movieItems = append(movieItems, trakt.HistoryItem{
+					WatchedAt: item.WatchedAt,
+					Movie: &trakt.Movie{
+						IDs: trakt.IDs{TMDB: int(*movie.TmdbID)},
+					},
+				})
+				syncedIDs = append(syncedIDs, item.ID)
+			} else if item.MediaType == "episode" {
+				episode, err := s.db.GetEpisode(item.MediaID)
+				if err != nil || episode == nil {
+					continue
+				}
+				season, err := s.db.GetSeasonByID(episode.SeasonID)
+				if err != nil || season == nil {
+					continue
+				}
+				show, err := s.db.GetShow(season.ShowID)
+				if err != nil || show == nil || show.TmdbID == nil {
+					continue
+				}
+				episodeItems = append(episodeItems, trakt.HistoryItem{
+					WatchedAt: item.WatchedAt,
+					Show: &trakt.Show{
+						IDs: trakt.IDs{TMDB: int(*show.TmdbID)},
+					},
+					Episode: &trakt.Episode{
+						Season: season.SeasonNumber,
+						Number: episode.EpisodeNumber,
+					},
+				})
+				syncedIDs = append(syncedIDs, item.ID)
+			}
+		}
+
+		if len(movieItems) > 0 || len(episodeItems) > 0 {
+			histReq := &trakt.HistoryRequest{
+				Movies:   movieItems,
+				Episodes: episodeItems,
+			}
+			resp, err := client.AddToHistory(histReq)
+			if err == nil {
+				synced += resp.Added.Movies + resp.Added.Episodes
+				s.db.MarkWatchHistorySynced(syncedIDs)
+			}
+		}
+	}
+
+	return synced
 }
 

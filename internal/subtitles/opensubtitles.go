@@ -34,39 +34,33 @@ func NewClient(apiKey string) *Client {
 
 // Subtitle represents a subtitle result
 type Subtitle struct {
-	ID           string            `json:"id"`
-	LanguageCode string            `json:"language"`
-	LanguageName string            `json:"language_name"`
-	DownloadURL  string            `json:"download_url"`
-	FileName     string            `json:"file_name"`
-	Release      string            `json:"release"`
-	UploadDate   string            `json:"upload_date"`
-	Downloads    int               `json:"downloads"`
-	FPS          float64           `json:"fps"`
-	Attributes   SubtitleAttributes `json:"attributes,omitempty"`
-}
-
-// SubtitleAttributes contains additional subtitle info
-type SubtitleAttributes struct {
-	SubtitleID string `json:"subtitle_id"`
-	Language   string `json:"language"`
-	Release    string `json:"release"`
-	Files      []struct {
-		FileID   int    `json:"file_id"`
-		FileName string `json:"file_name"`
-	} `json:"files"`
+	ID              string  `json:"id"`
+	FileID          int     `json:"fileId"`
+	LanguageCode    string  `json:"language"`
+	LanguageName    string  `json:"languageName"`
+	FileName        string  `json:"fileName"`
+	Release         string  `json:"release"`
+	UploadDate      string  `json:"uploadDate"`
+	Downloads       int     `json:"downloads"`
+	FPS             float64 `json:"fps"`
+	HearingImpaired bool    `json:"hearingImpaired"`
+	AITranslated    bool    `json:"aiTranslated"`
+	FromTrusted     bool    `json:"fromTrusted"`
+	FeatureTitle    string  `json:"featureTitle"`
+	FeatureYear     int     `json:"featureYear"`
 }
 
 // SearchRequest contains search parameters
 type SearchRequest struct {
-	Query      string
-	IMDbID     string
-	TMDbID     int
-	Year       int
-	Season     int
-	Episode    int
-	Languages  []string
-	MovieHash  string
+	Query           string
+	IMDbID          string
+	TMDbID          int
+	Year            int
+	Season          int
+	Episode         int
+	Languages       []string
+	MovieHash       string
+	HearingImpaired *bool // nil = any, true = only HI, false = exclude HI
 }
 
 // SearchResponse represents the API search response
@@ -151,6 +145,13 @@ func (c *Client) Search(req SearchRequest) ([]Subtitle, error) {
 	if req.MovieHash != "" {
 		params.Set("moviehash", req.MovieHash)
 	}
+	if req.HearingImpaired != nil {
+		if *req.HearingImpaired {
+			params.Set("hearing_impaired", "only")
+		} else {
+			params.Set("hearing_impaired", "exclude")
+		}
+	}
 
 	endpoint := fmt.Sprintf("%s/subtitles?%s", OpenSubtitlesAPIBase, params.Encode())
 
@@ -182,18 +183,26 @@ func (c *Client) Search(req SearchRequest) ([]Subtitle, error) {
 	var subtitles []Subtitle
 	for _, item := range searchResp.Data {
 		fileName := ""
+		fileID := 0
 		if len(item.Attributes.Files) > 0 {
 			fileName = item.Attributes.Files[0].FileName
+			fileID = item.Attributes.Files[0].FileID
 		}
 
 		subtitles = append(subtitles, Subtitle{
-			ID:           item.ID,
-			LanguageCode: item.Attributes.Language,
-			Release:      item.Attributes.Release,
-			FileName:     fileName,
-			UploadDate:   item.Attributes.UploadDate,
-			Downloads:    item.Attributes.DownloadCount,
-			FPS:          item.Attributes.FPS,
+			ID:              item.ID,
+			FileID:          fileID,
+			LanguageCode:    item.Attributes.Language,
+			FileName:        fileName,
+			Release:         item.Attributes.Release,
+			UploadDate:      item.Attributes.UploadDate,
+			Downloads:       item.Attributes.DownloadCount,
+			FPS:             item.Attributes.FPS,
+			HearingImpaired: item.Attributes.HearingImpaired,
+			AITranslated:    item.Attributes.AITranslated,
+			FromTrusted:     item.Attributes.FromTrusted,
+			FeatureTitle:    item.Attributes.FeatureDetails.Title,
+			FeatureYear:     item.Attributes.FeatureDetails.Year,
 		})
 	}
 
@@ -304,15 +313,16 @@ func ComputeMovieHash(filePath string) (string, error) {
 }
 
 // SearchAndDownload searches for subtitles and downloads the best match
-func (c *Client) SearchAndDownload(videoPath string, title string, year int, language string) (string, error) {
+func (c *Client) SearchAndDownload(videoPath string, title string, year int, language string, hearingImpaired *bool) (string, error) {
 	// Try hash search first
 	hash, _ := ComputeMovieHash(videoPath)
 
 	req := SearchRequest{
-		Query:     title,
-		Year:      year,
-		MovieHash: hash,
-		Languages: []string{language},
+		Query:           title,
+		Year:            year,
+		MovieHash:       hash,
+		Languages:       []string{language},
+		HearingImpaired: hearingImpaired,
 	}
 
 	subtitles, err := c.Search(req)
@@ -327,13 +337,110 @@ func (c *Client) SearchAndDownload(videoPath string, title string, year int, lan
 	// Get first result (best match)
 	sub := subtitles[0]
 
+	if sub.FileID == 0 {
+		return "", fmt.Errorf("no file ID in subtitle result")
+	}
+
+	// Get download link
+	dlResp, err := c.GetDownloadLink(sub.FileID)
+	if err != nil {
+		return "", fmt.Errorf("failed to get download link: %w", err)
+	}
+
 	// Generate subtitle path
 	videoBase := strings.TrimSuffix(videoPath, filepath.Ext(videoPath))
 	subPath := videoBase + "." + language + ".srt"
 
-	// For now, we can't download without the file_id from the files array
-	// This is a simplified implementation - full implementation would parse file_id
-	return subPath, fmt.Errorf("subtitle found but download requires file_id (found: %s)", sub.FileName)
+	// Download the subtitle
+	if err := c.Download(dlResp.Link, subPath); err != nil {
+		return "", fmt.Errorf("failed to download subtitle: %w", err)
+	}
+
+	return subPath, nil
+}
+
+// SearchAndDownloadEpisode searches and downloads subtitles for a TV episode
+func (c *Client) SearchAndDownloadEpisode(videoPath string, showTitle string, season, episode int, language string, hearingImpaired *bool) (string, error) {
+	hash, _ := ComputeMovieHash(videoPath)
+
+	req := SearchRequest{
+		Query:           showTitle,
+		Season:          season,
+		Episode:         episode,
+		MovieHash:       hash,
+		Languages:       []string{language},
+		HearingImpaired: hearingImpaired,
+	}
+
+	subtitles, err := c.Search(req)
+	if err != nil {
+		return "", err
+	}
+
+	if len(subtitles) == 0 {
+		return "", fmt.Errorf("no subtitles found")
+	}
+
+	sub := subtitles[0]
+
+	if sub.FileID == 0 {
+		return "", fmt.Errorf("no file ID in subtitle result")
+	}
+
+	dlResp, err := c.GetDownloadLink(sub.FileID)
+	if err != nil {
+		return "", fmt.Errorf("failed to get download link: %w", err)
+	}
+
+	videoBase := strings.TrimSuffix(videoPath, filepath.Ext(videoPath))
+	subPath := videoBase + "." + language + ".srt"
+
+	if err := c.Download(dlResp.Link, subPath); err != nil {
+		return "", fmt.Errorf("failed to download subtitle: %w", err)
+	}
+
+	return subPath, nil
+}
+
+// GetLanguages returns available subtitle languages
+func (c *Client) GetLanguages() ([]Language, error) {
+	endpoint := fmt.Sprintf("%s/infos/languages", OpenSubtitlesAPIBase)
+
+	req, err := http.NewRequest("GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Api-Key", c.APIKey)
+	req.Header.Set("User-Agent", UserAgent)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API error: status %d", resp.StatusCode)
+	}
+
+	var langResp LanguagesResponse
+	if err := json.NewDecoder(resp.Body).Decode(&langResp); err != nil {
+		return nil, err
+	}
+
+	return langResp.Data, nil
+}
+
+// Language represents a subtitle language
+type Language struct {
+	Code string `json:"language_code"`
+	Name string `json:"language_name"`
+}
+
+// LanguagesResponse represents the languages API response
+type LanguagesResponse struct {
+	Data []Language `json:"data"`
 }
 
 // Test tests the API connection

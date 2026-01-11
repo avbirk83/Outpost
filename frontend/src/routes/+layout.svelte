@@ -5,19 +5,28 @@
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { auth } from '$lib/stores/auth';
-	import { getSetupWizardStatus } from '$lib/api';
+	import { profileStore } from '$lib/stores/profile';
+	import { getSetupWizardStatus, type Profile } from '$lib/api';
 	import Topbar from '$lib/components/layout/Topbar.svelte';
 	import StatusBar from '$lib/components/layout/StatusBar.svelte';
 	import Toast from '$lib/components/Toast.svelte';
 
 	let { children } = $props();
 	let user = $state<{ id: number; username: string; role: string } | null>(null);
+	let activeProfile = $state<Profile | null>(null);
+	let profilesLoading = $state(true);
 	let initialized = $state(false);
 	let setupChecked = $state(false);
 
 	// Subscribe to auth store
 	auth.subscribe((value) => {
 		user = value;
+	});
+
+	// Subscribe to profile store
+	profileStore.subscribe((state) => {
+		activeProfile = state.activeProfile;
+		profilesLoading = state.loading;
 	});
 
 	onMount(async () => {
@@ -50,17 +59,50 @@
 	}
 
 	async function handleLogout() {
+		profileStore.clear();
 		await auth.logout();
 		goto('/login');
 	}
 
 	// Check if current page is a public page (no auth required)
-	const isPublicPage = $derived($page.url.pathname === '/login' || $page.url.pathname === '/setup');
+	const isPublicPage = $derived(
+		$page.url.pathname === '/login' ||
+			$page.url.pathname === '/setup' ||
+			$page.url.pathname === '/profiles'
+	);
+
+	// Initialize profiles when user is logged in
+	$effect(() => {
+		if (!initialized || !user) return;
+		profileStore.init();
+	});
 
 	$effect(() => {
 		if (!initialized) return;
 		if (!user && !isPublicPage) {
 			goto('/login');
+		}
+	});
+
+	// Profile gate - redirect to /profiles if no active profile selected
+	// (except for public pages and the profiles page itself)
+	$effect(() => {
+		if (!initialized || !user || profilesLoading) return;
+		const path = $page.url.pathname;
+
+		// Skip profile gate for certain pages
+		if (
+			path === '/login' ||
+			path === '/setup' ||
+			path === '/profiles' ||
+			path.startsWith('/watch/')
+		) {
+			return;
+		}
+
+		// If no active profile, redirect to profile selector
+		if (!activeProfile) {
+			goto('/profiles');
 		}
 	});
 
@@ -72,6 +114,11 @@
 	// Check if current route is setup page (fullscreen wizard)
 	function isSetupPage(): boolean {
 		return $page.url.pathname === '/setup';
+	}
+
+	// Check if current route is profiles page
+	function isProfilesPage(): boolean {
+		return $page.url.pathname === '/profiles';
 	}
 </script>
 
@@ -90,8 +137,8 @@
 {:else if $page.url.pathname === '/login' || $page.url.pathname === '/setup'}
 	{@render children()}
 {:else if user}
-	{#if isWatchPage()}
-		<!-- Fullscreen player mode - no chrome -->
+	{#if isWatchPage() || isProfilesPage()}
+		<!-- Fullscreen mode - no chrome -->
 		{@render children()}
 	{:else}
 		<!-- Standard app layout -->
@@ -100,6 +147,7 @@
 			<Topbar
 				username={user.username}
 				isAdmin={user.role === 'admin'}
+				{activeProfile}
 				onLogout={handleLogout}
 			/>
 

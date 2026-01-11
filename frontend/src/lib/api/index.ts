@@ -371,3 +371,83 @@ export {
 	getMediaCollections
 } from './collections';
 export type { Collection, CollectionItem, CollectionDetail } from './collections';
+
+// Profiles
+export {
+	getProfiles,
+	getProfile,
+	getActiveProfile,
+	createProfile,
+	updateProfile,
+	deleteProfile,
+	selectProfile,
+	AVATARS
+} from './profiles';
+export type { Profile, CreateProfileData, UpdateProfileData } from './profiles';
+
+// Smart Playlists
+export {
+	getSmartPlaylists,
+	getSmartPlaylist,
+	createSmartPlaylist,
+	updateSmartPlaylist,
+	deleteSmartPlaylist,
+	refreshSmartPlaylist,
+	previewSmartPlaylist,
+	parseRules,
+	stringifyRules,
+	RULE_FIELDS,
+	OPERATORS
+} from './smartPlaylists';
+export type {
+	SmartPlaylist,
+	SmartPlaylistDetail,
+	SmartPlaylistItem,
+	PlaylistRules,
+	RuleCondition
+} from './smartPlaylists';
+
+// Upgrades
+export {
+	getUpgrades,
+	searchUpgrade,
+	searchAllUpgrades,
+	formatQualityComparison,
+	getScoreDifference
+} from './upgrades';
+export type { UpgradeableItem, UpgradesSummary } from './upgrades';
+
+// Subtitles (OpenSubtitles)
+export {
+	searchSubtitles,
+	downloadSubtitle,
+	getSubtitleLanguages,
+	testOpenSubtitlesConnection,
+	COMMON_LANGUAGES,
+	formatSubtitleDate,
+	formatDownloads
+} from './subtitles';
+export type {
+	SubtitleResult,
+	SubtitleLanguage,
+	SubtitleSearchParams,
+	SubtitleDownloadParams,
+	SubtitleDownloadResult
+} from './subtitles';
+
+// Trakt.tv
+export {
+	getTraktAuthURL,
+	exchangeTraktCode,
+	getTraktConfig,
+	updateTraktConfig,
+	disconnectTrakt,
+	syncTrakt,
+	testTraktConnection,
+	formatLastSynced
+} from './trakt';
+export type {
+	TraktConfig,
+	TraktSyncResult,
+	TraktTestResult
+} from './trakt';

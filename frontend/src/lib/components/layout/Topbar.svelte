@@ -1,17 +1,27 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
-	import { createRequest, getImageUrl, getSystemStatus, getNotifications, getUnreadCount, markRead, markAllRead, type SystemStatus, type Movie, type Show, type Artist, type Book, type DiscoverItem, type Notification } from '$lib/api';
+	import { createRequest, getImageUrl, getSystemStatus, getNotifications, getUnreadCount, markRead, markAllRead, type SystemStatus, type Movie, type Show, type Artist, type Book, type DiscoverItem, type Notification, type Profile, AVATARS } from '$lib/api';
+	import { profileStore } from '$lib/stores/profile';
 	import { onMount, onDestroy } from 'svelte';
 	import { normalizeText, searchScore } from '$lib/utils/search';
 
 	interface Props {
 		username?: string;
 		isAdmin?: boolean;
+		activeProfile?: Profile | null;
 		onLogout?: () => void;
 	}
 
-	let { username = '', isAdmin = false, onLogout }: Props = $props();
+	let { username = '', isAdmin = false, activeProfile = null, onLogout }: Props = $props();
+
+	let showProfileMenu = $state(false);
+	let profiles = $state<Profile[]>([]);
+
+	// Subscribe to profile store for profile list
+	profileStore.subscribe((state) => {
+		profiles = state.profiles;
+	});
 
 	let showUserMenu = $state(false);
 
@@ -196,6 +206,7 @@
 	const navItems = [
 		{ href: '/', label: 'Home', match: (path: string) => path === '/' },
 		{ href: '/library', label: 'Library', match: (path: string) => path.startsWith('/library') || path.startsWith('/movies') || path.startsWith('/tv') || path.startsWith('/music') || path.startsWith('/books') },
+		{ href: '/playlists', label: 'Playlists', match: (path: string) => path.startsWith('/playlists') },
 		{ href: '/explore', label: 'Explore', match: (path: string) => path.startsWith('/explore') },
 	];
 
@@ -226,6 +237,23 @@
 
 	function closeUserMenu() {
 		showUserMenu = false;
+	}
+
+	function toggleProfileMenu() {
+		showProfileMenu = !showProfileMenu;
+	}
+
+	function closeProfileMenu() {
+		showProfileMenu = false;
+	}
+
+	async function switchProfile(profile: Profile) {
+		showProfileMenu = false;
+		await profileStore.select(profile.id);
+	}
+
+	function getProfileAvatarUrl(profile: Profile | null): string {
+		return profile?.avatarUrl || AVATARS[0];
 	}
 
 	function isActive(item: typeof navItems[0]): boolean {
@@ -772,42 +800,86 @@
 			</svg>
 		</a>
 
-		<!-- User Avatar/Menu -->
+		<!-- Profile Avatar/Menu -->
 		<div class="relative">
 			<button
-				onclick={toggleUserMenu}
-				class="btn-icon-circle !text-text-primary overflow-hidden"
+				onclick={toggleProfileMenu}
+				class="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-cream/10 transition-all"
+				title={activeProfile ? activeProfile.name : 'Select Profile'}
 			>
-				<span class="text-sm font-semibold uppercase">
-					{username ? username.charAt(0) : 'U'}
-				</span>
+				<div class="w-8 h-8 rounded-lg overflow-hidden ring-2 ring-cream/30 flex-shrink-0">
+					{#if activeProfile?.avatarUrl}
+						<img src={activeProfile.avatarUrl} alt="" class="w-full h-full object-cover" />
+					{:else}
+						<div class="w-full h-full bg-bg-tertiary flex items-center justify-center text-text-muted">
+							<span class="text-sm font-semibold uppercase">
+								{activeProfile?.name?.charAt(0) || username?.charAt(0) || 'U'}
+							</span>
+						</div>
+					{/if}
+				</div>
+				<svg class="w-3 h-3 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+				</svg>
 			</button>
 
-			{#if showUserMenu}
+			{#if showProfileMenu}
 				<button
 					class="fixed inset-0 z-40"
-					onclick={closeUserMenu}
+					onclick={closeProfileMenu}
 					aria-label="Close menu"
 				></button>
 
-				<div class="absolute right-0 top-full mt-2 min-w-[180px] rounded-xl bg-bg-card backdrop-blur-xl border border-border-subtle py-1 z-50 shadow-2xl">
+				<div class="absolute right-0 top-full mt-2 min-w-[220px] rounded-xl bg-bg-card backdrop-blur-xl border border-border-subtle py-1 z-50 shadow-2xl">
+					<!-- Current user info -->
 					<div class="px-3 py-2 border-b border-border-subtle">
 						<p class="text-sm font-medium text-text-primary">{username}</p>
 						<p class="text-xs text-text-muted">{isAdmin ? 'Administrator' : 'User'}</p>
 					</div>
+
+					<!-- Profile switcher -->
+					{#if profiles.length > 1}
+						<div class="py-1 border-b border-border-subtle">
+							<p class="px-3 py-1 text-xs text-text-muted uppercase tracking-wider">Switch Profile</p>
+							{#each profiles.filter(p => p.id !== activeProfile?.id) as profile}
+								<button
+									onclick={() => switchProfile(profile)}
+									class="w-full flex items-center gap-3 px-3 py-2 mx-1 rounded-lg text-text-secondary hover:text-cream hover:bg-cream/10 transition-all"
+									style="width: calc(100% - 8px);"
+								>
+									<div class="w-7 h-7 rounded-lg overflow-hidden flex-shrink-0">
+										{#if profile.avatarUrl}
+											<img src={profile.avatarUrl} alt="" class="w-full h-full object-cover" />
+										{:else}
+											<div class="w-full h-full bg-bg-tertiary flex items-center justify-center text-text-muted text-xs font-semibold">
+												{profile.name.charAt(0).toUpperCase()}
+											</div>
+										{/if}
+									</div>
+									<span class="text-sm">{profile.name}</span>
+									{#if profile.isKid}
+										<span class="text-[10px] px-1.5 py-0.5 bg-green-600/20 text-green-400 rounded">Kids</span>
+									{/if}
+								</button>
+							{/each}
+						</div>
+					{/if}
+
+					<!-- Manage profiles link -->
 					<button
-						onclick={() => { closeUserMenu(); goto('/profile'); }}
+						onclick={() => { closeProfileMenu(); goto('/profiles'); }}
 						class="w-full flex items-center gap-2.5 px-3 py-2 mx-1 mt-1 rounded-lg text-text-muted hover:text-cream hover:bg-cream/10 transition-all"
 						style="width: calc(100% - 8px);"
 					>
 						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
 						</svg>
-						<span class="text-sm">Profile</span>
+						<span class="text-sm">Manage Profiles</span>
 					</button>
+
 					{#if isAdmin}
 						<button
-							onclick={() => { closeUserMenu(); goto('/users'); }}
+							onclick={() => { closeProfileMenu(); goto('/users'); }}
 							class="w-full flex items-center gap-2.5 px-3 py-2 mx-1 rounded-lg text-text-muted hover:text-cream hover:bg-cream/10 transition-all"
 							style="width: calc(100% - 8px);"
 						>
@@ -817,6 +889,7 @@
 							<span class="text-sm">Manage Users</span>
 						</button>
 					{/if}
+
 					<div class="my-1 mx-2 h-px bg-border-subtle"></div>
 					<button
 						onclick={handleLogout}

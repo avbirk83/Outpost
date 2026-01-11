@@ -29,12 +29,15 @@ import (
 	"github.com/outpost/outpost/internal/quality"
 	"github.com/outpost/outpost/internal/scanner"
 	"github.com/outpost/outpost/internal/storage"
+	"github.com/outpost/outpost/internal/subtitles"
 	"github.com/outpost/outpost/internal/tmdb"
+	"github.com/outpost/outpost/internal/trakt"
 )
 
 type contextKey string
 
 const userContextKey contextKey = "user"
+const sessionContextKey contextKey = "session"
 
 type Server struct {
 	config        *config.Config
@@ -159,6 +162,10 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/users", s.requireAdmin(s.handleUsers))
 	s.mux.HandleFunc("/api/users/", s.requireAdmin(s.handleUser))
 
+	// Profile routes (authenticated)
+	s.mux.HandleFunc("/api/profiles", s.requireAuth(s.handleProfiles))
+	s.mux.HandleFunc("/api/profiles/", s.requireAuth(s.handleProfile))
+
 	// Library routes (admin only)
 	s.mux.HandleFunc("/api/libraries", s.requireAdmin(s.handleLibraries))
 	s.mux.HandleFunc("/api/libraries/", s.requireAdmin(s.handleLibrary))
@@ -188,6 +195,20 @@ func (s *Server) setupRoutes() {
 
 	// Subtitle routes (authenticated)
 	s.mux.HandleFunc("/api/subtitles/", s.requireAuth(s.handleSubtitles))
+
+	// OpenSubtitles routes (admin for search/download)
+	s.mux.HandleFunc("/api/opensubtitles/search", s.requireAdmin(s.handleOpenSubtitlesSearch))
+	s.mux.HandleFunc("/api/opensubtitles/download", s.requireAdmin(s.handleOpenSubtitlesDownload))
+	s.mux.HandleFunc("/api/opensubtitles/languages", s.requireAuth(s.handleOpenSubtitlesLanguages))
+	s.mux.HandleFunc("/api/opensubtitles/test", s.requireAdmin(s.handleOpenSubtitlesTest))
+
+	// Trakt routes (user-specific)
+	s.mux.HandleFunc("/api/trakt/auth-url", s.requireAuth(s.handleTraktAuthURL))
+	s.mux.HandleFunc("/api/trakt/callback", s.requireAuth(s.handleTraktCallback))
+	s.mux.HandleFunc("/api/trakt/config", s.requireAuth(s.handleTraktConfig))
+	s.mux.HandleFunc("/api/trakt/disconnect", s.requireAuth(s.handleTraktDisconnect))
+	s.mux.HandleFunc("/api/trakt/sync", s.requireAuth(s.handleTraktSync))
+	s.mux.HandleFunc("/api/trakt/test", s.requireAuth(s.handleTraktTest))
 
 	// Progress routes (authenticated)
 	s.mux.HandleFunc("/api/progress", s.requireAuth(s.handleProgress))
@@ -251,6 +272,16 @@ func (s *Server) setupRoutes() {
 	// Collection routes (GET is auth only, modifications are admin only)
 	s.mux.HandleFunc("/api/collections", s.requireAuth(s.handleCollections))
 	s.mux.HandleFunc("/api/collections/", s.requireAuth(s.handleCollection))
+
+	// Smart playlist routes (authenticated)
+	s.mux.HandleFunc("/api/smart-playlists", s.requireAuth(s.handleSmartPlaylists))
+	s.mux.HandleFunc("/api/smart-playlists/preview", s.requireAuth(s.handleSmartPlaylistPreview))
+	s.mux.HandleFunc("/api/smart-playlists/", s.requireAuth(s.handleSmartPlaylist))
+
+	// Upgrade search routes (admin only)
+	s.mux.HandleFunc("/api/upgrades", s.requireAdmin(s.handleUpgrades))
+	s.mux.HandleFunc("/api/upgrades/search", s.requireAdmin(s.handleUpgradeSearch))
+	s.mux.HandleFunc("/api/upgrades/search-all", s.requireAdmin(s.handleUpgradeSearchAll))
 
 	// Download tracking routes (admin only)
 	s.mux.HandleFunc("/api/download-items", s.requireAdmin(s.handleDownloadItems))
@@ -399,8 +430,14 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		// Add user to context
+		// Get session to access active profile
+		session, _ := s.db.GetSessionByToken(token)
+
+		// Add user and session to context
 		ctx := context.WithValue(r.Context(), userContextKey, user)
+		if session != nil {
+			ctx = context.WithValue(ctx, sessionContextKey, session)
+		}
 		next(w, r.WithContext(ctx))
 	}
 }
@@ -435,6 +472,13 @@ func (s *Server) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
 func (s *Server) getCurrentUser(r *http.Request) *database.User {
 	if user, ok := r.Context().Value(userContextKey).(*database.User); ok {
 		return user
+	}
+	return nil
+}
+
+func (s *Server) getActiveProfileID(r *http.Request) *int64 {
+	if session, ok := r.Context().Value(sessionContextKey).(*database.Session); ok {
+		return session.ActiveProfileID
 	}
 	return nil
 }
@@ -1496,11 +1540,21 @@ func (s *Server) handleProgress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get active profile ID
+	profileID := s.getActiveProfileID(r)
+	if profileID == nil {
+		http.Error(w, "No profile selected", http.StatusBadRequest)
+		return
+	}
+
 	var p database.Progress
 	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+
+	// Override profile ID from session for security
+	p.ProfileID = *profileID
 
 	if err := s.db.SaveProgress(&p); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -1515,6 +1569,17 @@ func (s *Server) handleProgressGet(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Get active profile ID
+	profileID := s.getActiveProfileID(r)
+	if profileID == nil {
+		// No profile selected, return empty progress
+		json.NewEncoder(w).Encode(database.Progress{
+			Position: 0,
+			Duration: 0,
+		})
 		return
 	}
 
@@ -1534,10 +1599,11 @@ func (s *Server) handleProgressGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	progress, err := s.db.GetProgress(mediaType, id)
+	progress, err := s.db.GetProgress(*profileID, mediaType, id)
 	if err != nil {
 		// No progress yet, return zeros
 		json.NewEncoder(w).Encode(database.Progress{
+			ProfileID: *profileID,
 			MediaType: mediaType,
 			MediaID:   id,
 			Position:  0,
@@ -2604,6 +2670,247 @@ func (s *Server) handleUser(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// Profile handlers
+
+func (s *Server) handleProfiles(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	user := s.getCurrentUser(r)
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		profiles, err := s.db.GetProfilesByUser(user.ID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if profiles == nil {
+			profiles = []database.Profile{}
+		}
+		json.NewEncoder(w).Encode(profiles)
+
+	case http.MethodPost:
+		var req struct {
+			Name               string  `json:"name"`
+			AvatarURL          *string `json:"avatarUrl"`
+			IsKid              bool    `json:"isKid"`
+			ContentRatingLimit *string `json:"contentRatingLimit"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		if req.Name == "" {
+			http.Error(w, "Profile name is required", http.StatusBadRequest)
+			return
+		}
+
+		// Check profile limit (max 5 per user)
+		count, err := s.db.CountProfilesByUser(user.ID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if count >= 5 {
+			http.Error(w, "Maximum 5 profiles per user", http.StatusBadRequest)
+			return
+		}
+
+		profile := &database.Profile{
+			UserID:             user.ID,
+			Name:               req.Name,
+			AvatarURL:          req.AvatarURL,
+			IsKid:              req.IsKid,
+			ContentRatingLimit: req.ContentRatingLimit,
+		}
+
+		if err := s.db.CreateProfile(profile); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(profile)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleProfile(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	user := s.getCurrentUser(r)
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Parse path: /api/profiles/{id} or /api/profiles/{id}/select
+	path := strings.TrimPrefix(r.URL.Path, "/api/profiles/")
+	parts := strings.Split(path, "/")
+
+	if len(parts) == 0 || parts[0] == "" {
+		http.Error(w, "Profile ID required", http.StatusBadRequest)
+		return
+	}
+
+	// Check for special "active" endpoint
+	if parts[0] == "active" {
+		s.handleActiveProfile(w, r, user)
+		return
+	}
+
+	id, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid profile ID", http.StatusBadRequest)
+		return
+	}
+
+	// Check if this is a select action
+	if len(parts) >= 2 && parts[1] == "select" {
+		s.handleProfileSelect(w, r, user, id)
+		return
+	}
+
+	// Get profile and verify ownership
+	profile, err := s.db.GetProfile(id)
+	if err != nil {
+		http.Error(w, "Profile not found", http.StatusNotFound)
+		return
+	}
+
+	if profile.UserID != user.ID {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		json.NewEncoder(w).Encode(profile)
+
+	case http.MethodPut:
+		var req struct {
+			Name               string  `json:"name"`
+			AvatarURL          *string `json:"avatarUrl"`
+			IsKid              *bool   `json:"isKid"`
+			ContentRatingLimit *string `json:"contentRatingLimit"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		if req.Name != "" {
+			profile.Name = req.Name
+		}
+		if req.AvatarURL != nil {
+			profile.AvatarURL = req.AvatarURL
+		}
+		if req.IsKid != nil {
+			profile.IsKid = *req.IsKid
+		}
+		profile.ContentRatingLimit = req.ContentRatingLimit
+
+		if err := s.db.UpdateProfile(profile); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(profile)
+
+	case http.MethodDelete:
+		// Don't allow deleting the only profile
+		count, err := s.db.CountProfilesByUser(user.ID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if count <= 1 {
+			http.Error(w, "Cannot delete the only profile", http.StatusBadRequest)
+			return
+		}
+
+		// Don't allow deleting default profile
+		if profile.IsDefault {
+			http.Error(w, "Cannot delete default profile", http.StatusBadRequest)
+			return
+		}
+
+		if err := s.db.DeleteProfile(id); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleProfileSelect(w http.ResponseWriter, r *http.Request, user *database.User, profileID int64) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Verify profile belongs to user
+	profile, err := s.db.GetProfile(profileID)
+	if err != nil {
+		http.Error(w, "Profile not found", http.StatusNotFound)
+		return
+	}
+
+	if profile.UserID != user.ID {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	// Get session token and update active profile
+	token := s.getSessionToken(r)
+	if token == "" {
+		http.Error(w, "No session", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.db.SetActiveProfile(token, profileID); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(profile)
+}
+
+func (s *Server) handleActiveProfile(w http.ResponseWriter, r *http.Request, user *database.User) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	profileID := s.getActiveProfileID(r)
+	if profileID == nil {
+		// No active profile, return null
+		w.Write([]byte("null"))
+		return
+	}
+
+	profile, err := s.db.GetProfile(*profileID)
+	if err != nil {
+		w.Write([]byte("null"))
+		return
+	}
+
+	// Verify profile still belongs to user
+	if profile.UserID != user.ID {
+		w.Write([]byte("null"))
+		return
+	}
+
+	json.NewEncoder(w).Encode(profile)
 }
 
 // Download client handlers
@@ -5468,6 +5775,7 @@ func (s *Server) handleClearDeniedRequests(w http.ResponseWriter, r *http.Reques
 
 func (s *Server) handleWatchlist(w http.ResponseWriter, r *http.Request) {
 	user := r.Context().Value(userContextKey).(*database.User)
+	profileID := s.getActiveProfileID(r)
 
 	switch r.Method {
 	case http.MethodGet:
@@ -5512,11 +5820,13 @@ func (s *Server) handleWatchlist(w http.ResponseWriter, r *http.Request) {
 						e.PosterPath = movie.PosterPath
 						e.BackdropPath = movie.BackdropPath
 						e.Year = movie.Year
-						// Get progress
-						progress, err := s.db.GetProgress("movie", *status.LibraryID)
-						if err == nil && progress != nil && progress.Duration > 0 {
-							pct := (progress.Position / progress.Duration) * 100
-							e.Progress = &pct
+						// Get progress (only if profile selected)
+						if profileID != nil {
+							progress, err := s.db.GetProgress(*profileID, "movie", *status.LibraryID)
+							if err == nil && progress != nil && progress.Duration > 0 {
+								pct := (progress.Position / progress.Duration) * 100
+								e.Progress = &pct
+							}
 						}
 					}
 				} else if s.metadata != nil && s.metadata.GetTMDBClient() != nil {
@@ -8706,4 +9016,1364 @@ func (s *Server) handleRestore(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
+}
+
+// Smart playlist handlers
+func (s *Server) handleSmartPlaylists(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	switch r.Method {
+	case http.MethodGet:
+		// Get user ID to filter playlists (nil shows all system playlists)
+		user := s.getCurrentUser(r)
+		var userID *int64
+		if user != nil {
+			userID = &user.ID
+		}
+		playlists, err := s.db.GetSmartPlaylists(userID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if playlists == nil {
+			playlists = []database.SmartPlaylist{}
+		}
+		json.NewEncoder(w).Encode(playlists)
+
+	case http.MethodPost:
+		user := s.getCurrentUser(r)
+		if user == nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		var input struct {
+			Name        string  `json:"name"`
+			Description *string `json:"description"`
+			Rules       string  `json:"rules"`
+			SortBy      string  `json:"sortBy"`
+			SortOrder   string  `json:"sortOrder"`
+			LimitCount  *int    `json:"limitCount"`
+			MediaType   string  `json:"mediaType"`
+			AutoRefresh bool    `json:"autoRefresh"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		if input.Name == "" {
+			http.Error(w, "Name is required", http.StatusBadRequest)
+			return
+		}
+		if input.Rules == "" {
+			http.Error(w, "Rules are required", http.StatusBadRequest)
+			return
+		}
+
+		// Validate rules JSON
+		var rules database.PlaylistRules
+		if err := json.Unmarshal([]byte(input.Rules), &rules); err != nil {
+			http.Error(w, "Invalid rules format", http.StatusBadRequest)
+			return
+		}
+
+		// Set defaults
+		if input.SortBy == "" {
+			input.SortBy = "added"
+		}
+		if input.SortOrder == "" {
+			input.SortOrder = "desc"
+		}
+		if input.MediaType == "" {
+			input.MediaType = "both"
+		}
+
+		playlist := &database.SmartPlaylist{
+			UserID:      &user.ID,
+			Name:        input.Name,
+			Description: input.Description,
+			Rules:       input.Rules,
+			SortBy:      input.SortBy,
+			SortOrder:   input.SortOrder,
+			LimitCount:  input.LimitCount,
+			MediaType:   input.MediaType,
+			AutoRefresh: input.AutoRefresh,
+			IsSystem:    false,
+		}
+
+		if err := s.db.CreateSmartPlaylist(playlist); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(playlist)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleSmartPlaylist(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	// Parse the path: /api/smart-playlists/{id} or /api/smart-playlists/{id}/refresh
+	path := strings.TrimPrefix(r.URL.Path, "/api/smart-playlists/")
+	parts := strings.Split(path, "/")
+
+	if len(parts) == 0 || parts[0] == "" {
+		http.Error(w, "Playlist ID required", http.StatusBadRequest)
+		return
+	}
+
+	id, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid playlist ID", http.StatusBadRequest)
+		return
+	}
+
+	// Handle refresh sub-route
+	if len(parts) > 1 && parts[1] == "refresh" {
+		s.handleSmartPlaylistRefresh(w, r, id)
+		return
+	}
+
+	// Handle items sub-route
+	if len(parts) > 1 && parts[1] == "items" {
+		s.handleSmartPlaylistItems(w, r, id)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		playlist, err := s.db.GetSmartPlaylist(id)
+		if err != nil {
+			http.Error(w, "Playlist not found", http.StatusNotFound)
+			return
+		}
+
+		// Get current profile for watched status
+		profileID := s.getActiveProfileID(r)
+
+		// Get items
+		items, err := s.db.GetSmartPlaylistItems(playlist, profileID)
+		if err != nil {
+			items = []database.SmartPlaylistItem{}
+		}
+
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"id":            playlist.ID,
+			"userId":        playlist.UserID,
+			"name":          playlist.Name,
+			"description":   playlist.Description,
+			"rules":         playlist.Rules,
+			"sortBy":        playlist.SortBy,
+			"sortOrder":     playlist.SortOrder,
+			"limitCount":    playlist.LimitCount,
+			"mediaType":     playlist.MediaType,
+			"autoRefresh":   playlist.AutoRefresh,
+			"isSystem":      playlist.IsSystem,
+			"lastRefreshed": playlist.LastRefreshed,
+			"createdAt":     playlist.CreatedAt,
+			"itemCount":     len(items),
+			"items":         items,
+		})
+
+	case http.MethodPut:
+		user := s.getCurrentUser(r)
+		if user == nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		playlist, err := s.db.GetSmartPlaylist(id)
+		if err != nil {
+			http.Error(w, "Playlist not found", http.StatusNotFound)
+			return
+		}
+
+		// Only owner or admin can update
+		if playlist.UserID != nil && *playlist.UserID != user.ID && user.Role != "admin" {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+
+		// System playlists can only be updated by admin
+		if playlist.IsSystem && user.Role != "admin" {
+			http.Error(w, "Cannot modify system playlist", http.StatusForbidden)
+			return
+		}
+
+		var input struct {
+			Name        *string `json:"name"`
+			Description *string `json:"description"`
+			Rules       *string `json:"rules"`
+			SortBy      *string `json:"sortBy"`
+			SortOrder   *string `json:"sortOrder"`
+			LimitCount  *int    `json:"limitCount"`
+			MediaType   *string `json:"mediaType"`
+			AutoRefresh *bool   `json:"autoRefresh"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		if input.Name != nil {
+			playlist.Name = *input.Name
+		}
+		if input.Description != nil {
+			playlist.Description = input.Description
+		}
+		if input.Rules != nil {
+			// Validate rules JSON
+			var rules database.PlaylistRules
+			if err := json.Unmarshal([]byte(*input.Rules), &rules); err != nil {
+				http.Error(w, "Invalid rules format", http.StatusBadRequest)
+				return
+			}
+			playlist.Rules = *input.Rules
+		}
+		if input.SortBy != nil {
+			playlist.SortBy = *input.SortBy
+		}
+		if input.SortOrder != nil {
+			playlist.SortOrder = *input.SortOrder
+		}
+		if input.LimitCount != nil {
+			playlist.LimitCount = input.LimitCount
+		}
+		if input.MediaType != nil {
+			playlist.MediaType = *input.MediaType
+		}
+		if input.AutoRefresh != nil {
+			playlist.AutoRefresh = *input.AutoRefresh
+		}
+
+		if err := s.db.UpdateSmartPlaylist(playlist); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		json.NewEncoder(w).Encode(playlist)
+
+	case http.MethodDelete:
+		user := s.getCurrentUser(r)
+		if user == nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		playlist, err := s.db.GetSmartPlaylist(id)
+		if err != nil {
+			http.Error(w, "Playlist not found", http.StatusNotFound)
+			return
+		}
+
+		// System playlists cannot be deleted
+		if playlist.IsSystem {
+			http.Error(w, "Cannot delete system playlist", http.StatusForbidden)
+			return
+		}
+
+		// Only owner or admin can delete
+		if playlist.UserID != nil && *playlist.UserID != user.ID && user.Role != "admin" {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+
+		if err := s.db.DeleteSmartPlaylist(id); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleSmartPlaylistRefresh(w http.ResponseWriter, r *http.Request, id int64) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	playlist, err := s.db.GetSmartPlaylist(id)
+	if err != nil {
+		http.Error(w, "Playlist not found", http.StatusNotFound)
+		return
+	}
+
+	profileID := s.getActiveProfileID(r)
+
+	// Get fresh items
+	items, err := s.db.GetSmartPlaylistItems(playlist, profileID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Update last refreshed
+	s.db.UpdateSmartPlaylistRefreshed(id)
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"items":     items,
+		"itemCount": len(items),
+	})
+}
+
+func (s *Server) handleSmartPlaylistItems(w http.ResponseWriter, r *http.Request, id int64) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	playlist, err := s.db.GetSmartPlaylist(id)
+	if err != nil {
+		http.Error(w, "Playlist not found", http.StatusNotFound)
+		return
+	}
+
+	profileID := s.getActiveProfileID(r)
+
+	items, err := s.db.GetSmartPlaylistItems(playlist, profileID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(items)
+}
+
+func (s *Server) handleSmartPlaylistPreview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	var input struct {
+		Rules      string `json:"rules"`
+		SortBy     string `json:"sortBy"`
+		SortOrder  string `json:"sortOrder"`
+		LimitCount *int   `json:"limitCount"`
+		MediaType  string `json:"mediaType"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Validate rules
+	var rules database.PlaylistRules
+	if err := json.Unmarshal([]byte(input.Rules), &rules); err != nil {
+		http.Error(w, "Invalid rules format", http.StatusBadRequest)
+		return
+	}
+
+	// Set defaults
+	if input.SortBy == "" {
+		input.SortBy = "added"
+	}
+	if input.SortOrder == "" {
+		input.SortOrder = "desc"
+	}
+	if input.MediaType == "" {
+		input.MediaType = "both"
+	}
+
+	// Create temporary playlist for preview
+	playlist := &database.SmartPlaylist{
+		Rules:      input.Rules,
+		SortBy:     input.SortBy,
+		SortOrder:  input.SortOrder,
+		LimitCount: input.LimitCount,
+		MediaType:  input.MediaType,
+	}
+
+	profileID := s.getActiveProfileID(r)
+
+	items, err := s.db.GetSmartPlaylistItems(playlist, profileID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"items":     items,
+		"itemCount": len(items),
+	})
+}
+
+// Upgrade search handlers
+
+func (s *Server) handleUpgrades(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	summary, err := s.db.GetUpgradesSummary()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(summary)
+}
+
+func (s *Server) handleUpgradeSearch(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		MediaType string `json:"mediaType"`
+		MediaID   int64  `json:"mediaId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.MediaType == "" || req.MediaID == 0 {
+		http.Error(w, "mediaType and mediaId are required", http.StatusBadRequest)
+		return
+	}
+
+	// Get the media item to search for upgrades
+	var tmdbID int64
+	var title string
+	var year int
+	var imdbID string
+	var qualityPresetID int64
+
+	if req.MediaType == "movie" {
+		movie, err := s.db.GetMovie(req.MediaID)
+		if err != nil {
+			http.Error(w, "Movie not found", http.StatusNotFound)
+			return
+		}
+		if movie.TmdbID != nil {
+			tmdbID = *movie.TmdbID
+		}
+		title = movie.Title
+		year = movie.Year
+		if movie.ImdbID != nil {
+			imdbID = *movie.ImdbID
+		}
+		// Get quality preset from override or default
+		override, _ := s.db.GetMediaQualityOverride(req.MediaID, "movie")
+		if override != nil && override.PresetID != nil {
+			qualityPresetID = *override.PresetID
+		} else {
+			// Get default preset
+			presets, _ := s.db.GetQualityPresets()
+			for _, p := range presets {
+				if p.IsDefault && p.MediaType == "movie" {
+					qualityPresetID = p.ID
+					break
+				}
+			}
+		}
+	} else if req.MediaType == "episode" {
+		// For episodes, we need to get the season and show info
+		episode, err := s.db.GetEpisode(req.MediaID)
+		if err != nil {
+			http.Error(w, "Episode not found", http.StatusNotFound)
+			return
+		}
+		season, err := s.db.GetSeasonByID(episode.SeasonID)
+		if err != nil {
+			http.Error(w, "Season not found", http.StatusNotFound)
+			return
+		}
+		show, err := s.db.GetShow(season.ShowID)
+		if err != nil {
+			http.Error(w, "Show not found", http.StatusNotFound)
+			return
+		}
+		if show.TmdbID != nil {
+			tmdbID = *show.TmdbID
+		}
+		title = fmt.Sprintf("%s S%02dE%02d", show.Title, season.SeasonNumber, episode.EpisodeNumber)
+		year = show.Year
+		if show.ImdbID != nil {
+			imdbID = *show.ImdbID
+		}
+		// Get quality preset from override or default
+		override, _ := s.db.GetMediaQualityOverride(show.ID, "show")
+		if override != nil && override.PresetID != nil {
+			qualityPresetID = *override.PresetID
+		} else {
+			// Get default preset
+			presets, _ := s.db.GetQualityPresets()
+			for _, p := range presets {
+				if p.IsDefault && p.MediaType == "tv" {
+					qualityPresetID = p.ID
+					break
+				}
+			}
+		}
+	} else {
+		http.Error(w, "Invalid mediaType, must be 'movie' or 'episode'", http.StatusBadRequest)
+		return
+	}
+
+	// Create a wanted item for the upgrade
+	if tmdbID > 0 && qualityPresetID > 0 {
+		err := s.db.CreateUpgradeWantedItem(req.MediaType, tmdbID, imdbID, title, year, "", qualityPresetID, req.MediaID)
+		if err != nil {
+			log.Printf("Failed to create upgrade wanted item: %v", err)
+			http.Error(w, "Failed to queue upgrade search", http.StatusInternalServerError)
+			return
+		}
+
+		// Trigger the search via scheduler
+		if s.scheduler != nil {
+			mediaType := req.MediaType
+			if mediaType == "episode" {
+				mediaType = "show"
+			}
+			go s.scheduler.SearchWantedItem(tmdbID, mediaType)
+		}
+	}
+
+	// Update the search timestamp
+	s.db.UpdateUpgradeSearched(req.MediaID, req.MediaType, false)
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Upgrade search queued",
+	})
+}
+
+func (s *Server) handleUpgradeSearchAll(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Limit     int    `json:"limit"`
+		MediaType string `json:"mediaType"` // "movie", "episode", or "" for both
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Limit <= 0 {
+		req.Limit = 10 // Default limit
+	}
+	if req.Limit > 100 {
+		req.Limit = 100 // Max limit
+	}
+
+	var queuedCount int
+
+	// Get upgradeable movies if type is empty or "movie"
+	if req.MediaType == "" || req.MediaType == "movie" {
+		movies, err := s.db.GetUpgradeableMovies(req.Limit)
+		if err != nil {
+			log.Printf("Failed to get upgradeable movies: %v", err)
+		} else {
+			for _, item := range movies {
+				// Get full movie details
+				movie, err := s.db.GetMovie(item.ID)
+				if err != nil {
+					continue
+				}
+
+				var imdbID string
+				if movie.ImdbID != nil {
+					imdbID = *movie.ImdbID
+				}
+
+				// Get quality preset from override or default
+				var qualityPresetID int64
+				override, _ := s.db.GetMediaQualityOverride(item.ID, "movie")
+				if override != nil && override.PresetID != nil {
+					qualityPresetID = *override.PresetID
+				} else {
+					presets, _ := s.db.GetQualityPresets()
+					for _, p := range presets {
+						if p.IsDefault && p.MediaType == "movie" {
+							qualityPresetID = p.ID
+							break
+						}
+					}
+				}
+
+				if movie.TmdbID != nil && qualityPresetID > 0 {
+					err := s.db.CreateUpgradeWantedItem("movie", *movie.TmdbID, imdbID, movie.Title, movie.Year, "", qualityPresetID, item.ID)
+					if err == nil {
+						queuedCount++
+						s.db.UpdateUpgradeSearched(item.ID, "movie", false)
+						if s.scheduler != nil {
+							go s.scheduler.SearchWantedItem(*movie.TmdbID, "movie")
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Get upgradeable episodes if type is empty or "episode"
+	if req.MediaType == "" || req.MediaType == "episode" {
+		episodes, err := s.db.GetUpgradeableEpisodes(req.Limit)
+		if err != nil {
+			log.Printf("Failed to get upgradeable episodes: %v", err)
+		} else {
+			for _, item := range episodes {
+				// Get episode, season and show details
+				episode, err := s.db.GetEpisode(item.ID)
+				if err != nil {
+					continue
+				}
+				season, err := s.db.GetSeasonByID(episode.SeasonID)
+				if err != nil {
+					continue
+				}
+				show, err := s.db.GetShow(season.ShowID)
+				if err != nil {
+					continue
+				}
+
+				var imdbID string
+				if show.ImdbID != nil {
+					imdbID = *show.ImdbID
+				}
+
+				// Get quality preset from override or default
+				var qualityPresetID int64
+				override, _ := s.db.GetMediaQualityOverride(show.ID, "show")
+				if override != nil && override.PresetID != nil {
+					qualityPresetID = *override.PresetID
+				} else {
+					presets, _ := s.db.GetQualityPresets()
+					for _, p := range presets {
+						if p.IsDefault && p.MediaType == "tv" {
+							qualityPresetID = p.ID
+							break
+						}
+					}
+				}
+
+				if show.TmdbID != nil && qualityPresetID > 0 {
+					title := fmt.Sprintf("%s S%02dE%02d", show.Title, season.SeasonNumber, episode.EpisodeNumber)
+					err := s.db.CreateUpgradeWantedItem("episode", *show.TmdbID, imdbID, title, show.Year, "", qualityPresetID, item.ID)
+					if err == nil {
+						queuedCount++
+						s.db.UpdateUpgradeSearched(item.ID, "episode", false)
+						if s.scheduler != nil {
+							go s.scheduler.SearchWantedItem(*show.TmdbID, "show")
+						}
+					}
+				}
+			}
+		}
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"queued":  queuedCount,
+		"message": fmt.Sprintf("Queued %d upgrade searches", queuedCount),
+	})
+}
+
+// handleOpenSubtitlesSearch searches for subtitles on OpenSubtitles
+func (s *Server) handleOpenSubtitlesSearch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Query           string   `json:"query"`
+		TMDbID          int      `json:"tmdbId"`
+		IMDbID          string   `json:"imdbId"`
+		Year            int      `json:"year"`
+		Season          int      `json:"season"`
+		Episode         int      `json:"episode"`
+		Languages       []string `json:"languages"`
+		HearingImpaired *bool    `json:"hearingImpaired"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	apiKey, _ := s.db.GetSetting("opensubtitles_api_key")
+	if apiKey == "" {
+		http.Error(w, "OpenSubtitles API key not configured", http.StatusBadRequest)
+		return
+	}
+
+	client := subtitles.NewClient(apiKey)
+
+	// Use configured languages if none provided
+	if len(req.Languages) == 0 {
+		langSetting, _ := s.db.GetSetting("opensubtitles_languages")
+		if langSetting != "" {
+			req.Languages = strings.Split(langSetting, ",")
+		} else {
+			req.Languages = []string{"en"}
+		}
+	}
+
+	searchReq := subtitles.SearchRequest{
+		Query:           req.Query,
+		TMDbID:          req.TMDbID,
+		IMDbID:          req.IMDbID,
+		Year:            req.Year,
+		Season:          req.Season,
+		Episode:         req.Episode,
+		Languages:       req.Languages,
+		HearingImpaired: req.HearingImpaired,
+	}
+
+	results, err := client.Search(searchReq)
+	if err != nil {
+		log.Printf("OpenSubtitles search error: %v", err)
+		http.Error(w, fmt.Sprintf("Search failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(results)
+}
+
+// handleOpenSubtitlesDownload downloads a subtitle file
+func (s *Server) handleOpenSubtitlesDownload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		FileID     int    `json:"fileId"`
+		MediaType  string `json:"mediaType"`
+		MediaID    int64  `json:"mediaId"`
+		Language   string `json:"language"`
+		EpisodeID  *int64 `json:"episodeId,omitempty"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.FileID == 0 {
+		http.Error(w, "fileId is required", http.StatusBadRequest)
+		return
+	}
+
+	apiKey, _ := s.db.GetSetting("opensubtitles_api_key")
+	if apiKey == "" {
+		http.Error(w, "OpenSubtitles API key not configured", http.StatusBadRequest)
+		return
+	}
+
+	// Get the video file path
+	var videoPath string
+	if req.MediaType == "movie" {
+		movie, err := s.db.GetMovie(req.MediaID)
+		if err != nil || movie == nil {
+			http.Error(w, "Movie not found", http.StatusNotFound)
+			return
+		}
+		videoPath = movie.Path
+	} else if req.MediaType == "episode" && req.EpisodeID != nil {
+		episode, err := s.db.GetEpisode(*req.EpisodeID)
+		if err != nil || episode == nil {
+			http.Error(w, "Episode not found", http.StatusNotFound)
+			return
+		}
+		videoPath = episode.Path
+	} else {
+		http.Error(w, "Invalid media type or missing episodeId", http.StatusBadRequest)
+		return
+	}
+
+	if videoPath == "" {
+		http.Error(w, "No video file found", http.StatusNotFound)
+		return
+	}
+
+	client := subtitles.NewClient(apiKey)
+
+	// Get download link
+	dlResp, err := client.GetDownloadLink(req.FileID)
+	if err != nil {
+		log.Printf("OpenSubtitles download link error: %v", err)
+		http.Error(w, fmt.Sprintf("Failed to get download link: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Generate subtitle path
+	videoBase := strings.TrimSuffix(videoPath, filepath.Ext(videoPath))
+	subPath := videoBase + "." + req.Language + ".srt"
+
+	// Download the subtitle
+	if err := client.Download(dlResp.Link, subPath); err != nil {
+		log.Printf("OpenSubtitles download error: %v", err)
+		http.Error(w, fmt.Sprintf("Failed to download subtitle: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("Downloaded subtitle to: %s", subPath)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":  true,
+		"path":     subPath,
+		"message":  "Subtitle downloaded successfully",
+		"remaining": dlResp.Remaining,
+	})
+}
+
+// handleOpenSubtitlesLanguages returns available subtitle languages
+func (s *Server) handleOpenSubtitlesLanguages(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	apiKey, _ := s.db.GetSetting("opensubtitles_api_key")
+	if apiKey == "" {
+		// Return common languages without API key
+		languages := []subtitles.Language{
+			{Code: "en", Name: "English"},
+			{Code: "es", Name: "Spanish"},
+			{Code: "fr", Name: "French"},
+			{Code: "de", Name: "German"},
+			{Code: "it", Name: "Italian"},
+			{Code: "pt", Name: "Portuguese"},
+			{Code: "nl", Name: "Dutch"},
+			{Code: "pl", Name: "Polish"},
+			{Code: "ru", Name: "Russian"},
+			{Code: "ja", Name: "Japanese"},
+			{Code: "ko", Name: "Korean"},
+			{Code: "zh", Name: "Chinese"},
+			{Code: "ar", Name: "Arabic"},
+			{Code: "hi", Name: "Hindi"},
+			{Code: "sv", Name: "Swedish"},
+			{Code: "da", Name: "Danish"},
+			{Code: "fi", Name: "Finnish"},
+			{Code: "no", Name: "Norwegian"},
+			{Code: "tr", Name: "Turkish"},
+			{Code: "el", Name: "Greek"},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(languages)
+		return
+	}
+
+	client := subtitles.NewClient(apiKey)
+	languages, err := client.GetLanguages()
+	if err != nil {
+		log.Printf("OpenSubtitles languages error: %v", err)
+		http.Error(w, fmt.Sprintf("Failed to get languages: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(languages)
+}
+
+// handleOpenSubtitlesTest tests the OpenSubtitles API connection
+func (s *Server) handleOpenSubtitlesTest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		APIKey string `json:"apiKey"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	apiKey := req.APIKey
+	if apiKey == "" {
+		apiKey, _ = s.db.GetSetting("opensubtitles_api_key")
+	}
+
+	if apiKey == "" {
+		http.Error(w, "No API key provided", http.StatusBadRequest)
+		return
+	}
+
+	client := subtitles.NewClient(apiKey)
+	if err := client.Test(); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "API key is valid",
+	})
+}
+
+// handleTraktAuthURL returns the OAuth authorization URL for Trakt
+func (s *Server) handleTraktAuthURL(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	clientID, _ := s.db.GetSetting("trakt_client_id")
+	if clientID == "" {
+		http.Error(w, "Trakt client ID not configured", http.StatusBadRequest)
+		return
+	}
+
+	redirectURI := r.URL.Query().Get("redirect_uri")
+	if redirectURI == "" {
+		http.Error(w, "redirect_uri is required", http.StatusBadRequest)
+		return
+	}
+
+	client := trakt.NewClient(clientID, "")
+	authURL := client.GetAuthURL(redirectURI)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"url": authURL,
+	})
+}
+
+// handleTraktCallback handles the OAuth callback from Trakt
+func (s *Server) handleTraktCallback(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	user := r.Context().Value(userContextKey).(*database.User)
+
+	var req struct {
+		Code        string `json:"code"`
+		RedirectURI string `json:"redirectUri"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	clientID, _ := s.db.GetSetting("trakt_client_id")
+	clientSecret, _ := s.db.GetSetting("trakt_client_secret")
+
+	if clientID == "" || clientSecret == "" {
+		http.Error(w, "Trakt not configured", http.StatusBadRequest)
+		return
+	}
+
+	client := trakt.NewClient(clientID, clientSecret)
+	tokenResp, err := client.ExchangeCode(req.Code, req.RedirectURI)
+	if err != nil {
+		log.Printf("Trakt code exchange error: %v", err)
+		http.Error(w, "Failed to exchange code: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Get user info from Trakt
+	settings, err := client.GetUserSettings()
+	if err != nil {
+		log.Printf("Trakt get user settings error: %v", err)
+		http.Error(w, "Failed to get user info", http.StatusInternalServerError)
+		return
+	}
+
+	// Save config to database
+	expiresAt := time.Unix(tokenResp.CreatedAt, 0).Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
+	config := &database.TraktConfig{
+		UserID:        user.ID,
+		AccessToken:   tokenResp.AccessToken,
+		RefreshToken:  tokenResp.RefreshToken,
+		ExpiresAt:     &expiresAt,
+		Username:      &settings.User.Username,
+		SyncEnabled:   true,
+		SyncWatched:   true,
+		SyncRatings:   true,
+		SyncWatchlist: true,
+	}
+
+	if err := s.db.SaveTraktConfig(config); err != nil {
+		log.Printf("Failed to save Trakt config: %v", err)
+		http.Error(w, "Failed to save configuration", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":  true,
+		"username": settings.User.Username,
+	})
+}
+
+// handleTraktConfig gets or updates Trakt configuration for the current user
+func (s *Server) handleTraktConfig(w http.ResponseWriter, r *http.Request) {
+	user := r.Context().Value(userContextKey).(*database.User)
+
+	switch r.Method {
+	case http.MethodGet:
+		config, err := s.db.GetTraktConfig(user.ID)
+		if err != nil {
+			http.Error(w, "Failed to get config", http.StatusInternalServerError)
+			return
+		}
+
+		// Return config without sensitive tokens
+		response := map[string]interface{}{
+			"connected": config != nil && config.AccessToken != "",
+		}
+
+		if config != nil {
+			response["username"] = config.Username
+			response["syncEnabled"] = config.SyncEnabled
+			response["syncWatched"] = config.SyncWatched
+			response["syncRatings"] = config.SyncRatings
+			response["syncWatchlist"] = config.SyncWatchlist
+			response["lastSyncedAt"] = config.LastSyncedAt
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+
+	case http.MethodPut:
+		var req struct {
+			SyncEnabled   bool `json:"syncEnabled"`
+			SyncWatched   bool `json:"syncWatched"`
+			SyncRatings   bool `json:"syncRatings"`
+			SyncWatchlist bool `json:"syncWatchlist"`
+		}
+
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		config, err := s.db.GetTraktConfig(user.ID)
+		if err != nil || config == nil {
+			http.Error(w, "Trakt not connected", http.StatusBadRequest)
+			return
+		}
+
+		config.SyncEnabled = req.SyncEnabled
+		config.SyncWatched = req.SyncWatched
+		config.SyncRatings = req.SyncRatings
+		config.SyncWatchlist = req.SyncWatchlist
+
+		if err := s.db.SaveTraktConfig(config); err != nil {
+			http.Error(w, "Failed to save config", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]bool{"success": true})
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleTraktDisconnect disconnects Trakt for the current user
+func (s *Server) handleTraktDisconnect(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	user := r.Context().Value(userContextKey).(*database.User)
+
+	if err := s.db.DeleteTraktConfig(user.ID); err != nil {
+		http.Error(w, "Failed to disconnect", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// handleTraktSync triggers a manual sync with Trakt
+func (s *Server) handleTraktSync(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	user := r.Context().Value(userContextKey).(*database.User)
+
+	// Get the active profile or default profile
+	profileID := s.getActiveProfileID(r)
+	if profileID == nil {
+		profile, err := s.db.GetDefaultProfile(user.ID)
+		if err != nil || profile == nil {
+			http.Error(w, "No profile found", http.StatusBadRequest)
+			return
+		}
+		profileID = &profile.ID
+	}
+
+	config, err := s.db.GetTraktConfig(user.ID)
+	if err != nil || config == nil || config.AccessToken == "" {
+		http.Error(w, "Trakt not connected", http.StatusBadRequest)
+		return
+	}
+
+	clientID, _ := s.db.GetSetting("trakt_client_id")
+	clientSecret, _ := s.db.GetSetting("trakt_client_secret")
+
+	client := trakt.NewClient(clientID, clientSecret)
+	client.SetTokens(config.AccessToken, config.RefreshToken, *config.ExpiresAt)
+
+	// Refresh token if needed
+	if client.NeedsRefresh() {
+		tokenResp, err := client.RefreshAccessToken()
+		if err != nil {
+			log.Printf("Trakt token refresh error: %v", err)
+			http.Error(w, "Failed to refresh token", http.StatusInternalServerError)
+			return
+		}
+		expiresAt := time.Unix(tokenResp.CreatedAt, 0).Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
+		config.AccessToken = tokenResp.AccessToken
+		config.RefreshToken = tokenResp.RefreshToken
+		config.ExpiresAt = &expiresAt
+		s.db.SaveTraktConfig(config)
+	}
+
+	// Perform sync
+	syncResult := s.performTraktSync(*profileID, client, config)
+
+	// Update last synced time
+	s.db.UpdateTraktSyncTime(user.ID)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(syncResult)
+}
+
+// performTraktSync performs the actual sync with Trakt
+func (s *Server) performTraktSync(profileID int64, client *trakt.Client, config *database.TraktConfig) map[string]interface{} {
+	result := map[string]interface{}{
+		"success": true,
+		"pulled":  map[string]int{},
+		"pushed":  map[string]int{},
+		"errors":  []string{},
+	}
+
+	errors := []string{}
+	pulled := map[string]int{"movies": 0, "shows": 0}
+	pushed := map[string]int{"movies": 0, "episodes": 0}
+
+	// Helper to check if watched (>90% progress)
+	isWatched := func(mediaType string, mediaID int64) bool {
+		progress, err := s.db.GetProgress(profileID, mediaType, mediaID)
+		if err != nil || progress == nil {
+			return false
+		}
+		if progress.Duration > 0 && progress.Position/progress.Duration >= 0.9 {
+			return true
+		}
+		return false
+	}
+
+	// Helper to mark as watched
+	markWatched := func(mediaType string, mediaID int64) {
+		progress := &database.Progress{
+			ProfileID: profileID,
+			MediaType: mediaType,
+			MediaID:   mediaID,
+			Position:  100, // 100% position
+			Duration:  100, // 100% duration
+		}
+		s.db.SaveProgress(progress)
+	}
+
+	// Pull watched movies from Trakt
+	if config.SyncWatched {
+		watchedMovies, err := client.GetWatchedMovies()
+		if err != nil {
+			errors = append(errors, "Failed to get watched movies: "+err.Error())
+		} else {
+			for _, wm := range watchedMovies {
+				// Find movie in library by TMDB ID
+				movie, err := s.db.GetMovieByTmdb(int64(wm.Movie.IDs.TMDB))
+				if err != nil || movie == nil {
+					continue
+				}
+				// Mark as watched if not already
+				if !isWatched("movie", movie.ID) {
+					markWatched("movie", movie.ID)
+					pulled["movies"]++
+				}
+			}
+		}
+
+		// Pull watched shows from Trakt
+		watchedShows, err := client.GetWatchedShows()
+		if err != nil {
+			errors = append(errors, "Failed to get watched shows: "+err.Error())
+		} else {
+			for _, ws := range watchedShows {
+				// Find show in library
+				show, err := s.db.GetShowByTmdb(int64(ws.Show.IDs.TMDB))
+				if err != nil || show == nil {
+					continue
+				}
+				// Mark episodes as watched
+				for _, season := range ws.Seasons {
+					for _, ep := range season.Episodes {
+						episode, err := s.db.GetEpisodeByShowSeasonEpisode(show.ID, season.Number, ep.Number)
+						if err != nil || episode == nil {
+							continue
+						}
+						if !isWatched("episode", episode.ID) {
+							markWatched("episode", episode.ID)
+							pulled["shows"]++
+						}
+					}
+				}
+			}
+		}
+
+		// Push unsynced watch history to Trakt
+		unsyncedHistory, err := s.db.GetUnsyncedWatchHistory(profileID)
+		if err == nil && len(unsyncedHistory) > 0 {
+			var movieItems []trakt.HistoryItem
+			var episodeItems []trakt.HistoryItem
+			var syncedIDs []int64
+
+			for _, item := range unsyncedHistory {
+				if item.MediaType == "movie" {
+					movie, err := s.db.GetMovie(item.MediaID)
+					if err != nil || movie == nil || movie.TmdbID == nil {
+						continue
+					}
+					movieItems = append(movieItems, trakt.HistoryItem{
+						WatchedAt: item.WatchedAt,
+						Movie: &trakt.Movie{
+							IDs: trakt.IDs{TMDB: int(*movie.TmdbID)},
+						},
+					})
+					syncedIDs = append(syncedIDs, item.ID)
+				} else if item.MediaType == "episode" {
+					episode, err := s.db.GetEpisode(item.MediaID)
+					if err != nil || episode == nil {
+						continue
+					}
+					season, err := s.db.GetSeasonByID(episode.SeasonID)
+					if err != nil || season == nil {
+						continue
+					}
+					show, err := s.db.GetShow(season.ShowID)
+					if err != nil || show == nil || show.TmdbID == nil {
+						continue
+					}
+					episodeItems = append(episodeItems, trakt.HistoryItem{
+						WatchedAt: item.WatchedAt,
+						Show: &trakt.Show{
+							IDs: trakt.IDs{TMDB: int(*show.TmdbID)},
+						},
+						Episode: &trakt.Episode{
+							Season: season.SeasonNumber,
+							Number: episode.EpisodeNumber,
+						},
+					})
+					syncedIDs = append(syncedIDs, item.ID)
+				}
+			}
+
+			if len(movieItems) > 0 || len(episodeItems) > 0 {
+				histReq := &trakt.HistoryRequest{
+					Movies:   movieItems,
+					Episodes: episodeItems,
+				}
+				resp, err := client.AddToHistory(histReq)
+				if err != nil {
+					errors = append(errors, "Failed to push history: "+err.Error())
+				} else {
+					pushed["movies"] = resp.Added.Movies
+					pushed["episodes"] = resp.Added.Episodes
+					s.db.MarkWatchHistorySynced(syncedIDs)
+				}
+			}
+		}
+	}
+
+	result["pulled"] = pulled
+	result["pushed"] = pushed
+	result["errors"] = errors
+	if len(errors) > 0 {
+		result["success"] = false
+	}
+
+	return result
+}
+
+// handleTraktTest tests the Trakt API connection for the current user
+func (s *Server) handleTraktTest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	user := r.Context().Value(userContextKey).(*database.User)
+
+	config, err := s.db.GetTraktConfig(user.ID)
+	if err != nil || config == nil || config.AccessToken == "" {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":   false,
+			"connected": false,
+			"error":     "Not connected to Trakt",
+		})
+		return
+	}
+
+	clientID, _ := s.db.GetSetting("trakt_client_id")
+	clientSecret, _ := s.db.GetSetting("trakt_client_secret")
+
+	client := trakt.NewClient(clientID, clientSecret)
+	client.SetTokens(config.AccessToken, config.RefreshToken, *config.ExpiresAt)
+
+	if err := client.Test(); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":   false,
+			"connected": true,
+			"error":     err.Error(),
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":   true,
+		"connected": true,
+		"username":  config.Username,
+	})
 }

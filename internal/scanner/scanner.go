@@ -16,6 +16,7 @@ import (
 
 	"github.com/outpost/outpost/internal/database"
 	"github.com/outpost/outpost/internal/metadata"
+	"github.com/outpost/outpost/internal/subtitles"
 )
 
 var videoExtensions = map[string]bool{
@@ -314,10 +315,11 @@ func (s *Scanner) scanMovies(lib *database.Library) error {
 					log.Printf("Failed to fetch metadata for %s: %v", title, err)
 				}
 			}
-			// Organize folder, extract subtitles, and extract chapters in background
+			// Organize folder, extract subtitles, extract chapters, and auto-download subtitles in background
 			go func(m *database.Movie, libPath string) {
 				s.OrganizeAndExtractSubtitles(m, libPath)
 				s.ExtractChapters("movie", m.ID, m.Path)
+				s.AutoDownloadSubtitles("movie", m.Path, m.Title, m.Year, 0, 0)
 			}(movie, lib.Path)
 		}
 	}
@@ -439,11 +441,12 @@ func (s *Scanner) scanTV(lib *database.Library) error {
 		} else {
 			added++
 			log.Printf("Added episode: %s S%02dE%02d", showTitle, seasonNum, episodeNum)
-			// Extract subtitles and chapters in background
-			go func(ep *database.Episode, p string) {
+			// Extract subtitles, chapters, and auto-download subtitles in background
+			go func(ep *database.Episode, p string, showName string, sNum, eNum int) {
 				s.ExtractSubtitles(p)
 				s.ExtractChapters("episode", ep.ID, p)
-			}(episode, path)
+				s.AutoDownloadSubtitles("episode", p, showName, 0, sNum, eNum)
+			}(episode, path, showTitle, seasonNum, episodeNum)
 		}
 
 		// Fetch show metadata if this is a new show
@@ -1045,5 +1048,69 @@ func (s *Scanner) ExtractChapters(mediaType string, mediaID int64, videoPath str
 		log.Printf("Failed to save chapters for %s: %v", baseName, err)
 	} else {
 		log.Printf("Saved %d chapters for %s", len(chapters), baseName)
+	}
+}
+
+// AutoDownloadSubtitles downloads subtitles from OpenSubtitles if auto-download is enabled
+func (s *Scanner) AutoDownloadSubtitles(mediaType string, videoPath string, title string, year int, season, episode int) {
+	// Check if auto-download is enabled
+	autoDownload, err := s.db.GetSetting("opensubtitles_auto_download")
+	if err != nil || autoDownload != "true" {
+		return
+	}
+
+	// Get API key
+	apiKey, err := s.db.GetSetting("opensubtitles_api_key")
+	if err != nil || apiKey == "" {
+		return
+	}
+
+	// Get preferred languages
+	langSetting, _ := s.db.GetSetting("opensubtitles_languages")
+	if langSetting == "" {
+		langSetting = "en"
+	}
+	languages := strings.Split(langSetting, ",")
+
+	// Get hearing impaired preference
+	hiSetting, _ := s.db.GetSetting("opensubtitles_hearing_impaired")
+	var hearingImpaired *bool
+	if hiSetting == "only" {
+		hi := true
+		hearingImpaired = &hi
+	} else if hiSetting == "exclude" {
+		hi := false
+		hearingImpaired = &hi
+	}
+
+	client := subtitles.NewClient(apiKey)
+
+	// Try each language
+	for _, lang := range languages {
+		lang = strings.TrimSpace(lang)
+		if lang == "" {
+			continue
+		}
+
+		// Check if subtitle already exists for this language
+		videoBase := strings.TrimSuffix(videoPath, filepath.Ext(videoPath))
+		subPath := videoBase + "." + lang + ".srt"
+		if _, err := os.Stat(subPath); err == nil {
+			log.Printf("Subtitle already exists for %s (%s), skipping", title, lang)
+			continue
+		}
+
+		var downloadErr error
+		if mediaType == "movie" {
+			_, downloadErr = client.SearchAndDownload(videoPath, title, year, lang, hearingImpaired)
+		} else if mediaType == "episode" {
+			_, downloadErr = client.SearchAndDownloadEpisode(videoPath, title, season, episode, lang, hearingImpaired)
+		}
+
+		if downloadErr != nil {
+			log.Printf("Failed to auto-download %s subtitles for %s: %v", lang, title, downloadErr)
+		} else {
+			log.Printf("Auto-downloaded %s subtitles for %s", lang, title)
+		}
 	}
 }

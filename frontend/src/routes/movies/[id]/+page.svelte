@@ -21,6 +21,7 @@
 	import MediaDetail from '$lib/components/MediaDetail.svelte';
 	import Select from '$lib/components/ui/Select.svelte';
 	import AddToCollectionButton from '$lib/components/AddToCollectionButton.svelte';
+	import SubtitleSearchModal from '$lib/components/SubtitleSearchModal.svelte';
 
 	let movie: Movie | null = $state(null);
 	let loading = $state(true);
@@ -39,6 +40,7 @@
 	let confirmingDelete = $state(false);
 	let deleting = $state(false);
 	let showTrailerModal = $state(false);
+	let showSubtitleModal = $state(false);
 	let selectedVideo = $state(0);
 	let recommendations: TMDBMovieResult[] = $state([]);
 	let qualityInfo: QualityInfo | null = $state(null);
@@ -376,6 +378,12 @@
 						>
 							{refreshing ? 'Refreshing...' : 'Refresh Metadata'}
 						</button>
+						<button
+							onclick={() => { showSubtitleModal = true; showManageMenu = false; }}
+							class="w-full text-left px-4 py-2.5 text-sm text-text-secondary hover:bg-white/10 hover:text-text-primary transition-colors"
+						>
+							Search Subtitles
+						</button>
 						<button class="w-full text-left px-4 py-2.5 text-sm text-text-secondary hover:bg-white/10 hover:text-text-primary transition-colors" onclick={() => showManageMenu = false}>Edit Metadata</button>
 						<button class="w-full text-left px-4 py-2.5 text-sm text-text-secondary hover:bg-white/10 hover:text-text-primary transition-colors" onclick={() => showManageMenu = false}>Fix Match</button>
 						<div class="border-t border-border-subtle my-1"></div>
@@ -439,6 +447,18 @@
 							inline={true}
 						/>
 					</div>
+				{/if}
+				{#if qualityInfo?.status && !qualityInfo.status.targetMet}
+					<a
+						href="/upgrades"
+						class="ml-2 px-2 py-1 rounded-lg text-xs font-medium bg-orange-500/20 text-orange-400 hover:bg-orange-500/30 transition-colors flex items-center gap-1.5"
+						title="Quality is below cutoff - click to view upgrades"
+					>
+						<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18" />
+						</svg>
+						Upgrade Available
+					</a>
 				{/if}
 			</div>
 		{/snippet}
@@ -591,5 +611,25 @@
 				</div>
 			</div>
 		</div>
+	{/if}
+
+	<!-- Subtitle Search Modal -->
+	{#if showSubtitleModal && movie}
+		<SubtitleSearchModal
+			media={{
+				type: 'movie',
+				mediaId: movie.id,
+				title: movie.title,
+				year: movie.year,
+				tmdbId: movie.tmdbId ?? undefined,
+				imdbId: movie.imdbId ?? undefined
+			}}
+			onClose={() => showSubtitleModal = false}
+			onDownloaded={async () => {
+				// Refresh media info to show new subtitle
+				mediaInfo = await getMediaInfo('movie', movie!.id);
+				toast.success('Subtitle downloaded successfully');
+			}}
+		/>
 	{/if}
 {/if}

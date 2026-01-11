@@ -3,6 +3,8 @@ package database
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -117,6 +119,7 @@ type Episode struct {
 
 type Progress struct {
 	ID        int64     `json:"id"`
+	ProfileID int64     `json:"profileId"`
 	MediaType string    `json:"mediaType"` // movie, episode
 	MediaID   int64     `json:"mediaId"`
 	Position  float64   `json:"position"`  // seconds
@@ -152,6 +155,18 @@ type User struct {
 	ContentRatingLimit *string   `json:"contentRatingLimit,omitempty"` // G, PG, PG-13, R, NC-17, or nil (no limit)
 	PinHash            *string   `json:"-"`                            // PIN hash, never expose
 	RequirePin         bool      `json:"requirePin"`                   // Require PIN for elevated content
+	CreatedAt          time.Time `json:"createdAt"`
+}
+
+// Profile represents a viewing profile within a user account (Netflix-style)
+type Profile struct {
+	ID                 int64     `json:"id"`
+	UserID             int64     `json:"userId"`
+	Name               string    `json:"name"`
+	AvatarURL          *string   `json:"avatarUrl,omitempty"`
+	IsDefault          bool      `json:"isDefault"`
+	IsKid              bool      `json:"isKid"`
+	ContentRatingLimit *string   `json:"contentRatingLimit,omitempty"`
 	CreatedAt          time.Time `json:"createdAt"`
 }
 
@@ -276,10 +291,11 @@ func NormalizeContentRating(rating string, country string) string {
 }
 
 type Session struct {
-	ID        int64     `json:"id"`
-	UserID    int64     `json:"userId"`
-	Token     string    `json:"token"`
-	ExpiresAt time.Time `json:"expiresAt"`
+	ID              int64     `json:"id"`
+	UserID          int64     `json:"userId"`
+	Token           string    `json:"token"`
+	ExpiresAt       time.Time `json:"expiresAt"`
+	ActiveProfileID *int64    `json:"activeProfileId,omitempty"`
 }
 
 // PinElevation represents a temporary elevated access session after PIN verification
@@ -501,19 +517,48 @@ type MediaQualityOverride struct {
 }
 
 type MediaQualityStatus struct {
-	ID                int64      `json:"id"`
-	MediaID           int64      `json:"mediaId"`
-	MediaType         string     `json:"mediaType"`
-	CurrentResolution *string    `json:"currentResolution"`
-	CurrentSource     *string    `json:"currentSource"`
-	CurrentHDR        *string    `json:"currentHdr"`
-	CurrentAudio      *string    `json:"currentAudio"`
-	CurrentEdition    *string    `json:"currentEdition"`
-	TargetMet         bool       `json:"targetMet"`
-	UpgradeAvailable  bool       `json:"upgradeAvailable"`
-	LastSearch        *time.Time `json:"lastSearch"`
-	CreatedAt         time.Time  `json:"createdAt"`
-	UpdatedAt         time.Time  `json:"updatedAt"`
+	ID                 int64      `json:"id"`
+	MediaID            int64      `json:"mediaId"`
+	MediaType          string     `json:"mediaType"`
+	CurrentResolution  *string    `json:"currentResolution"`
+	CurrentSource      *string    `json:"currentSource"`
+	CurrentHDR         *string    `json:"currentHdr"`
+	CurrentAudio       *string    `json:"currentAudio"`
+	CurrentEdition     *string    `json:"currentEdition"`
+	TargetMet          bool       `json:"targetMet"`
+	UpgradeAvailable   bool       `json:"upgradeAvailable"`
+	LastSearch         *time.Time `json:"lastSearch"`
+	UpgradeSearchedAt  *time.Time `json:"upgradeSearchedAt"`
+	CurrentScore       int        `json:"currentScore"`
+	CutoffScore        int        `json:"cutoffScore"`
+	CreatedAt          time.Time  `json:"createdAt"`
+	UpdatedAt          time.Time  `json:"updatedAt"`
+}
+
+// UpgradeableItem represents a media item that can be upgraded
+type UpgradeableItem struct {
+	ID             int64   `json:"id"`
+	Type           string  `json:"type"` // movie or episode
+	Title          string  `json:"title"`
+	Year           int     `json:"year,omitempty"`
+	SeasonNumber   int     `json:"seasonNumber,omitempty"`
+	EpisodeNumber  int     `json:"episodeNumber,omitempty"`
+	ShowTitle      string  `json:"showTitle,omitempty"`
+	CurrentQuality string  `json:"currentQuality"`
+	CurrentScore   int     `json:"currentScore"`
+	CutoffQuality  string  `json:"cutoffQuality"`
+	CutoffScore    int     `json:"cutoffScore"`
+	PosterPath     *string `json:"posterPath,omitempty"`
+	Size           int64   `json:"size"`
+	LastSearched   *string `json:"lastSearched,omitempty"`
+}
+
+// UpgradesSummary contains the list of upgradeable items
+type UpgradesSummary struct {
+	Movies     []UpgradeableItem `json:"movies"`
+	Episodes   []UpgradeableItem `json:"episodes"`
+	TotalCount int               `json:"totalCount"`
+	TotalSize  int64             `json:"totalSize"`
 }
 
 // Download tracking types
@@ -740,6 +785,92 @@ type CollectionItem struct {
 	SortOrder    int       `json:"sortOrder"`
 	InLibrary    bool      `json:"inLibrary"`
 	AddedAt      time.Time `json:"addedAt"`
+}
+
+// SmartPlaylist represents a dynamic collection based on rules
+type SmartPlaylist struct {
+	ID            int64      `json:"id"`
+	UserID        *int64     `json:"userId,omitempty"` // nil = system/global
+	Name          string     `json:"name"`
+	Description   *string    `json:"description,omitempty"`
+	Rules         string     `json:"rules"` // JSON rules
+	SortBy        string     `json:"sortBy"`
+	SortOrder     string     `json:"sortOrder"`
+	LimitCount    *int       `json:"limitCount,omitempty"`
+	MediaType     string     `json:"mediaType"` // movie, show, both
+	AutoRefresh   bool       `json:"autoRefresh"`
+	IsSystem      bool       `json:"isSystem"`
+	ItemCount     int        `json:"itemCount,omitempty"`
+	LastRefreshed *time.Time `json:"lastRefreshed,omitempty"`
+	CreatedAt     time.Time  `json:"createdAt"`
+}
+
+// PlaylistRules defines the structure for smart playlist rules
+type PlaylistRules struct {
+	Match      string              `json:"match"` // all, any
+	Conditions []PlaylistCondition `json:"conditions"`
+}
+
+// PlaylistCondition represents a single rule condition
+type PlaylistCondition struct {
+	Field    string      `json:"field"`
+	Operator string      `json:"operator"`
+	Value    interface{} `json:"value"`
+}
+
+// SmartPlaylistItem represents a media item in a smart playlist result
+type SmartPlaylistItem struct {
+	ID         int64   `json:"id"`
+	MediaType  string  `json:"mediaType"`
+	Title      string  `json:"title"`
+	Year       int     `json:"year,omitempty"`
+	PosterPath *string `json:"posterPath,omitempty"`
+	Rating     float64 `json:"rating,omitempty"`
+	Runtime    int     `json:"runtime,omitempty"`
+	AddedAt    string  `json:"addedAt,omitempty"`
+}
+
+// TraktConfig represents a user's Trakt.tv configuration
+type TraktConfig struct {
+	ID            int64      `json:"id"`
+	UserID        int64      `json:"userId"`
+	AccessToken   string     `json:"-"`
+	RefreshToken  string     `json:"-"`
+	ExpiresAt     *time.Time `json:"expiresAt,omitempty"`
+	Username      *string    `json:"username,omitempty"`
+	SyncEnabled   bool       `json:"syncEnabled"`
+	SyncWatched   bool       `json:"syncWatched"`
+	SyncRatings   bool       `json:"syncRatings"`
+	SyncWatchlist bool       `json:"syncWatchlist"`
+	LastSyncedAt  *time.Time `json:"lastSyncedAt,omitempty"`
+	CreatedAt     time.Time  `json:"createdAt"`
+}
+
+// WatchHistoryItem represents an item in watch history
+type WatchHistoryItem struct {
+	ID            int64     `json:"id"`
+	ProfileID     int64     `json:"profileId"`
+	MediaType     string    `json:"mediaType"`
+	MediaID       int64     `json:"mediaId"`
+	TmdbID        *int64    `json:"tmdbId,omitempty"`
+	WatchedAt     time.Time `json:"watchedAt"`
+	SyncedToTrakt bool      `json:"syncedToTrakt"`
+	TraktID       *int64    `json:"traktId,omitempty"`
+	CreatedAt     time.Time `json:"createdAt"`
+}
+
+// TraktSyncQueueItem represents a queued Trakt sync action
+type TraktSyncQueueItem struct {
+	ID          int64      `json:"id"`
+	UserID      int64      `json:"userId"`
+	Action      string     `json:"action"` // watched, rating, watchlist
+	MediaType   string     `json:"mediaType"`
+	TmdbID      int64      `json:"tmdbId"`
+	Data        *string    `json:"data,omitempty"` // JSON data (e.g., rating value)
+	Status      string     `json:"status"`
+	Error       *string    `json:"error,omitempty"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	ProcessedAt *time.Time `json:"processedAt,omitempty"`
 }
 
 func New(dbPath string) (*Database, error) {
@@ -1480,6 +1611,87 @@ func (d *Database) migrate() error {
 	);
 	CREATE INDEX IF NOT EXISTS idx_collection_items_collection ON collection_items(collection_id);
 	CREATE INDEX IF NOT EXISTS idx_collection_items_tmdb ON collection_items(tmdb_id);
+
+	-- Viewing profiles (Netflix-style)
+	CREATE TABLE IF NOT EXISTS profiles (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id INTEGER NOT NULL,
+		name TEXT NOT NULL,
+		avatar_url TEXT,
+		is_default INTEGER DEFAULT 0,
+		is_kid INTEGER DEFAULT 0,
+		content_rating_limit TEXT,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+	);
+	CREATE INDEX IF NOT EXISTS idx_profiles_user ON profiles(user_id);
+
+	-- Smart playlists (dynamic collections based on rules)
+	CREATE TABLE IF NOT EXISTS smart_playlists (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id INTEGER,
+		name TEXT NOT NULL,
+		description TEXT,
+		rules TEXT NOT NULL,
+		sort_by TEXT DEFAULT 'added',
+		sort_order TEXT DEFAULT 'desc',
+		limit_count INTEGER,
+		media_type TEXT DEFAULT 'both',
+		auto_refresh INTEGER DEFAULT 1,
+		is_system INTEGER DEFAULT 0,
+		last_refreshed DATETIME,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+	);
+	CREATE INDEX IF NOT EXISTS idx_smart_playlists_user ON smart_playlists(user_id);
+
+	-- Trakt.tv integration
+	CREATE TABLE IF NOT EXISTS trakt_config (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+		access_token TEXT,
+		refresh_token TEXT,
+		expires_at DATETIME,
+		username TEXT,
+		sync_enabled INTEGER DEFAULT 1,
+		sync_watched INTEGER DEFAULT 1,
+		sync_ratings INTEGER DEFAULT 1,
+		sync_watchlist INTEGER DEFAULT 1,
+		last_synced_at DATETIME,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+	CREATE INDEX IF NOT EXISTS idx_trakt_config_user ON trakt_config(user_id);
+
+	-- Watch history for Trakt sync
+	CREATE TABLE IF NOT EXISTS watch_history (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		profile_id INTEGER REFERENCES profiles(id) ON DELETE CASCADE,
+		media_type TEXT NOT NULL CHECK (media_type IN ('movie', 'episode')),
+		media_id INTEGER NOT NULL,
+		tmdb_id INTEGER,
+		watched_at DATETIME NOT NULL,
+		synced_to_trakt INTEGER DEFAULT 0,
+		trakt_id INTEGER,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+	CREATE INDEX IF NOT EXISTS idx_watch_history_profile ON watch_history(profile_id);
+	CREATE INDEX IF NOT EXISTS idx_watch_history_tmdb ON watch_history(tmdb_id);
+	CREATE INDEX IF NOT EXISTS idx_watch_history_synced ON watch_history(synced_to_trakt);
+
+	-- Trakt sync queue for async processing
+	CREATE TABLE IF NOT EXISTS trakt_sync_queue (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		action TEXT NOT NULL,
+		media_type TEXT NOT NULL,
+		tmdb_id INTEGER NOT NULL,
+		data TEXT,
+		status TEXT DEFAULT 'pending',
+		error TEXT,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		processed_at DATETIME
+	);
+	CREATE INDEX IF NOT EXISTS idx_trakt_queue_status ON trakt_sync_queue(status);
 	`
 	_, err := d.db.Exec(schema)
 	if err != nil {
@@ -1560,6 +1772,17 @@ func (d *Database) migrate() error {
 		"ALTER TABLE users ADD COLUMN content_rating_limit TEXT",
 		"ALTER TABLE users ADD COLUMN pin_hash TEXT",
 		"ALTER TABLE users ADD COLUMN require_pin INTEGER DEFAULT 0",
+		// Profile support for progress tracking
+		"ALTER TABLE progress ADD COLUMN profile_id INTEGER",
+		// Session active profile tracking
+		"ALTER TABLE sessions ADD COLUMN active_profile_id INTEGER",
+		// Upgrade tracking for wanted items
+		"ALTER TABLE wanted ADD COLUMN is_upgrade INTEGER DEFAULT 0",
+		"ALTER TABLE wanted ADD COLUMN existing_media_id INTEGER",
+		// Upgrade search tracking for quality status
+		"ALTER TABLE media_quality_status ADD COLUMN upgrade_searched_at DATETIME",
+		"ALTER TABLE media_quality_status ADD COLUMN current_score INTEGER DEFAULT 0",
+		"ALTER TABLE media_quality_status ADD COLUMN cutoff_score INTEGER DEFAULT 0",
 	}
 	for _, m := range migrations {
 		// Ignore errors (column may already exist)
@@ -1670,16 +1893,43 @@ func (d *Database) migrate() error {
 
 	// Seed default scheduler settings (use INSERT OR IGNORE to avoid duplicates)
 	defaultSettings := map[string]string{
-		"scheduler_auto_search": "true",
-		"scheduler_auto_grab":   "true",
-		"scheduler_rss_enabled": "true",
-		"scheduler_min_score":   "0",
-		"storage_pause_enabled": "false",
-		"storage_threshold_gb":  "50",
+		"scheduler_auto_search":          "true",
+		"scheduler_auto_grab":            "true",
+		"scheduler_rss_enabled":          "true",
+		"scheduler_min_score":            "0",
+		"storage_pause_enabled":          "false",
+		"storage_threshold_gb":           "50",
+		"upgrade_search_enabled":         "false",
+		"upgrade_search_limit":           "10",
+		"upgrade_search_interval":        "720",
+		"upgrade_delete_old":             "true",
+		"opensubtitles_api_key":          "",
+		"opensubtitles_languages":        "en",
+		"opensubtitles_auto_download":    "false",
+		"opensubtitles_hearing_impaired": "include",
 	}
 	for key, value := range defaultSettings {
 		d.db.Exec(`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`, key, value)
 	}
+
+	// Create default profiles for users without any profiles
+	d.db.Exec(`
+		INSERT INTO profiles (user_id, name, is_default, created_at)
+		SELECT id, username, 1, CURRENT_TIMESTAMP
+		FROM users
+		WHERE id NOT IN (SELECT DISTINCT user_id FROM profiles)
+	`)
+
+	// Migrate progress records to use the default profile for each user
+	// First, get the first user's default profile (for single-user progress migration)
+	var defaultProfileID int64
+	d.db.QueryRow(`SELECT id FROM profiles WHERE is_default = 1 LIMIT 1`).Scan(&defaultProfileID)
+	if defaultProfileID > 0 {
+		d.db.Exec(`UPDATE progress SET profile_id = ? WHERE profile_id IS NULL`, defaultProfileID)
+	}
+
+	// Create built-in smart playlists if they don't exist
+	d.CreateBuiltInSmartPlaylists()
 
 	return nil
 }
@@ -2142,6 +2392,25 @@ func (d *Database) GetShowIDForEpisode(episodeID int64) (int64, error) {
 	return showID, err
 }
 
+// GetEpisodeByShowSeasonEpisode finds an episode by show ID, season number, and episode number
+func (d *Database) GetEpisodeByShowSeasonEpisode(showID int64, seasonNum, episodeNum int) (*Episode, error) {
+	var e Episode
+	err := d.db.QueryRow(`
+		SELECT e.id, e.season_id, e.episode_number, e.title, e.overview, e.air_date, e.runtime, e.still_path, e.path, e.size
+		FROM episodes e
+		JOIN seasons s ON e.season_id = s.id
+		WHERE s.show_id = ? AND s.season_number = ? AND e.episode_number = ?`,
+		showID, seasonNum, episodeNum,
+	).Scan(&e.ID, &e.SeasonID, &e.EpisodeNumber, &e.Title, &e.Overview, &e.AirDate, &e.Runtime, &e.StillPath, &e.Path, &e.Size)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &e, nil
+}
+
 func (d *Database) DeleteEpisode(id int64) error {
 	_, err := d.db.Exec("DELETE FROM episodes WHERE id = ?", id)
 	return err
@@ -2377,12 +2646,12 @@ func (d *Database) SaveFormatSettings(settings *FormatSettings) error {
 
 // Progress operations
 
-func (d *Database) GetProgress(mediaType string, mediaID int64) (*Progress, error) {
+func (d *Database) GetProgress(profileID int64, mediaType string, mediaID int64) (*Progress, error) {
 	var p Progress
 	err := d.db.QueryRow(
-		"SELECT id, media_type, media_id, position, duration, updated_at FROM progress WHERE media_type = ? AND media_id = ?",
-		mediaType, mediaID,
-	).Scan(&p.ID, &p.MediaType, &p.MediaID, &p.Position, &p.Duration, &p.UpdatedAt)
+		"SELECT id, COALESCE(profile_id, 0), media_type, media_id, position, duration, updated_at FROM progress WHERE media_type = ? AND media_id = ? AND (profile_id = ? OR profile_id IS NULL)",
+		mediaType, mediaID, profileID,
+	).Scan(&p.ID, &p.ProfileID, &p.MediaType, &p.MediaID, &p.Position, &p.Duration, &p.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -2391,13 +2660,14 @@ func (d *Database) GetProgress(mediaType string, mediaID int64) (*Progress, erro
 
 func (d *Database) SaveProgress(p *Progress) error {
 	_, err := d.db.Exec(`
-		INSERT INTO progress (media_type, media_id, position, duration, updated_at)
-		VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+		INSERT INTO progress (profile_id, media_type, media_id, position, duration, updated_at)
+		VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		ON CONFLICT(media_type, media_id) DO UPDATE SET
+			profile_id = excluded.profile_id,
 			position = excluded.position,
 			duration = excluded.duration,
 			updated_at = CURRENT_TIMESTAMP
-	`, p.MediaType, p.MediaID, p.Position, p.Duration)
+	`, p.ProfileID, p.MediaType, p.MediaID, p.Position, p.Duration)
 	return err
 }
 
@@ -2587,6 +2857,108 @@ func (d *Database) CountUsers() (int, error) {
 	return count, err
 }
 
+// Profile operations
+
+func (d *Database) CreateProfile(profile *Profile) error {
+	result, err := d.db.Exec(
+		`INSERT INTO profiles (user_id, name, avatar_url, is_default, is_kid, content_rating_limit)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		profile.UserID, profile.Name, profile.AvatarURL, profile.IsDefault, profile.IsKid, profile.ContentRatingLimit,
+	)
+	if err != nil {
+		return err
+	}
+	profile.ID, _ = result.LastInsertId()
+	return nil
+}
+
+func (d *Database) GetProfile(id int64) (*Profile, error) {
+	var p Profile
+	var isDefault, isKid int
+	err := d.db.QueryRow(
+		`SELECT id, user_id, name, avatar_url, is_default, is_kid, content_rating_limit, created_at
+		 FROM profiles WHERE id = ?`, id,
+	).Scan(&p.ID, &p.UserID, &p.Name, &p.AvatarURL, &isDefault, &isKid, &p.ContentRatingLimit, &p.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	p.IsDefault = isDefault == 1
+	p.IsKid = isKid == 1
+	return &p, nil
+}
+
+func (d *Database) GetProfilesByUser(userID int64) ([]Profile, error) {
+	rows, err := d.db.Query(
+		`SELECT id, user_id, name, avatar_url, is_default, is_kid, content_rating_limit, created_at
+		 FROM profiles WHERE user_id = ? ORDER BY is_default DESC, created_at ASC`, userID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var profiles []Profile
+	for rows.Next() {
+		var p Profile
+		var isDefault, isKid int
+		if err := rows.Scan(&p.ID, &p.UserID, &p.Name, &p.AvatarURL, &isDefault, &isKid, &p.ContentRatingLimit, &p.CreatedAt); err != nil {
+			return nil, err
+		}
+		p.IsDefault = isDefault == 1
+		p.IsKid = isKid == 1
+		profiles = append(profiles, p)
+	}
+	return profiles, nil
+}
+
+func (d *Database) GetDefaultProfile(userID int64) (*Profile, error) {
+	var p Profile
+	var isDefault, isKid int
+	err := d.db.QueryRow(
+		`SELECT id, user_id, name, avatar_url, is_default, is_kid, content_rating_limit, created_at
+		 FROM profiles WHERE user_id = ? AND is_default = 1`, userID,
+	).Scan(&p.ID, &p.UserID, &p.Name, &p.AvatarURL, &isDefault, &isKid, &p.ContentRatingLimit, &p.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	p.IsDefault = isDefault == 1
+	p.IsKid = isKid == 1
+	return &p, nil
+}
+
+func (d *Database) UpdateProfile(profile *Profile) error {
+	_, err := d.db.Exec(
+		`UPDATE profiles SET name = ?, avatar_url = ?, is_kid = ?, content_rating_limit = ?
+		 WHERE id = ?`,
+		profile.Name, profile.AvatarURL, profile.IsKid, profile.ContentRatingLimit, profile.ID,
+	)
+	return err
+}
+
+func (d *Database) DeleteProfile(id int64) error {
+	_, err := d.db.Exec("DELETE FROM profiles WHERE id = ?", id)
+	return err
+}
+
+func (d *Database) CountProfilesByUser(userID int64) (int, error) {
+	var count int
+	err := d.db.QueryRow("SELECT COUNT(*) FROM profiles WHERE user_id = ?", userID).Scan(&count)
+	return count, err
+}
+
+func (d *Database) CreateDefaultProfileForUser(userID int64, username string) (*Profile, error) {
+	profile := &Profile{
+		UserID:    userID,
+		Name:      username,
+		IsDefault: true,
+		IsKid:     false,
+	}
+	if err := d.CreateProfile(profile); err != nil {
+		return nil, err
+	}
+	return profile, nil
+}
+
 // Session operations
 
 func (d *Database) CreateSession(session *Session) error {
@@ -2604,12 +2976,17 @@ func (d *Database) CreateSession(session *Session) error {
 func (d *Database) GetSessionByToken(token string) (*Session, error) {
 	var s Session
 	err := d.db.QueryRow(
-		"SELECT id, user_id, token, expires_at FROM sessions WHERE token = ?", token,
-	).Scan(&s.ID, &s.UserID, &s.Token, &s.ExpiresAt)
+		"SELECT id, user_id, token, expires_at, active_profile_id FROM sessions WHERE token = ?", token,
+	).Scan(&s.ID, &s.UserID, &s.Token, &s.ExpiresAt, &s.ActiveProfileID)
 	if err != nil {
 		return nil, err
 	}
 	return &s, nil
+}
+
+func (d *Database) SetActiveProfile(token string, profileID int64) error {
+	_, err := d.db.Exec("UPDATE sessions SET active_profile_id = ? WHERE token = ?", profileID, token)
+	return err
 }
 
 func (d *Database) DeleteSession(token string) error {
@@ -4561,6 +4938,166 @@ func (d *Database) UpsertMediaQualityStatus(s *MediaQualityStatus) error {
 	return err
 }
 
+// GetUpgradeableMovies returns movies that are below their quality cutoff
+func (d *Database) GetUpgradeableMovies(limit int) ([]UpgradeableItem, error) {
+	query := `
+		SELECT m.id, m.title, m.year, m.poster_path, m.size,
+		       COALESCE(mqs.current_resolution, 'Unknown') || ' ' || COALESCE(mqs.current_source, '') as current_quality,
+		       COALESCE(mqs.current_score, 0),
+		       COALESCE(qp.cutoff_resolution, '1080p') || ' ' || COALESCE(qp.cutoff_source, 'bluray') as cutoff_quality,
+		       COALESCE(mqs.cutoff_score, 100),
+		       mqs.upgrade_searched_at
+		FROM movies m
+		LEFT JOIN media_quality_status mqs ON mqs.media_id = m.id AND mqs.media_type = 'movie'
+		LEFT JOIN media_quality_override mqo ON mqo.media_id = m.id AND mqo.media_type = 'movie'
+		LEFT JOIN quality_presets qp ON qp.id = COALESCE(mqo.preset_id, (SELECT id FROM quality_presets WHERE is_default = 1 AND media_type = 'movie' LIMIT 1))
+		WHERE COALESCE(mqs.target_met, 0) = 0
+		ORDER BY mqs.upgrade_searched_at ASC NULLS FIRST, m.added_at DESC
+	`
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", limit)
+	}
+
+	rows, err := d.db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []UpgradeableItem
+	for rows.Next() {
+		var item UpgradeableItem
+		var lastSearched *time.Time
+		if err := rows.Scan(&item.ID, &item.Title, &item.Year, &item.PosterPath, &item.Size,
+			&item.CurrentQuality, &item.CurrentScore, &item.CutoffQuality, &item.CutoffScore,
+			&lastSearched); err != nil {
+			return nil, err
+		}
+		item.Type = "movie"
+		if lastSearched != nil {
+			ls := lastSearched.Format(time.RFC3339)
+			item.LastSearched = &ls
+		}
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+// GetUpgradeableEpisodes returns episodes that are below their quality cutoff
+func (d *Database) GetUpgradeableEpisodes(limit int) ([]UpgradeableItem, error) {
+	query := `
+		SELECT e.id, e.title, s.title as show_title, se.season_number, e.episode_number,
+		       sh.poster_path, e.size,
+		       COALESCE(mqs.current_resolution, 'Unknown') || ' ' || COALESCE(mqs.current_source, '') as current_quality,
+		       COALESCE(mqs.current_score, 0),
+		       COALESCE(qp.cutoff_resolution, '1080p') || ' ' || COALESCE(qp.cutoff_source, 'web') as cutoff_quality,
+		       COALESCE(mqs.cutoff_score, 100),
+		       mqs.upgrade_searched_at
+		FROM episodes e
+		JOIN seasons se ON se.id = e.season_id
+		JOIN shows s ON s.id = se.show_id
+		JOIN shows sh ON sh.id = se.show_id
+		LEFT JOIN media_quality_status mqs ON mqs.media_id = e.id AND mqs.media_type = 'episode'
+		LEFT JOIN media_quality_override mqo ON mqo.media_id = s.id AND mqo.media_type = 'show'
+		LEFT JOIN quality_presets qp ON qp.id = COALESCE(mqo.preset_id, (SELECT id FROM quality_presets WHERE is_default = 1 AND media_type = 'tv' LIMIT 1))
+		WHERE COALESCE(mqs.target_met, 0) = 0
+		ORDER BY mqs.upgrade_searched_at ASC NULLS FIRST
+	`
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", limit)
+	}
+
+	rows, err := d.db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []UpgradeableItem
+	for rows.Next() {
+		var item UpgradeableItem
+		var lastSearched *time.Time
+		if err := rows.Scan(&item.ID, &item.Title, &item.ShowTitle, &item.SeasonNumber, &item.EpisodeNumber,
+			&item.PosterPath, &item.Size, &item.CurrentQuality, &item.CurrentScore,
+			&item.CutoffQuality, &item.CutoffScore, &lastSearched); err != nil {
+			return nil, err
+		}
+		item.Type = "episode"
+		if lastSearched != nil {
+			ls := lastSearched.Format(time.RFC3339)
+			item.LastSearched = &ls
+		}
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+// GetUpgradesSummary returns a summary of all upgradeable media
+func (d *Database) GetUpgradesSummary() (*UpgradesSummary, error) {
+	movies, err := d.GetUpgradeableMovies(0)
+	if err != nil {
+		return nil, err
+	}
+
+	episodes, err := d.GetUpgradeableEpisodes(0)
+	if err != nil {
+		return nil, err
+	}
+
+	var totalSize int64
+	for _, m := range movies {
+		totalSize += m.Size
+	}
+	for _, e := range episodes {
+		totalSize += e.Size
+	}
+
+	return &UpgradesSummary{
+		Movies:     movies,
+		Episodes:   episodes,
+		TotalCount: len(movies) + len(episodes),
+		TotalSize:  totalSize,
+	}, nil
+}
+
+// UpdateUpgradeSearched marks an item as having been searched for upgrades
+func (d *Database) UpdateUpgradeSearched(mediaID int64, mediaType string, upgradeAvailable bool) error {
+	_, err := d.db.Exec(`
+		UPDATE media_quality_status
+		SET upgrade_searched_at = CURRENT_TIMESTAMP,
+		    upgrade_available = ?,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE media_id = ? AND media_type = ?
+	`, upgradeAvailable, mediaID, mediaType)
+	return err
+}
+
+// UpdateQualityScores updates the current and cutoff scores for a media item
+func (d *Database) UpdateQualityScores(mediaID int64, mediaType string, currentScore, cutoffScore int) error {
+	_, err := d.db.Exec(`
+		UPDATE media_quality_status
+		SET current_score = ?,
+		    cutoff_score = ?,
+		    target_met = CASE WHEN ? >= ? THEN 1 ELSE 0 END,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE media_id = ? AND media_type = ?
+	`, currentScore, cutoffScore, currentScore, cutoffScore, mediaID, mediaType)
+	return err
+}
+
+// CreateUpgradeWantedItem creates a wanted item for an upgrade
+func (d *Database) CreateUpgradeWantedItem(mediaType string, tmdbID int64, imdbID, title string, year int, posterPath string, qualityProfileID, existingMediaID int64) error {
+	_, err := d.db.Exec(`
+		INSERT INTO wanted (type, tmdb_id, imdb_id, title, year, poster_path, quality_profile_id, is_upgrade, existing_media_id, monitored)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, 1)
+		ON CONFLICT(type, tmdb_id) DO UPDATE SET
+		    is_upgrade = 1,
+		    existing_media_id = excluded.existing_media_id,
+		    quality_profile_id = excluded.quality_profile_id
+	`, mediaType, tmdbID, imdbID, title, year, posterPath, qualityProfileID, existingMediaID)
+	return err
+}
+
 // Storage size operations
 
 func (d *Database) GetTotalMoviesSize() (int64, error) {
@@ -6183,4 +6720,838 @@ func normalizeQuality(quality string) string {
 		return "480p"
 	}
 	return "Unknown"
+}
+
+// Smart Playlist methods
+
+// GetSmartPlaylists returns all smart playlists for a user (including system playlists)
+func (d *Database) GetSmartPlaylists(userID *int64) ([]SmartPlaylist, error) {
+	query := `
+		SELECT id, user_id, name, description, rules, sort_by, sort_order, limit_count,
+		       media_type, auto_refresh, is_system, last_refreshed, created_at
+		FROM smart_playlists
+		WHERE user_id IS NULL OR user_id = ?
+		ORDER BY is_system DESC, name ASC
+	`
+	var uid int64
+	if userID != nil {
+		uid = *userID
+	}
+	rows, err := d.db.Query(query, uid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var playlists []SmartPlaylist
+	for rows.Next() {
+		var p SmartPlaylist
+		err := rows.Scan(&p.ID, &p.UserID, &p.Name, &p.Description, &p.Rules, &p.SortBy,
+			&p.SortOrder, &p.LimitCount, &p.MediaType, &p.AutoRefresh, &p.IsSystem,
+			&p.LastRefreshed, &p.CreatedAt)
+		if err != nil {
+			return nil, err
+		}
+		playlists = append(playlists, p)
+	}
+	return playlists, nil
+}
+
+// GetSmartPlaylist returns a single smart playlist by ID
+func (d *Database) GetSmartPlaylist(id int64) (*SmartPlaylist, error) {
+	query := `
+		SELECT id, user_id, name, description, rules, sort_by, sort_order, limit_count,
+		       media_type, auto_refresh, is_system, last_refreshed, created_at
+		FROM smart_playlists WHERE id = ?
+	`
+	var p SmartPlaylist
+	err := d.db.QueryRow(query, id).Scan(&p.ID, &p.UserID, &p.Name, &p.Description, &p.Rules,
+		&p.SortBy, &p.SortOrder, &p.LimitCount, &p.MediaType, &p.AutoRefresh, &p.IsSystem,
+		&p.LastRefreshed, &p.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+// CreateSmartPlaylist creates a new smart playlist
+func (d *Database) CreateSmartPlaylist(p *SmartPlaylist) error {
+	query := `
+		INSERT INTO smart_playlists (user_id, name, description, rules, sort_by, sort_order,
+		                             limit_count, media_type, auto_refresh, is_system)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`
+	result, err := d.db.Exec(query, p.UserID, p.Name, p.Description, p.Rules, p.SortBy,
+		p.SortOrder, p.LimitCount, p.MediaType, p.AutoRefresh, p.IsSystem)
+	if err != nil {
+		return err
+	}
+	p.ID, _ = result.LastInsertId()
+	return nil
+}
+
+// UpdateSmartPlaylist updates an existing smart playlist
+func (d *Database) UpdateSmartPlaylist(p *SmartPlaylist) error {
+	query := `
+		UPDATE smart_playlists
+		SET name = ?, description = ?, rules = ?, sort_by = ?, sort_order = ?,
+		    limit_count = ?, media_type = ?, auto_refresh = ?
+		WHERE id = ?
+	`
+	_, err := d.db.Exec(query, p.Name, p.Description, p.Rules, p.SortBy, p.SortOrder,
+		p.LimitCount, p.MediaType, p.AutoRefresh, p.ID)
+	return err
+}
+
+// DeleteSmartPlaylist deletes a smart playlist
+func (d *Database) DeleteSmartPlaylist(id int64) error {
+	_, err := d.db.Exec("DELETE FROM smart_playlists WHERE id = ? AND is_system = 0", id)
+	return err
+}
+
+// UpdateSmartPlaylistRefreshed updates the last_refreshed timestamp
+func (d *Database) UpdateSmartPlaylistRefreshed(id int64) error {
+	_, err := d.db.Exec("UPDATE smart_playlists SET last_refreshed = CURRENT_TIMESTAMP WHERE id = ?", id)
+	return err
+}
+
+// GetSmartPlaylistItems returns media items matching the playlist rules
+func (d *Database) GetSmartPlaylistItems(p *SmartPlaylist, profileID *int64) ([]SmartPlaylistItem, error) {
+	var rules PlaylistRules
+	if err := json.Unmarshal([]byte(p.Rules), &rules); err != nil {
+		return nil, err
+	}
+
+	// Build queries for movies and/or shows
+	var items []SmartPlaylistItem
+
+	if p.MediaType == "movie" || p.MediaType == "both" {
+		movieItems, err := d.querySmartPlaylistMovies(&rules, p.SortBy, p.SortOrder, p.LimitCount, profileID)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, movieItems...)
+	}
+
+	if p.MediaType == "show" || p.MediaType == "both" {
+		showItems, err := d.querySmartPlaylistShows(&rules, p.SortBy, p.SortOrder, p.LimitCount, profileID)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, showItems...)
+	}
+
+	// Sort combined results if both types
+	if p.MediaType == "both" && len(items) > 0 {
+		sortSmartPlaylistItems(items, p.SortBy, p.SortOrder)
+		if p.LimitCount != nil && len(items) > *p.LimitCount {
+			items = items[:*p.LimitCount]
+		}
+	}
+
+	return items, nil
+}
+
+func (d *Database) querySmartPlaylistMovies(rules *PlaylistRules, sortBy, sortOrder string, limit *int, profileID *int64) ([]SmartPlaylistItem, error) {
+	whereClause, args := buildMovieWhereClause(rules, profileID)
+
+	orderBy := getMovieOrderBy(sortBy, sortOrder)
+
+	query := fmt.Sprintf(`
+		SELECT m.id, 'movie' as media_type, m.title, m.year, m.poster_path, m.tmdb_rating, m.runtime, m.added_at
+		FROM movies m
+		%s
+		%s
+	`, whereClause, orderBy)
+
+	if limit != nil {
+		query += fmt.Sprintf(" LIMIT %d", *limit)
+	}
+
+	rows, err := d.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []SmartPlaylistItem
+	for rows.Next() {
+		var item SmartPlaylistItem
+		var addedAt sql.NullString
+		err := rows.Scan(&item.ID, &item.MediaType, &item.Title, &item.Year, &item.PosterPath, &item.Rating, &item.Runtime, &addedAt)
+		if err != nil {
+			return nil, err
+		}
+		if addedAt.Valid {
+			item.AddedAt = addedAt.String
+		}
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+func (d *Database) querySmartPlaylistShows(rules *PlaylistRules, sortBy, sortOrder string, limit *int, profileID *int64) ([]SmartPlaylistItem, error) {
+	whereClause, args := buildShowWhereClause(rules, profileID)
+
+	orderBy := getShowOrderBy(sortBy, sortOrder)
+
+	query := fmt.Sprintf(`
+		SELECT s.id, 'show' as media_type, s.title, s.year, s.poster_path, s.tmdb_rating, 0 as runtime, s.added_at
+		FROM shows s
+		%s
+		%s
+	`, whereClause, orderBy)
+
+	if limit != nil {
+		query += fmt.Sprintf(" LIMIT %d", *limit)
+	}
+
+	rows, err := d.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []SmartPlaylistItem
+	for rows.Next() {
+		var item SmartPlaylistItem
+		var addedAt sql.NullString
+		err := rows.Scan(&item.ID, &item.MediaType, &item.Title, &item.Year, &item.PosterPath, &item.Rating, &item.Runtime, &addedAt)
+		if err != nil {
+			return nil, err
+		}
+		if addedAt.Valid {
+			item.AddedAt = addedAt.String
+		}
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+func buildMovieWhereClause(rules *PlaylistRules, profileID *int64) (string, []interface{}) {
+	var conditions []string
+	var args []interface{}
+
+	for _, cond := range rules.Conditions {
+		clause, condArgs := buildMovieCondition(cond, profileID)
+		if clause != "" {
+			conditions = append(conditions, clause)
+			args = append(args, condArgs...)
+		}
+	}
+
+	if len(conditions) == 0 {
+		return "", nil
+	}
+
+	joiner := " AND "
+	if rules.Match == "any" {
+		joiner = " OR "
+	}
+
+	return "WHERE " + strings.Join(conditions, joiner), args
+}
+
+func buildShowWhereClause(rules *PlaylistRules, profileID *int64) (string, []interface{}) {
+	var conditions []string
+	var args []interface{}
+
+	for _, cond := range rules.Conditions {
+		clause, condArgs := buildShowCondition(cond, profileID)
+		if clause != "" {
+			conditions = append(conditions, clause)
+			args = append(args, condArgs...)
+		}
+	}
+
+	if len(conditions) == 0 {
+		return "", nil
+	}
+
+	joiner := " AND "
+	if rules.Match == "any" {
+		joiner = " OR "
+	}
+
+	return "WHERE " + strings.Join(conditions, joiner), args
+}
+
+func buildMovieCondition(cond PlaylistCondition, profileID *int64) (string, []interface{}) {
+	var args []interface{}
+
+	switch cond.Field {
+	case "genre":
+		val := fmt.Sprintf("%v", cond.Value)
+		if cond.Operator == "contains" {
+			return "m.genres LIKE ?", []interface{}{"%" + val + "%"}
+		} else if cond.Operator == "not_contains" {
+			return "(m.genres IS NULL OR m.genres NOT LIKE ?)", []interface{}{"%" + val + "%"}
+		}
+	case "year":
+		val := toInt(cond.Value)
+		switch cond.Operator {
+		case "eq":
+			return "m.year = ?", []interface{}{val}
+		case "gte":
+			return "m.year >= ?", []interface{}{val}
+		case "lte":
+			return "m.year <= ?", []interface{}{val}
+		}
+	case "rating":
+		val := toFloat(cond.Value)
+		switch cond.Operator {
+		case "eq":
+			return "m.tmdb_rating = ?", []interface{}{val}
+		case "gte":
+			return "m.tmdb_rating >= ?", []interface{}{val}
+		case "lte":
+			return "m.tmdb_rating <= ?", []interface{}{val}
+		}
+	case "runtime":
+		val := toInt(cond.Value)
+		switch cond.Operator {
+		case "eq":
+			return "m.runtime = ?", []interface{}{val}
+		case "gte":
+			return "m.runtime >= ?", []interface{}{val}
+		case "lte":
+			return "m.runtime <= ?", []interface{}{val}
+		}
+	case "resolution":
+		val := fmt.Sprintf("%v", cond.Value)
+		if cond.Operator == "eq" {
+			return "m.quality LIKE ?", []interface{}{val + "%"}
+		} else if cond.Operator == "contains" {
+			return "m.quality LIKE ?", []interface{}{"%" + val + "%"}
+		}
+	case "codec":
+		val := fmt.Sprintf("%v", cond.Value)
+		return "m.quality LIKE ?", []interface{}{"%" + val + "%"}
+	case "added":
+		val := fmt.Sprintf("%v", cond.Value)
+		days := parseDuration(val)
+		return "m.added_at >= datetime('now', ?)", []interface{}{fmt.Sprintf("-%d days", days)}
+	case "watched":
+		if profileID == nil {
+			return "", nil
+		}
+		val := toBool(cond.Value)
+		if val {
+			return "EXISTS (SELECT 1 FROM progress p WHERE p.media_type = 'movie' AND p.media_id = m.id AND p.profile_id = ? AND p.position > 0)", []interface{}{*profileID}
+		}
+		return "NOT EXISTS (SELECT 1 FROM progress p WHERE p.media_type = 'movie' AND p.media_id = m.id AND p.profile_id = ? AND p.position > 0)", []interface{}{*profileID}
+	case "library":
+		val := toInt(cond.Value)
+		return "m.library_id = ?", []interface{}{val}
+	case "actor":
+		val := fmt.Sprintf("%v", cond.Value)
+		return "m.cast_list LIKE ?", []interface{}{"%" + val + "%"}
+	case "director":
+		val := fmt.Sprintf("%v", cond.Value)
+		return "m.director LIKE ?", []interface{}{"%" + val + "%"}
+	case "studio":
+		val := fmt.Sprintf("%v", cond.Value)
+		return "m.studios LIKE ?", []interface{}{"%" + val + "%"}
+	}
+
+	return "", args
+}
+
+func buildShowCondition(cond PlaylistCondition, profileID *int64) (string, []interface{}) {
+	var args []interface{}
+
+	switch cond.Field {
+	case "genre":
+		val := fmt.Sprintf("%v", cond.Value)
+		if cond.Operator == "contains" {
+			return "s.genres LIKE ?", []interface{}{"%" + val + "%"}
+		} else if cond.Operator == "not_contains" {
+			return "(s.genres IS NULL OR s.genres NOT LIKE ?)", []interface{}{"%" + val + "%"}
+		}
+	case "year":
+		val := toInt(cond.Value)
+		switch cond.Operator {
+		case "eq":
+			return "s.year = ?", []interface{}{val}
+		case "gte":
+			return "s.year >= ?", []interface{}{val}
+		case "lte":
+			return "s.year <= ?", []interface{}{val}
+		}
+	case "rating":
+		val := toFloat(cond.Value)
+		switch cond.Operator {
+		case "eq":
+			return "s.tmdb_rating = ?", []interface{}{val}
+		case "gte":
+			return "s.tmdb_rating >= ?", []interface{}{val}
+		case "lte":
+			return "s.tmdb_rating <= ?", []interface{}{val}
+		}
+	case "added":
+		val := fmt.Sprintf("%v", cond.Value)
+		days := parseDuration(val)
+		return "s.added_at >= datetime('now', ?)", []interface{}{fmt.Sprintf("-%d days", days)}
+	case "library":
+		val := toInt(cond.Value)
+		return "s.library_id = ?", []interface{}{val}
+	case "status":
+		val := fmt.Sprintf("%v", cond.Value)
+		return "s.status = ?", []interface{}{val}
+	case "actor":
+		val := fmt.Sprintf("%v", cond.Value)
+		return "s.cast_list LIKE ?", []interface{}{"%" + val + "%"}
+	case "studio":
+		val := fmt.Sprintf("%v", cond.Value)
+		return "s.network LIKE ?", []interface{}{"%" + val + "%"}
+	}
+
+	return "", args
+}
+
+func getMovieOrderBy(sortBy, sortOrder string) string {
+	order := "DESC"
+	if sortOrder == "asc" {
+		order = "ASC"
+	}
+
+	switch sortBy {
+	case "title":
+		return fmt.Sprintf("ORDER BY m.title %s", order)
+	case "year":
+		return fmt.Sprintf("ORDER BY m.year %s", order)
+	case "rating":
+		return fmt.Sprintf("ORDER BY m.tmdb_rating %s", order)
+	case "runtime":
+		return fmt.Sprintf("ORDER BY m.runtime %s", order)
+	case "added":
+		return fmt.Sprintf("ORDER BY m.added_at %s", order)
+	default:
+		return fmt.Sprintf("ORDER BY m.added_at %s", order)
+	}
+}
+
+func getShowOrderBy(sortBy, sortOrder string) string {
+	order := "DESC"
+	if sortOrder == "asc" {
+		order = "ASC"
+	}
+
+	switch sortBy {
+	case "title":
+		return fmt.Sprintf("ORDER BY s.title %s", order)
+	case "year":
+		return fmt.Sprintf("ORDER BY s.year %s", order)
+	case "rating":
+		return fmt.Sprintf("ORDER BY s.tmdb_rating %s", order)
+	case "added":
+		return fmt.Sprintf("ORDER BY s.added_at %s", order)
+	default:
+		return fmt.Sprintf("ORDER BY s.added_at %s", order)
+	}
+}
+
+func sortSmartPlaylistItems(items []SmartPlaylistItem, sortBy, sortOrder string) {
+	sort.Slice(items, func(i, j int) bool {
+		var less bool
+		switch sortBy {
+		case "title":
+			less = items[i].Title < items[j].Title
+		case "year":
+			less = items[i].Year < items[j].Year
+		case "rating":
+			less = items[i].Rating < items[j].Rating
+		case "runtime":
+			less = items[i].Runtime < items[j].Runtime
+		default: // added
+			less = items[i].AddedAt < items[j].AddedAt
+		}
+		if sortOrder == "desc" {
+			return !less
+		}
+		return less
+	})
+}
+
+func parseDuration(val string) int {
+	val = strings.TrimSpace(val)
+	if strings.HasSuffix(val, "d") {
+		days, _ := strconv.Atoi(strings.TrimSuffix(val, "d"))
+		return days
+	}
+	if strings.HasSuffix(val, "y") {
+		years, _ := strconv.Atoi(strings.TrimSuffix(val, "y"))
+		return years * 365
+	}
+	// Default to days if just a number
+	days, _ := strconv.Atoi(val)
+	return days
+}
+
+func toInt(v interface{}) int {
+	switch val := v.(type) {
+	case int:
+		return val
+	case int64:
+		return int(val)
+	case float64:
+		return int(val)
+	case string:
+		i, _ := strconv.Atoi(val)
+		return i
+	}
+	return 0
+}
+
+func toFloat(v interface{}) float64 {
+	switch val := v.(type) {
+	case float64:
+		return val
+	case int:
+		return float64(val)
+	case int64:
+		return float64(val)
+	case string:
+		f, _ := strconv.ParseFloat(val, 64)
+		return f
+	}
+	return 0
+}
+
+func toBool(v interface{}) bool {
+	switch val := v.(type) {
+	case bool:
+		return val
+	case string:
+		return val == "true" || val == "1"
+	case int:
+		return val != 0
+	case float64:
+		return val != 0
+	}
+	return false
+}
+
+// CreateBuiltInSmartPlaylists creates the default system playlists
+func (d *Database) CreateBuiltInSmartPlaylists() error {
+	// Check if system playlists already exist
+	var count int
+	err := d.db.QueryRow("SELECT COUNT(*) FROM smart_playlists WHERE is_system = 1").Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil // Already created
+	}
+
+	builtIn := []SmartPlaylist{
+		{
+			Name:        "Recently Added",
+			Description: strPtr("Movies and shows added in the last 7 days"),
+			Rules:       `{"match":"all","conditions":[{"field":"added","operator":"within","value":"7d"}]}`,
+			SortBy:      "added",
+			SortOrder:   "desc",
+			MediaType:   "both",
+			AutoRefresh: true,
+			IsSystem:    true,
+		},
+		{
+			Name:        "Unwatched Movies",
+			Description: strPtr("Movies you haven't watched yet"),
+			Rules:       `{"match":"all","conditions":[{"field":"watched","operator":"eq","value":false}]}`,
+			SortBy:      "added",
+			SortOrder:   "desc",
+			MediaType:   "movie",
+			AutoRefresh: true,
+			IsSystem:    true,
+		},
+		{
+			Name:        "4K Collection",
+			Description: strPtr("Movies and shows available in 4K resolution"),
+			Rules:       `{"match":"all","conditions":[{"field":"resolution","operator":"eq","value":"2160p"}]}`,
+			SortBy:      "title",
+			SortOrder:   "asc",
+			MediaType:   "both",
+			AutoRefresh: true,
+			IsSystem:    true,
+		},
+		{
+			Name:        "Top Rated",
+			Description: strPtr("Highly rated content (8.0+ on TMDB)"),
+			Rules:       `{"match":"all","conditions":[{"field":"rating","operator":"gte","value":8.0}]}`,
+			SortBy:      "rating",
+			SortOrder:   "desc",
+			MediaType:   "both",
+			AutoRefresh: true,
+			IsSystem:    true,
+		},
+		{
+			Name:        "Short Films",
+			Description: strPtr("Movies under 90 minutes"),
+			Rules:       `{"match":"all","conditions":[{"field":"runtime","operator":"lte","value":90}]}`,
+			SortBy:      "runtime",
+			SortOrder:   "asc",
+			MediaType:   "movie",
+			AutoRefresh: true,
+			IsSystem:    true,
+		},
+	}
+
+	for _, p := range builtIn {
+		if err := d.CreateSmartPlaylist(&p); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func strPtr(s string) *string {
+	return &s
+}
+
+// GetTraktConfig retrieves Trakt configuration for a user
+func (d *Database) GetTraktConfig(userID int64) (*TraktConfig, error) {
+	row := d.db.QueryRow(`
+		SELECT id, user_id, access_token, refresh_token, expires_at, username,
+		       sync_enabled, sync_watched, sync_ratings, sync_watchlist, last_synced_at, created_at
+		FROM trakt_config WHERE user_id = ?`, userID)
+
+	var config TraktConfig
+	var expiresAt, lastSyncedAt, username sql.NullString
+	err := row.Scan(
+		&config.ID, &config.UserID, &config.AccessToken, &config.RefreshToken,
+		&expiresAt, &username, &config.SyncEnabled, &config.SyncWatched,
+		&config.SyncRatings, &config.SyncWatchlist, &lastSyncedAt, &config.CreatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	if expiresAt.Valid {
+		t, _ := time.Parse(time.RFC3339, expiresAt.String)
+		config.ExpiresAt = &t
+	}
+	if lastSyncedAt.Valid {
+		t, _ := time.Parse(time.RFC3339, lastSyncedAt.String)
+		config.LastSyncedAt = &t
+	}
+	if username.Valid {
+		config.Username = &username.String
+	}
+
+	return &config, nil
+}
+
+// SaveTraktConfig creates or updates Trakt configuration for a user
+func (d *Database) SaveTraktConfig(config *TraktConfig) error {
+	var expiresAt, lastSyncedAt interface{}
+	if config.ExpiresAt != nil {
+		expiresAt = config.ExpiresAt.Format(time.RFC3339)
+	}
+	if config.LastSyncedAt != nil {
+		lastSyncedAt = config.LastSyncedAt.Format(time.RFC3339)
+	}
+
+	_, err := d.db.Exec(`
+		INSERT INTO trakt_config (user_id, access_token, refresh_token, expires_at, username,
+		                          sync_enabled, sync_watched, sync_ratings, sync_watchlist, last_synced_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(user_id) DO UPDATE SET
+			access_token = excluded.access_token,
+			refresh_token = excluded.refresh_token,
+			expires_at = excluded.expires_at,
+			username = excluded.username,
+			sync_enabled = excluded.sync_enabled,
+			sync_watched = excluded.sync_watched,
+			sync_ratings = excluded.sync_ratings,
+			sync_watchlist = excluded.sync_watchlist,
+			last_synced_at = excluded.last_synced_at`,
+		config.UserID, config.AccessToken, config.RefreshToken, expiresAt, config.Username,
+		config.SyncEnabled, config.SyncWatched, config.SyncRatings, config.SyncWatchlist, lastSyncedAt,
+	)
+	return err
+}
+
+// UpdateTraktSyncTime updates the last synced timestamp
+func (d *Database) UpdateTraktSyncTime(userID int64) error {
+	_, err := d.db.Exec(`UPDATE trakt_config SET last_synced_at = ? WHERE user_id = ?`,
+		time.Now().Format(time.RFC3339), userID)
+	return err
+}
+
+// DeleteTraktConfig removes Trakt configuration for a user
+func (d *Database) DeleteTraktConfig(userID int64) error {
+	_, err := d.db.Exec(`DELETE FROM trakt_config WHERE user_id = ?`, userID)
+	return err
+}
+
+// AddWatchHistoryItem adds a watch history record
+func (d *Database) AddWatchHistoryItem(item *WatchHistoryItem) error {
+	_, err := d.db.Exec(`
+		INSERT INTO watch_history (profile_id, media_type, media_id, tmdb_id, watched_at, synced_to_trakt)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		item.ProfileID, item.MediaType, item.MediaID, item.TmdbID, item.WatchedAt.Format(time.RFC3339), item.SyncedToTrakt,
+	)
+	return err
+}
+
+// GetUnsyncedWatchHistory gets watch history items not yet synced to Trakt for a profile
+func (d *Database) GetUnsyncedWatchHistory(profileID int64) ([]WatchHistoryItem, error) {
+	rows, err := d.db.Query(`
+		SELECT id, profile_id, media_type, media_id, tmdb_id, watched_at, synced_to_trakt, created_at
+		FROM watch_history
+		WHERE profile_id = ? AND synced_to_trakt = 0
+		ORDER BY watched_at ASC`, profileID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []WatchHistoryItem
+	for rows.Next() {
+		var item WatchHistoryItem
+		var watchedAt string
+		err := rows.Scan(&item.ID, &item.ProfileID, &item.MediaType, &item.MediaID,
+			&item.TmdbID, &watchedAt, &item.SyncedToTrakt, &item.CreatedAt)
+		if err != nil {
+			return nil, err
+		}
+		item.WatchedAt, _ = time.Parse(time.RFC3339, watchedAt)
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+// MarkWatchHistorySynced marks watch history items as synced to Trakt
+func (d *Database) MarkWatchHistorySynced(ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]interface{}, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	query := fmt.Sprintf("UPDATE watch_history SET synced_to_trakt = 1 WHERE id IN (%s)",
+		strings.Join(placeholders, ","))
+	_, err := d.db.Exec(query, args...)
+	return err
+}
+
+// AddToTraktSyncQueue adds an item to the Trakt sync queue
+func (d *Database) AddToTraktSyncQueue(item *TraktSyncQueueItem) error {
+	_, err := d.db.Exec(`
+		INSERT INTO trakt_sync_queue (user_id, action, media_type, tmdb_id, data)
+		VALUES (?, ?, ?, ?, ?)`,
+		item.UserID, item.Action, item.MediaType, item.TmdbID, item.Data,
+	)
+	return err
+}
+
+// GetPendingTraktSyncItems gets pending sync queue items for a user
+func (d *Database) GetPendingTraktSyncItems(userID int64) ([]TraktSyncQueueItem, error) {
+	rows, err := d.db.Query(`
+		SELECT id, user_id, action, media_type, tmdb_id, data, status, error, created_at
+		FROM trakt_sync_queue
+		WHERE user_id = ? AND status = 'pending'
+		ORDER BY created_at ASC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []TraktSyncQueueItem
+	for rows.Next() {
+		var item TraktSyncQueueItem
+		var errorMsg sql.NullString
+		err := rows.Scan(&item.ID, &item.UserID, &item.Action, &item.MediaType,
+			&item.TmdbID, &item.Data, &item.Status, &errorMsg, &item.CreatedAt)
+		if err != nil {
+			return nil, err
+		}
+		if errorMsg.Valid {
+			item.Error = &errorMsg.String
+		}
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+// MarkTraktSyncComplete marks sync queue items as completed
+func (d *Database) MarkTraktSyncComplete(ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]interface{}, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	query := fmt.Sprintf("UPDATE trakt_sync_queue SET status = 'completed' WHERE id IN (%s)",
+		strings.Join(placeholders, ","))
+	_, err := d.db.Exec(query, args...)
+	return err
+}
+
+// MarkTraktSyncFailed marks a sync queue item as failed
+func (d *Database) MarkTraktSyncFailed(id int64, errMsg string) error {
+	_, err := d.db.Exec(`
+		UPDATE trakt_sync_queue
+		SET status = 'failed', error = ?
+		WHERE id = ?`, errMsg, id)
+	return err
+}
+
+// CleanupTraktSyncQueue removes old completed/failed items
+func (d *Database) CleanupTraktSyncQueue() error {
+	_, err := d.db.Exec(`
+		DELETE FROM trakt_sync_queue
+		WHERE (status = 'completed' AND created_at < datetime('now', '-7 days'))
+		   OR (status = 'failed' AND created_at < datetime('now', '-1 day'))`)
+	return err
+}
+
+// GetAllTraktConfigs gets all enabled Trakt configurations for sync
+func (d *Database) GetAllTraktConfigs() ([]TraktConfig, error) {
+	rows, err := d.db.Query(`
+		SELECT id, user_id, access_token, refresh_token, expires_at, username,
+		       sync_enabled, sync_watched, sync_ratings, sync_watchlist, last_synced_at, created_at
+		FROM trakt_config WHERE sync_enabled = 1 AND access_token IS NOT NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var configs []TraktConfig
+	for rows.Next() {
+		var config TraktConfig
+		var expiresAt, lastSyncedAt, username sql.NullString
+		err := rows.Scan(
+			&config.ID, &config.UserID, &config.AccessToken, &config.RefreshToken,
+			&expiresAt, &username, &config.SyncEnabled, &config.SyncWatched,
+			&config.SyncRatings, &config.SyncWatchlist, &lastSyncedAt, &config.CreatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if expiresAt.Valid {
+			t, _ := time.Parse(time.RFC3339, expiresAt.String)
+			config.ExpiresAt = &t
+		}
+		if lastSyncedAt.Valid {
+			t, _ := time.Parse(time.RFC3339, lastSyncedAt.String)
+			config.LastSyncedAt = &t
+		}
+		if username.Valid {
+			config.Username = &username.String
+		}
+		configs = append(configs, config)
+	}
+	return configs, nil
 }
