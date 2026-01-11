@@ -2,6 +2,7 @@ package notification
 
 import (
 	"log"
+	"strconv"
 
 	"github.com/outpost/outpost/internal/database"
 )
@@ -93,9 +94,9 @@ func (s *Service) NotifyNewContent(userID int64, title, mediaType string, mediaI
 	message := title + " is now available in your library"
 	var link string
 	if mediaType == "movie" {
-		link = "/movies/" + itoa(mediaID)
+		link = "/movies/" + strconv.FormatInt(mediaID, 10)
 	} else {
-		link = "/tv/" + itoa(mediaID)
+		link = "/tv/" + strconv.FormatInt(mediaID, 10)
 	}
 	return s.Create(userID, TypeNewContent, "New Content Available", message, posterPath, &link)
 }
@@ -105,9 +106,9 @@ func (s *Service) NotifyRequestApproved(userID int64, title string, tmdbID int64
 	message := "Your request for \"" + title + "\" has been approved"
 	var link string
 	if mediaType == "movie" {
-		link = "/explore/movie/" + itoa(tmdbID)
+		link = "/explore/movie/" + strconv.FormatInt(tmdbID, 10)
 	} else {
-		link = "/explore/show/" + itoa(tmdbID)
+		link = "/explore/show/" + strconv.FormatInt(tmdbID, 10)
 	}
 	return s.Create(userID, TypeRequestApproved, "Request Approved", message, posterPath, &link)
 }
@@ -126,9 +127,9 @@ func (s *Service) NotifyDownloadComplete(title string, mediaType string, mediaID
 	message := title + " has finished downloading"
 	var link string
 	if mediaType == "movie" {
-		link = "/movies/" + itoa(mediaID)
+		link = "/movies/" + strconv.FormatInt(mediaID, 10)
 	} else {
-		link = "/tv/" + itoa(mediaID)
+		link = "/tv/" + strconv.FormatInt(mediaID, 10)
 	}
 	return s.CreateForAdmins(TypeDownloadComplete, "Download Complete", message, posterPath, &link)
 }
@@ -141,24 +142,4 @@ func (s *Service) NotifyDownloadFailed(title string, errorMsg string, posterPath
 	}
 	link := "/activity"
 	return s.CreateForAdmins(TypeDownloadFailed, "Download Failed", message, posterPath, &link)
-}
-
-// Simple int64 to string conversion without importing strconv
-func itoa(n int64) string {
-	if n == 0 {
-		return "0"
-	}
-	var result []byte
-	negative := n < 0
-	if negative {
-		n = -n
-	}
-	for n > 0 {
-		result = append([]byte{byte('0' + n%10)}, result...)
-		n /= 10
-	}
-	if negative {
-		result = append([]byte{'-'}, result...)
-	}
-	return string(result)
 }

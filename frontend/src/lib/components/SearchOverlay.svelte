@@ -1,18 +1,21 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { onMount, onDestroy } from 'svelte';
-	import { createRequest } from '$lib/api';
+	import { createRequest, type Movie, type Show, type DiscoverItem } from '$lib/api';
 
 	interface Props {
 		open?: boolean;
 		onClose?: () => void;
 	}
 
+	type LibraryResult = (Movie | Show) & { type: 'movie' | 'show'; source: 'library' };
+	type DiscoverResult = DiscoverItem & { type: 'movie' | 'show'; source: 'discover'; requested?: boolean };
+
 	let { open = false, onClose }: Props = $props();
 
 	let query = $state('');
-	let libraryResults = $state<any[]>([]);
-	let discoverResults = $state<any[]>([]);
+	let libraryResults = $state<LibraryResult[]>([]);
+	let discoverResults = $state<DiscoverResult[]>([]);
 	let loading = $state(false);
 	let selectedIndex = $state(0);
 	let inputRef: HTMLInputElement;
@@ -109,24 +112,24 @@
 
 				// Library results (items you own)
 				libraryResults = [
-					...movies.map((m: any) => ({ ...m, type: 'movie', source: 'library' })),
-					...shows.map((s: any) => ({ ...s, type: 'show', source: 'library' })),
+					...movies.map((m: Movie) => ({ ...m, type: 'movie' as const, source: 'library' as const })),
+					...shows.map((s: Show) => ({ ...s, type: 'show' as const, source: 'library' as const })),
 				].slice(0, 5);
 
 				// Get library TMDB IDs to filter discover results
 				const libraryTmdbIds = new Set([
-					...movies.map((m: any) => m.tmdb_id),
-					...shows.map((s: any) => s.tmdb_id),
+					...movies.map((m: Movie) => m.tmdb_id),
+					...shows.map((s: Show) => s.tmdb_id),
 				]);
 
 				// Discover results (items you can request) - filter out library items
 				discoverResults = [
 					...tmdbMovies
-						.filter((m: any) => !libraryTmdbIds.has(m.id) && !m.inLibrary)
-						.map((m: any) => ({ ...m, type: 'movie', source: 'discover' })),
+						.filter((m: DiscoverItem) => !libraryTmdbIds.has(m.id) && !m.inLibrary)
+						.map((m: DiscoverItem) => ({ ...m, type: 'movie' as const, source: 'discover' as const })),
 					...tmdbShows
-						.filter((s: any) => !libraryTmdbIds.has(s.id) && !s.inLibrary)
-						.map((s: any) => ({ ...s, type: 'show', source: 'discover' })),
+						.filter((s: DiscoverItem) => !libraryTmdbIds.has(s.id) && !s.inLibrary)
+						.map((s: DiscoverItem) => ({ ...s, type: 'show' as const, source: 'discover' as const })),
 				].slice(0, 5);
 			} catch (err) {
 				console.error('Search error:', err);
@@ -138,7 +141,7 @@
 		}, 300);
 	}
 
-	function navigateToResult(item: any) {
+	function navigateToResult(item: LibraryResult | DiscoverResult) {
 		if (item.source === 'library') {
 			if (item.type === 'movie') {
 				goto(`/movies/${item.id}`);
@@ -156,7 +159,7 @@
 		onClose?.();
 	}
 
-	async function handleInlineRequest(e: MouseEvent, item: any) {
+	async function handleInlineRequest(e: MouseEvent, item: DiscoverResult) {
 		e.preventDefault();
 		e.stopPropagation();
 
@@ -185,7 +188,7 @@
 		}
 	}
 
-	function getSelectedIndexForSection(item: any, index: number): number {
+	function getSelectedIndexForSection(item: LibraryResult | DiscoverResult, index: number): number {
 		if (item.source === 'library') {
 			return index;
 		} else {

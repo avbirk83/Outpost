@@ -46,7 +46,7 @@
 		try {
 			unreadCount = await getUnreadCount();
 		} catch (e) {
-			// Silently fail
+			console.debug('Failed to load unread count:', e);
 		}
 	}
 
@@ -55,7 +55,7 @@
 		try {
 			notifications = await getNotifications(false, 20);
 		} catch (e) {
-			// Silently fail
+			console.debug('Failed to load notifications:', e);
 		}
 		loadingNotifications = false;
 	}
@@ -77,7 +77,7 @@
 			notifications = notifications.map((n) => ({ ...n, read: true }));
 			unreadCount = 0;
 		} catch (e) {
-			// Silently fail
+			console.debug('Failed to mark all read:', e);
 		}
 	}
 
@@ -158,7 +158,7 @@
 			prevPendingRequests = newStatus.pendingRequests;
 			systemStatus = newStatus;
 		} catch (e) {
-			// Silently fail
+			console.debug('Failed to load system status:', e);
 		}
 	}
 
