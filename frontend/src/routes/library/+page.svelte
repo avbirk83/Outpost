@@ -7,28 +7,32 @@
 		getShows,
 		getCollections,
 		createCollection,
+		getSmartPlaylists,
 		getImageUrl,
 		type Movie,
 		type Show,
-		type Collection
+		type Collection,
+		type SmartPlaylist
 	} from '$lib/api';
 	import MediaCard from '$lib/components/media/MediaCard.svelte';
 	import Select from '$lib/components/ui/Select.svelte';
 	import { auth } from '$lib/stores/auth';
 
 	// Tab state from URL
-	type TabType = 'movies' | 'tv' | 'collections';
+	type TabType = 'movies' | 'tv' | 'collections' | 'playlists';
 	let activeTab = $state<TabType>('movies');
 
 	// Data states
 	let movies: Movie[] = $state([]);
 	let shows: Show[] = $state([]);
 	let collections: Collection[] = $state([]);
+	let playlists: SmartPlaylist[] = $state([]);
 
 	// Loading states per tab
 	let loadingMovies = $state(false);
 	let loadingShows = $state(false);
 	let loadingCollections = $state(false);
+	let loadingPlaylists = $state(false);
 	let loadedTabs = $state<Set<TabType>>(new Set());
 
 	// Get current user for admin check
@@ -254,10 +258,13 @@
 		return sortedEntries;
 	});
 
+	// Valid tabs for URL handling
+	const validTabs: TabType[] = ['movies', 'tv', 'collections', 'playlists'];
+
 	// Reactively sync tab from URL (handles back/forward navigation)
 	$effect(() => {
 		const urlTab = $page.url.searchParams.get('tab') as TabType | null;
-		if (urlTab && ['movies', 'tv'].includes(urlTab)) {
+		if (urlTab && validTabs.includes(urlTab)) {
 			if (activeTab !== urlTab) {
 				activeTab = urlTab;
 				loadTabData(urlTab);
@@ -268,7 +275,7 @@
 	// Read tab from URL on mount
 	onMount(() => {
 		const urlTab = $page.url.searchParams.get('tab') as TabType | null;
-		if (urlTab && ['movies', 'tv'].includes(urlTab)) {
+		if (urlTab && validTabs.includes(urlTab)) {
 			activeTab = urlTab;
 		}
 		loadTabData(activeTab);
@@ -310,6 +317,10 @@
 					loadingCollections = true;
 					collections = await getCollections();
 					break;
+				case 'playlists':
+					loadingPlaylists = true;
+					playlists = await getSmartPlaylists();
+					break;
 			}
 			loadedTabs.add(tab);
 		} catch (e) {
@@ -318,6 +329,7 @@
 			loadingMovies = false;
 			loadingShows = false;
 			loadingCollections = false;
+			loadingPlaylists = false;
 		}
 	}
 
@@ -504,6 +516,7 @@
 		{ id: 'movies' as TabType, label: 'Movies', count: movies.length },
 		{ id: 'tv' as TabType, label: 'TV Shows', count: shows.length },
 		{ id: 'collections' as TabType, label: 'Collections', count: collections.length },
+		{ id: 'playlists' as TabType, label: 'Playlists', count: playlists.length },
 	]);
 </script>
 
@@ -1096,6 +1109,99 @@
 								</h3>
 								{#if collection.description}
 									<p class="text-sm text-text-muted mt-1 line-clamp-2">{collection.description}</p>
+								{/if}
+							</div>
+						</a>
+					{/each}
+				</div>
+			{/if}
+		</div>
+	{/if}
+
+	<!-- Playlists Tab -->
+	{#if activeTab === 'playlists'}
+		<div class="space-y-6">
+			<!-- Header with Create button -->
+			<div class="flex items-center justify-between">
+				<h2 class="text-xl font-semibold text-text-primary">
+					Smart Playlists
+					<span class="text-sm text-text-muted font-normal ml-2">({playlists.length})</span>
+				</h2>
+				<a
+					href="/playlists/new"
+					class="px-4 py-2 rounded-lg bg-accent-primary text-white font-medium hover:bg-accent-primary/90 transition-colors flex items-center gap-2"
+				>
+					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+					</svg>
+					Create Playlist
+				</a>
+			</div>
+
+			{#if loadingPlaylists}
+				<div class="flex items-center justify-center py-20">
+					<div class="animate-spin w-8 h-8 border-2 border-accent-primary border-t-transparent rounded-full"></div>
+				</div>
+			{:else if playlists.length === 0}
+				<div class="text-center py-20">
+					<div class="text-6xl mb-4">🎬</div>
+					<h3 class="text-xl font-medium text-text-primary mb-2">No Playlists Yet</h3>
+					<p class="text-text-muted mb-6">Create smart playlists with custom rules to organize your media.<br/>Filter by genre, year, rating, and more.</p>
+					<a
+						href="/playlists/new"
+						class="inline-block px-6 py-3 rounded-lg bg-accent-primary text-white font-medium hover:bg-accent-primary/90 transition-colors"
+					>
+						Create Your First Playlist
+					</a>
+				</div>
+			{:else}
+				<div class="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4">
+					{#each playlists as playlist}
+						<a
+							href="/playlists/{playlist.id}"
+							class="group bg-bg-card border border-border-subtle rounded-xl overflow-hidden hover:border-border-hover transition-all hover:shadow-lg"
+						>
+							<!-- Playlist preview images -->
+							<div class="relative aspect-video bg-bg-tertiary overflow-hidden">
+								{#if playlist.previewItems && playlist.previewItems.length > 0}
+									<div class="grid grid-cols-3 h-full">
+										{#each playlist.previewItems.slice(0, 3) as item, i}
+											<div class="relative overflow-hidden {i === 1 ? 'border-x border-bg-tertiary' : ''}">
+												{#if item.posterPath}
+													<img
+														src={getImageUrl(item.posterPath)}
+														alt=""
+														class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+													/>
+												{:else}
+													<div class="w-full h-full bg-bg-elevated"></div>
+												{/if}
+											</div>
+										{/each}
+									</div>
+								{:else}
+									<div class="w-full h-full flex items-center justify-center text-4xl text-text-muted">🎬</div>
+								{/if}
+								<!-- Gradient overlay -->
+								<div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>
+								<!-- System badge -->
+								{#if playlist.isSystem}
+									<div class="absolute top-3 left-3 px-2 py-1 rounded bg-blue-500/90 text-white text-xs font-medium">
+										System
+									</div>
+								{/if}
+								<!-- Count badge -->
+								<div class="absolute bottom-3 right-3 px-2 py-1 rounded bg-black/60 text-white text-sm font-medium">
+									{playlist.itemCount} items
+								</div>
+							</div>
+							<!-- Info -->
+							<div class="p-4">
+								<h3 class="font-semibold text-text-primary group-hover:text-accent-primary transition-colors truncate">
+									{playlist.name}
+								</h3>
+								{#if playlist.description}
+									<p class="text-sm text-text-muted mt-1 line-clamp-2">{playlist.description}</p>
 								{/if}
 							</div>
 						</a>

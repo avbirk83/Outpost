@@ -205,8 +205,7 @@
 	// Navigation items
 	const navItems = [
 		{ href: '/', label: 'Home', match: (path: string) => path === '/' },
-		{ href: '/library', label: 'Library', match: (path: string) => path.startsWith('/library') || path.startsWith('/movies') || path.startsWith('/tv') || path.startsWith('/music') || path.startsWith('/books') },
-		{ href: '/playlists', label: 'Playlists', match: (path: string) => path.startsWith('/playlists') },
+		{ href: '/library', label: 'Library', match: (path: string) => path.startsWith('/library') || path.startsWith('/movies') || path.startsWith('/tv') || path.startsWith('/music') || path.startsWith('/books') || path.startsWith('/playlists') || path.startsWith('/collections') },
 		{ href: '/explore', label: 'Explore', match: (path: string) => path.startsWith('/explore') },
 	];
 
