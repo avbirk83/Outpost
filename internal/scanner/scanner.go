@@ -16,6 +16,8 @@ import (
 
 	"github.com/outpost/outpost/internal/database"
 	"github.com/outpost/outpost/internal/metadata"
+	"github.com/outpost/outpost/internal/parser"
+	"github.com/outpost/outpost/internal/quality"
 	"github.com/outpost/outpost/internal/subtitles"
 )
 
@@ -120,6 +122,170 @@ func (s *Scanner) FixMissingSizes() {
 	if fixed > 0 {
 		log.Printf("Fixed file sizes for %d episodes", fixed)
 	}
+}
+
+// detectAndStoreQuality parses a filename to detect quality and stores it in media_quality_status
+func (s *Scanner) detectAndStoreQuality(mediaID int64, mediaType string, filename string) {
+	// Parse the filename to extract quality information
+	parsed := parser.Parse(filename)
+	if parsed == nil {
+		return
+	}
+
+	// Compute quality tier and base score
+	qualityTier := quality.ComputeQualityTier(parsed)
+	baseScore := quality.BaseQualityScores[qualityTier]
+	if baseScore == 0 {
+		baseScore = 1000 // Unknown quality
+	}
+
+	// Default cutoff to WEBDL-1080p score
+	cutoffScore := 40000
+
+	// Try to get the default preset's cutoff
+	preset, err := s.db.GetDefaultQualityPreset()
+	if err == nil && preset != nil {
+		// Use cutoff settings if available, otherwise fall back to target settings
+		cutoffRes := preset.CutoffResolution
+		cutoffSrc := preset.CutoffSource
+		if cutoffRes == "" {
+			cutoffRes = preset.Resolution
+		}
+		if cutoffSrc == "" {
+			cutoffSrc = preset.Source
+		}
+
+		// Map preset format to parser format
+		presetResolution := mapPresetResolution(cutoffRes)
+		presetSource := mapPresetSource(cutoffSrc)
+
+		// Calculate cutoff score from preset's cutoff resolution and source
+		cutoffTier := quality.ComputeQualityTier(&parser.ParsedRelease{
+			Resolution: presetResolution,
+			Source:     presetSource,
+		})
+		if score, ok := quality.BaseQualityScores[cutoffTier]; ok && score > 0 {
+			cutoffScore = score
+		}
+	}
+
+	// Determine if target is met (current quality meets or exceeds cutoff)
+	targetMet := baseScore >= cutoffScore
+
+	// Prepare quality status record
+	resolution := parsed.Resolution
+	source := parsed.Source
+	hdr := parsed.HDR
+	audio := parsed.AudioFormat
+	edition := parsed.Edition
+
+	status := &database.MediaQualityStatus{
+		MediaID:           mediaID,
+		MediaType:         mediaType,
+		CurrentResolution: &resolution,
+		CurrentSource:     &source,
+		CurrentHDR:        &hdr,
+		CurrentAudio:      &audio,
+		CurrentEdition:    &edition,
+		CurrentScore:      baseScore,
+		CutoffScore:       cutoffScore,
+		TargetMet:         targetMet,
+		UpgradeAvailable:  false,
+	}
+
+	if err := s.db.UpsertMediaQualityStatus(status); err != nil {
+		log.Printf("Failed to store quality status for %s %d: %v", mediaType, mediaID, err)
+	}
+}
+
+// mapPresetResolution maps preset resolution format ("4k") to parser format ("2160p")
+func mapPresetResolution(presetRes string) string {
+	switch strings.ToLower(presetRes) {
+	case "4k", "2160p", "uhd":
+		return "2160p"
+	case "1080p", "fhd":
+		return "1080p"
+	case "720p", "hd":
+		return "720p"
+	case "480p", "sd":
+		return "480p"
+	default:
+		return "1080p" // Default
+	}
+}
+
+// mapPresetSource maps preset source format ("web") to parser format ("webdl")
+func mapPresetSource(presetSource string) string {
+	switch strings.ToLower(presetSource) {
+	case "remux":
+		return "remux"
+	case "bluray", "blu-ray":
+		return "bluray"
+	case "web", "webdl", "web-dl":
+		return "webdl"
+	case "webrip", "web-rip":
+		return "webrip"
+	case "hdtv":
+		return "hdtv"
+	case "dvd":
+		return "dvd"
+	default:
+		return "webdl" // Default
+	}
+}
+
+// DetectQualityForExistingMedia scans all existing movies and episodes to detect and store their quality
+// This is useful for media that was added before quality detection was implemented
+func (s *Scanner) DetectQualityForExistingMedia() {
+	log.Println("Starting quality detection for existing media...")
+
+	// Process all movies
+	movies, err := s.db.GetMovies()
+	if err != nil {
+		log.Printf("Failed to get movies for quality detection: %v", err)
+	} else {
+		detected := 0
+		for _, movie := range movies {
+			// Check if quality status already exists
+			status, _ := s.db.GetMediaQualityStatus(movie.ID, "movie")
+			if status != nil && status.CurrentScore > 0 {
+				continue // Already has quality info
+			}
+
+			if movie.Path != "" {
+				s.detectAndStoreQuality(movie.ID, "movie", filepath.Base(movie.Path))
+				detected++
+			}
+		}
+		if detected > 0 {
+			log.Printf("Detected quality for %d movies", detected)
+		}
+	}
+
+	// Process all episodes
+	episodes, err := s.db.GetAllEpisodes()
+	if err != nil {
+		log.Printf("Failed to get episodes for quality detection: %v", err)
+	} else {
+		detected := 0
+		for _, ep := range episodes {
+			// Check if quality status already exists
+			status, _ := s.db.GetMediaQualityStatus(ep.ID, "episode")
+			if status != nil && status.CurrentScore > 0 {
+				continue // Already has quality info
+			}
+
+			if ep.Path != "" {
+				s.detectAndStoreQuality(ep.ID, "episode", filepath.Base(ep.Path))
+				detected++
+			}
+		}
+		if detected > 0 {
+			log.Printf("Detected quality for %d episodes", detected)
+		}
+	}
+
+	log.Println("Quality detection for existing media complete")
 }
 
 // cleanupOrphanedMovies removes movies from database whose files no longer exist
@@ -309,6 +475,8 @@ func (s *Scanner) scanMovies(lib *database.Library) error {
 		} else {
 			added++
 			log.Printf("Added movie: %s (%d)", title, year)
+			// Detect and store quality from filename
+			s.detectAndStoreQuality(movie.ID, "movie", filepath.Base(path))
 			// Fetch metadata from TMDB
 			if s.meta != nil {
 				if err := s.meta.FetchMovieMetadata(movie); err != nil {
@@ -441,6 +609,8 @@ func (s *Scanner) scanTV(lib *database.Library) error {
 		} else {
 			added++
 			log.Printf("Added episode: %s S%02dE%02d", showTitle, seasonNum, episodeNum)
+			// Detect and store quality from filename
+			s.detectAndStoreQuality(episode.ID, "episode", filepath.Base(path))
 			// Extract subtitles, chapters, and auto-download subtitles in background
 			go func(ep *database.Episode, p string, showName string, sNum, eNum int) {
 				s.ExtractSubtitles(p)

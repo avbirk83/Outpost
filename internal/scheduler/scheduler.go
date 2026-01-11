@@ -481,7 +481,7 @@ func (s *Scheduler) runUpgradeSearchTask() (processed, found int) {
 			}
 
 			if movie.TmdbID != nil && qualityPresetID > 0 {
-				err := s.db.CreateUpgradeWantedItem("movie", *movie.TmdbID, imdbID, movie.Title, movie.Year, "", qualityPresetID, item.ID)
+				err := s.db.CreateUpgradeWantedItem("movie", *movie.TmdbID, imdbID, movie.Title, movie.Year, "", qualityPresetID, item.ID, item.CurrentScore)
 				if err == nil {
 					processed++
 					s.db.UpdateUpgradeSearched(item.ID, "movie", false)
@@ -533,7 +533,7 @@ func (s *Scheduler) runUpgradeSearchTask() (processed, found int) {
 
 			if show.TmdbID != nil && qualityPresetID > 0 {
 				title := fmt.Sprintf("%s S%02dE%02d", show.Title, season.SeasonNumber, episode.EpisodeNumber)
-				err := s.db.CreateUpgradeWantedItem("episode", *show.TmdbID, imdbID, title, show.Year, "", qualityPresetID, item.ID)
+				err := s.db.CreateUpgradeWantedItem("episode", *show.TmdbID, imdbID, title, show.Year, "", qualityPresetID, item.ID, item.CurrentScore)
 				if err == nil {
 					processed++
 					s.db.UpdateUpgradeSearched(item.ID, "episode", false)
@@ -851,6 +851,17 @@ func (s *Scheduler) searchAndGrab(item *database.WantedItem) {
 				continue
 			}
 
+			// For upgrade searches, only accept releases with higher quality score than current
+			if item.IsUpgrade && item.CurrentScore > 0 {
+				if scoredResults[i].TotalScore <= item.CurrentScore {
+					log.Printf("Scheduler: skipping %s for upgrade - release score %d not higher than current score %d",
+						scoredResults[i].Title, scoredResults[i].TotalScore, item.CurrentScore)
+					continue
+				}
+				log.Printf("Scheduler: upgrade candidate %s - release score %d > current score %d",
+					scoredResults[i].Title, scoredResults[i].TotalScore, item.CurrentScore)
+			}
+
 			// Format validation now happens in scoreResultsWithPreset, so format-rejected
 			// releases will already have scored.Rejected = true and won't reach here
 
@@ -924,6 +935,10 @@ func (s *Scheduler) searchAndGrab(item *database.WantedItem) {
 				}
 			}
 			if item.QualityProfileID > 0 && !s.passesReleaseFilters(scoredResults[i].Title, item.QualityProfileID) {
+				continue
+			}
+			// For upgrade searches, only accept releases with higher quality score than current
+			if item.IsUpgrade && item.CurrentScore > 0 && scoredResults[i].TotalScore <= item.CurrentScore {
 				continue
 			}
 			acceptableResults = append(acceptableResults, &scoredResults[i])

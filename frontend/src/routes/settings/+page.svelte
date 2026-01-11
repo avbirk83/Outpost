@@ -8,6 +8,10 @@
 	import HealthTab from './_components/HealthTab.svelte';
 	import LogsTab from './_components/LogsTab.svelte';
 	import StorageTab from './_components/StorageTab.svelte';
+	import TraktSettings from './_components/TraktSettings.svelte';
+	import OpenSubtitlesSettings from './_components/OpenSubtitlesSettings.svelte';
+	import FormatFilteringSettings from './_components/FormatFilteringSettings.svelte';
+	import TMDBSettings from './_components/TMDBSettings.svelte';
 	import { toast } from '$lib/stores/toast';
 	import { auth } from '$lib/stores/auth';
 	import {
@@ -16,10 +20,6 @@
 		deleteLibrary,
 		scanLibrary,
 		getScanProgress,
-		getSettings,
-		saveSettings,
-		refreshAllMetadata,
-		clearLibraryData,
 		getDownloadClients,
 		createDownloadClient,
 		updateDownloadClient,
@@ -37,7 +37,6 @@
 		setDefaultQualityPreset,
 		toggleQualityPresetEnabled,
 		updateQualityPresetPriority,
-		getStorageStatus,
 		getTasks,
 		updateTask,
 		triggerTask,
@@ -53,7 +52,6 @@
 		type Indexer,
 		type QualityPreset,
 		type ScanProgress,
-		type StorageStatus,
 		type ScheduledTask
 	} from '$lib/api';
 
@@ -61,7 +59,6 @@
 	let downloadClients: DownloadClient[] = $state([]);
 	let indexers: Indexer[] = $state([]);
 	let qualityPresets: QualityPreset[] = $state([]);
-	let storageStatus: StorageStatus | null = $state(null);
 	let tasks: ScheduledTask[] = $state([]);
 	let taskRefreshInterval: ReturnType<typeof setInterval> | null = null;
 	let triggeringTask: Record<number, boolean> = $state({});
@@ -163,15 +160,7 @@
 	const codecOptions = ['any', 'hevc', 'av1'];
 	const editionOptions = ['any', 'theatrical', 'directors', 'extended', 'unrated'];
 
-	// Settings state
-	let tmdbApiKey = $state('');
-	let savingSettings = $state(false);
-	let settingsSaved = $state(false);
-	let refreshingMetadata = $state(false);
-	let refreshResult: { refreshed: number; errors: number; total: number } | null = $state(null);
-	let clearingLibrary = $state(false);
-	let showClearConfirm = $state(false);
-
+	
 	// Tab navigation
 	type SettingsTab = 'general' | 'quality' | 'sources' | 'automation' | 'storage' | 'health' | 'logs';
 	let currentTab: SettingsTab = $state('general');
@@ -192,7 +181,7 @@
 	const tabs = $derived(baseTabs.filter(tab => !tab.adminOnly || isAdmin));
 
 	onMount(async () => {
-		await Promise.all([loadLibraries(), loadSettings(), loadDownloadClients(), loadIndexers(), loadProwlarrConfig(), loadQualityPresets(), loadStorageStatus(), loadTasks()]);
+		await Promise.all([loadLibraries(), loadDownloadClients(), loadIndexers(), loadProwlarrConfig(), loadQualityPresets(), loadTasks()]);
 		// Check if a scan is already running
 		checkScanProgress();
 		// Start task refresh interval
@@ -242,62 +231,6 @@
 		} catch (e) {
 			console.error('Failed to get scan progress:', e);
 			stopProgressPolling();
-		}
-	}
-
-	async function loadSettings() {
-		try {
-			const settings = await getSettings();
-			tmdbApiKey = settings['tmdb_api_key'] || '';
-		} catch (e) {
-			console.error('Failed to load settings:', e);
-		}
-	}
-
-	async function handleSaveSettings() {
-		try {
-			savingSettings = true;
-			await saveSettings({ tmdb_api_key: tmdbApiKey });
-			settingsSaved = true;
-			setTimeout(() => (settingsSaved = false), 3000);
-			toast.success('Settings saved');
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to save settings';
-			toast.error('Failed to save settings');
-		} finally {
-			savingSettings = false;
-		}
-	}
-
-	async function handleRefreshMetadata() {
-		try {
-			refreshingMetadata = true;
-			refreshResult = null;
-			const result = await refreshAllMetadata();
-			refreshResult = result;
-			setTimeout(() => (refreshResult = null), 10000);
-			toast.success(`Refreshed ${result.refreshed} items`);
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to refresh metadata';
-			toast.error('Failed to refresh metadata');
-		} finally {
-			refreshingMetadata = false;
-		}
-	}
-
-	async function handleClearLibrary() {
-		try {
-			clearingLibrary = true;
-			await clearLibraryData();
-			showClearConfirm = false;
-			toast.success('Library data cleared');
-			// Reload the page to reflect changes
-			window.location.reload();
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to clear library data';
-			toast.error('Failed to clear library data');
-		} finally {
-			clearingLibrary = false;
 		}
 	}
 
@@ -877,22 +810,6 @@
 		}
 	}
 
-	// Storage management functions
-	async function loadStorageStatus() {
-		try {
-			storageStatus = await getStorageStatus();
-		} catch (e) {
-			console.error('Failed to load storage status:', e);
-			storageStatus = { thresholdGb: 50, pauseEnabled: false, upgradeDeleteOld: true, moviesSize: 0, tvSize: 0, musicSize: 0, booksSize: 0 };
-		}
-	}
-
-	function getStorageBarColor(usedPercent: number, freeGb: number, thresholdGb: number): string {
-		if (freeGb < thresholdGb) return 'bg-red-500';
-		if (usedPercent > 80) return 'bg-yellow-500';
-		return 'bg-green-500';
-	}
-
 	// Task management functions
 	async function loadTasks() {
 		try {
@@ -1021,13 +938,6 @@
 	<!-- ============================================ -->
 	{#if currentTab === 'general'}
 		<GeneralTab
-			{tmdbApiKey}
-			{savingSettings}
-			{settingsSaved}
-			{refreshingMetadata}
-			{refreshResult}
-			{clearingLibrary}
-			{showClearConfirm}
 			{libraries}
 			{loading}
 			{showAddForm}
@@ -1036,11 +946,6 @@
 			{type}
 			{scanning}
 			{scanProgress}
-			onTmdbKeyChange={(value) => tmdbApiKey = value}
-			onSaveSettings={handleSaveSettings}
-			onRefreshMetadata={handleRefreshMetadata}
-			onClearLibrary={handleClearLibrary}
-			onShowClearConfirm={(show) => showClearConfirm = show}
 			onShowAddForm={(show) => showAddForm = show}
 			onNameChange={(value) => name = value}
 			onPathChange={(value) => path = value}
@@ -1061,6 +966,9 @@
 	<!-- SOURCES TAB -->
 	<!-- ============================================ -->
 	{#if currentTab === 'sources'}
+
+	<!-- TMDB -->
+	<TMDBSettings />
 
 	<!-- Download Clients -->
 	<section class="glass-card p-6 space-y-4">
@@ -1231,13 +1139,11 @@
 	<section class="glass-card p-6 space-y-4">
 		<div class="flex items-center justify-between">
 			<div class="flex items-center gap-3">
-				<div class="w-10 h-10 rounded-xl bg-orange-600/20 flex items-center justify-center">
-					<svg class="w-5 h-5 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-					</svg>
+				<div class="w-10 h-10 rounded-xl flex items-center justify-center overflow-hidden">
+					<img src="/icons/prowlarr.png" alt="Prowlarr" class="w-full h-full object-cover" />
 				</div>
 				<div>
-					<h2 class="text-lg font-semibold text-text-primary">Prowlarr Sync</h2>
+					<h2 class="text-lg font-semibold text-text-primary">Prowlarr</h2>
 					<p class="text-sm text-text-secondary">Import indexers from Prowlarr with capabilities and tags</p>
 				</div>
 			</div>
@@ -1485,6 +1391,12 @@
 			</div>
 		{/if}
 	</section>
+
+	<!-- Trakt.tv -->
+	<TraktSettings />
+
+	<!-- OpenSubtitles -->
+	<OpenSubtitlesSettings />
 
 	{/if}
 
@@ -1810,6 +1722,9 @@
 		{/if}
 	</section>
 
+	<!-- Format Filtering -->
+	<FormatFilteringSettings />
+
 	{/if}
 
 	<!-- ============================================ -->
@@ -1818,7 +1733,6 @@
 	{#if currentTab === 'automation'}
 		<AutomationTab
 			{tasks}
-			{storageStatus}
 			{triggeringTask}
 			{editingTaskInterval}
 			{savingTask}

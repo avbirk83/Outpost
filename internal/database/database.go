@@ -147,165 +147,6 @@ type SkipSegments struct {
 	Credits *SkipSegment `json:"credits,omitempty"`
 }
 
-type User struct {
-	ID                 int64     `json:"id"`
-	Username           string    `json:"username"`
-	PasswordHash       string    `json:"-"` // Never expose in JSON
-	Role               string    `json:"role"` // admin, user, kid
-	ContentRatingLimit *string   `json:"contentRatingLimit,omitempty"` // G, PG, PG-13, R, NC-17, or nil (no limit)
-	PinHash            *string   `json:"-"`                            // PIN hash, never expose
-	RequirePin         bool      `json:"requirePin"`                   // Require PIN for elevated content
-	CreatedAt          time.Time `json:"createdAt"`
-}
-
-// Profile represents a viewing profile within a user account (Netflix-style)
-type Profile struct {
-	ID                 int64     `json:"id"`
-	UserID             int64     `json:"userId"`
-	Name               string    `json:"name"`
-	AvatarURL          *string   `json:"avatarUrl,omitempty"`
-	IsDefault          bool      `json:"isDefault"`
-	IsKid              bool      `json:"isKid"`
-	ContentRatingLimit *string   `json:"contentRatingLimit,omitempty"`
-	CreatedAt          time.Time `json:"createdAt"`
-}
-
-// ContentRatingLevel returns the numeric level for a content rating (for comparison)
-func ContentRatingLevel(rating string) int {
-	switch rating {
-	case "G":
-		return 1
-	case "PG":
-		return 2
-	case "PG-13":
-		return 3
-	case "R":
-		return 4
-	case "NC-17":
-		return 5
-	default:
-		return 0 // Unknown or unrated
-	}
-}
-
-// NormalizeContentRating converts various content rating formats to US MPAA ratings
-func NormalizeContentRating(rating string, country string) string {
-	if rating == "" {
-		return ""
-	}
-
-	// Already normalized US ratings
-	switch rating {
-	case "G", "PG", "PG-13", "R", "NC-17":
-		return rating
-	}
-
-	// US TV ratings
-	switch rating {
-	case "TV-Y", "TV-Y7", "TV-G":
-		return "G"
-	case "TV-PG":
-		return "PG"
-	case "TV-14":
-		return "PG-13"
-	case "TV-MA":
-		return "R"
-	}
-
-	// UK ratings (BBFC)
-	switch rating {
-	case "U", "Uc":
-		return "G"
-	case "PG": // UK PG
-		return "PG"
-	case "12", "12A":
-		return "PG-13"
-	case "15":
-		return "R"
-	case "18", "R18":
-		return "NC-17"
-	}
-
-	// Australia ratings
-	switch rating {
-	case "G", "E":
-		return "G"
-	case "M", "PG": // Australia
-		return "PG"
-	case "MA", "MA15+", "M15+":
-		return "PG-13"
-	case "R", "R18+":
-		return "R"
-	case "X", "X18+":
-		return "NC-17"
-	}
-
-	// Germany ratings (FSK)
-	switch rating {
-	case "FSK 0":
-		return "G"
-	case "FSK 6":
-		return "PG"
-	case "FSK 12":
-		return "PG-13"
-	case "FSK 16":
-		return "R"
-	case "FSK 18":
-		return "NC-17"
-	}
-
-	// Canada ratings
-	switch rating {
-	case "G", "E":
-		return "G"
-	case "PG":
-		return "PG"
-	case "14A", "14+":
-		return "PG-13"
-	case "18A", "18+", "R":
-		return "R"
-	case "A":
-		return "NC-17"
-	}
-
-	// Default: try to match common patterns
-	ratingUpper := rating
-	if len(rating) > 0 {
-		// Handle numeric ratings
-		switch rating {
-		case "0", "6":
-			return "G"
-		case "7", "10":
-			return "PG"
-		case "12", "13":
-			return "PG-13"
-		case "16", "17":
-			return "R"
-		case "18", "21":
-			return "NC-17"
-		}
-	}
-
-	// If we can't determine, return as-is (will show as "Unrated" in UI)
-	return ratingUpper
-}
-
-type Session struct {
-	ID              int64     `json:"id"`
-	UserID          int64     `json:"userId"`
-	Token           string    `json:"token"`
-	ExpiresAt       time.Time `json:"expiresAt"`
-	ActiveProfileID *int64    `json:"activeProfileId,omitempty"`
-}
-
-// PinElevation represents a temporary elevated access session after PIN verification
-type PinElevation struct {
-	ID        int64     `json:"id"`
-	UserID    int64     `json:"userId"`
-	Token     string    `json:"token"`
-	ExpiresAt time.Time `json:"expiresAt"`
-}
-
 type DownloadClient struct {
 	ID       int64  `json:"id"`
 	Name     string `json:"name"`
@@ -392,6 +233,9 @@ type WantedItem struct {
 	SearchNow        bool       `json:"searchNow,omitempty"`     // For triggering immediate search
 	LastSearched     *time.Time `json:"lastSearched,omitempty"`
 	AddedAt          time.Time  `json:"addedAt"`
+	IsUpgrade        bool       `json:"isUpgrade"`               // True if this is an upgrade search
+	ExistingMediaID  *int64     `json:"existingMediaId,omitempty"` // ID of existing media being upgraded
+	CurrentScore     int        `json:"currentScore"`            // Quality score of existing media (for upgrade comparison)
 }
 
 type Request struct {
@@ -496,6 +340,9 @@ type QualityPreset struct {
 	MinSeeders        int       `json:"minSeeders"`
 	PreferSeasonPacks bool      `json:"preferSeasonPacks"`
 	AutoUpgrade       bool      `json:"autoUpgrade"`
+	// Cutoff settings for upgrade detection
+	CutoffResolution  string `json:"cutoffResolution"`  // Stop upgrading after reaching this resolution
+	CutoffSource      string `json:"cutoffSource"`      // Stop upgrading after reaching this source
 	// Anime-specific preferences
 	PreferDualAudio   bool   `json:"preferDualAudio"`
 	PreferDubbed      bool   `json:"preferDubbed"`
@@ -1779,6 +1626,7 @@ func (d *Database) migrate() error {
 		// Upgrade tracking for wanted items
 		"ALTER TABLE wanted ADD COLUMN is_upgrade INTEGER DEFAULT 0",
 		"ALTER TABLE wanted ADD COLUMN existing_media_id INTEGER",
+		"ALTER TABLE wanted ADD COLUMN current_score INTEGER DEFAULT 0",
 		// Upgrade search tracking for quality status
 		"ALTER TABLE media_quality_status ADD COLUMN upgrade_searched_at DATETIME",
 		"ALTER TABLE media_quality_status ADD COLUMN current_score INTEGER DEFAULT 0",
@@ -2004,557 +1852,6 @@ func (d *Database) ClearAllLibraryData() error {
 	return nil
 }
 
-// Movie operations
-
-func (d *Database) CreateMovie(movie *Movie) error {
-	result, err := d.db.Exec(
-		"INSERT INTO movies (library_id, title, year, path, size) VALUES (?, ?, ?, ?, ?)",
-		movie.LibraryID, movie.Title, movie.Year, movie.Path, movie.Size,
-	)
-	if err != nil {
-		return err
-	}
-	movie.ID, _ = result.LastInsertId()
-	return nil
-}
-
-func (d *Database) UpdateMovieMetadata(movie *Movie) error {
-	_, err := d.db.Exec(`
-		UPDATE movies SET
-			tmdb_id = ?, imdb_id = ?, original_title = ?, overview = ?, tagline = ?,
-			runtime = ?, rating = ?, content_rating = ?, genres = ?, "cast" = ?, crew = ?,
-			director = ?, writer = ?, editor = ?, producers = ?, status = ?, budget = ?, revenue = ?,
-			country = ?, original_language = ?, theatrical_release = ?, digital_release = ?, studios = ?, trailers = ?,
-			poster_path = ?, backdrop_path = ?, focal_x = ?, focal_y = ?
-		WHERE id = ?`,
-		movie.TmdbID, movie.ImdbID, movie.OriginalTitle, movie.Overview, movie.Tagline,
-		movie.Runtime, movie.Rating, movie.ContentRating, movie.Genres, movie.Cast, movie.Crew,
-		movie.Director, movie.Writer, movie.Editor, movie.Producers, movie.Status, movie.Budget, movie.Revenue,
-		movie.Country, movie.OriginalLanguage, movie.TheatricalRelease, movie.DigitalRelease, movie.Studios, movie.Trailers,
-		movie.PosterPath, movie.BackdropPath, movie.FocalX, movie.FocalY, movie.ID,
-	)
-	return err
-}
-
-func (d *Database) UpdateMoviePath(id int64, newPath string) error {
-	_, err := d.db.Exec(`UPDATE movies SET path = ? WHERE id = ?`, newPath, id)
-	return err
-}
-
-func (d *Database) GetMovies() ([]Movie, error) {
-	rows, err := d.db.Query(`
-		SELECT id, library_id, tmdb_id, imdb_id, title, original_title, year, overview, tagline,
-			runtime, rating, content_rating, genres, "cast", crew, director, writer, editor, producers, status, budget, revenue,
-			country, original_language, theatrical_release, digital_release, studios, trailers, poster_path, backdrop_path, focal_x, focal_y, path, size, added_at, last_watched_at, play_count
-		FROM movies ORDER BY added_at DESC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var movies []Movie
-	for rows.Next() {
-		var m Movie
-		if err := rows.Scan(&m.ID, &m.LibraryID, &m.TmdbID, &m.ImdbID, &m.Title, &m.OriginalTitle, &m.Year,
-			&m.Overview, &m.Tagline, &m.Runtime, &m.Rating, &m.ContentRating, &m.Genres, &m.Cast, &m.Crew,
-			&m.Director, &m.Writer, &m.Editor, &m.Producers, &m.Status, &m.Budget, &m.Revenue,
-			&m.Country, &m.OriginalLanguage, &m.TheatricalRelease, &m.DigitalRelease, &m.Studios, &m.Trailers,
-			&m.PosterPath, &m.BackdropPath, &m.FocalX, &m.FocalY, &m.Path, &m.Size, &m.AddedAt, &m.LastWatchedAt, &m.PlayCount); err != nil {
-			return nil, err
-		}
-		movies = append(movies, m)
-	}
-	return movies, nil
-}
-
-// GetMovieTMDBIDs returns a set of all TMDB IDs in the movie library
-func (d *Database) GetMovieTMDBIDs() (map[int64]bool, error) {
-	rows, err := d.db.Query(`SELECT tmdb_id FROM movies WHERE tmdb_id IS NOT NULL`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	ids := make(map[int64]bool)
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			continue
-		}
-		ids[id] = true
-	}
-	return ids, nil
-}
-
-// GetShowTMDBIDs returns a set of all TMDB IDs in the TV show library
-func (d *Database) GetShowTMDBIDs() (map[int64]bool, error) {
-	rows, err := d.db.Query(`SELECT tmdb_id FROM shows WHERE tmdb_id IS NOT NULL`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	ids := make(map[int64]bool)
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			continue
-		}
-		ids[id] = true
-	}
-	return ids, nil
-}
-
-func (d *Database) GetMovieByPath(path string) (*Movie, error) {
-	var m Movie
-	err := d.db.QueryRow(`
-		SELECT id, library_id, tmdb_id, imdb_id, title, original_title, year, overview, tagline,
-			runtime, rating, content_rating, genres, "cast", crew, director, writer, editor, producers, status, budget, revenue,
-			country, original_language, theatrical_release, digital_release, studios, trailers, poster_path, backdrop_path, focal_x, focal_y, path, size, added_at, last_watched_at, play_count
-		FROM movies WHERE path = ?`, path,
-	).Scan(&m.ID, &m.LibraryID, &m.TmdbID, &m.ImdbID, &m.Title, &m.OriginalTitle, &m.Year,
-		&m.Overview, &m.Tagline, &m.Runtime, &m.Rating, &m.ContentRating, &m.Genres, &m.Cast, &m.Crew,
-		&m.Director, &m.Writer, &m.Editor, &m.Producers, &m.Status, &m.Budget, &m.Revenue,
-		&m.Country, &m.OriginalLanguage, &m.TheatricalRelease, &m.DigitalRelease, &m.Studios, &m.Trailers,
-		&m.PosterPath, &m.BackdropPath, &m.FocalX, &m.FocalY, &m.Path, &m.Size, &m.AddedAt, &m.LastWatchedAt, &m.PlayCount)
-	if err != nil {
-		return nil, err
-	}
-	return &m, nil
-}
-
-// Show operations
-
-func (d *Database) CreateShow(show *Show) error {
-	result, err := d.db.Exec(
-		"INSERT INTO shows (library_id, title, year, path) VALUES (?, ?, ?, ?)",
-		show.LibraryID, show.Title, show.Year, show.Path,
-	)
-	if err != nil {
-		return err
-	}
-	show.ID, _ = result.LastInsertId()
-	return nil
-}
-
-func (d *Database) UpdateShowMetadata(show *Show) error {
-	_, err := d.db.Exec(`
-		UPDATE shows SET
-			tmdb_id = ?, tvdb_id = ?, imdb_id = ?, original_title = ?, year = ?, overview = ?,
-			status = ?, rating = ?, content_rating = ?, genres = ?, "cast" = ?, crew = ?,
-			network = ?, poster_path = ?, backdrop_path = ?, focal_x = ?, focal_y = ?
-		WHERE id = ?`,
-		show.TmdbID, show.TvdbID, show.ImdbID, show.OriginalTitle, show.Year, show.Overview,
-		show.Status, show.Rating, show.ContentRating, show.Genres, show.Cast, show.Crew,
-		show.Network, show.PosterPath, show.BackdropPath, show.FocalX, show.FocalY, show.ID,
-	)
-	return err
-}
-
-func (d *Database) GetShows() ([]Show, error) {
-	rows, err := d.db.Query(`
-		SELECT id, library_id, tmdb_id, tvdb_id, imdb_id, title, original_title, year,
-			overview, status, rating, content_rating, genres, "cast", crew, network, poster_path, backdrop_path, focal_x, focal_y, path, added_at
-		FROM shows ORDER BY added_at DESC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var shows []Show
-	for rows.Next() {
-		var s Show
-		var addedAt sql.NullTime
-		if err := rows.Scan(&s.ID, &s.LibraryID, &s.TmdbID, &s.TvdbID, &s.ImdbID, &s.Title, &s.OriginalTitle, &s.Year,
-			&s.Overview, &s.Status, &s.Rating, &s.ContentRating, &s.Genres, &s.Cast, &s.Crew,
-			&s.Network, &s.PosterPath, &s.BackdropPath, &s.FocalX, &s.FocalY, &s.Path, &addedAt); err != nil {
-			return nil, err
-		}
-		if addedAt.Valid {
-			s.AddedAt = &addedAt.Time
-		}
-		shows = append(shows, s)
-	}
-	return shows, nil
-}
-
-func (d *Database) GetShowByPath(path string) (*Show, error) {
-	var s Show
-	var addedAt sql.NullTime
-	err := d.db.QueryRow(`
-		SELECT id, library_id, tmdb_id, tvdb_id, imdb_id, title, original_title, year,
-			overview, status, rating, content_rating, genres, "cast", crew, network, poster_path, backdrop_path, focal_x, focal_y, path, added_at
-		FROM shows WHERE path = ?`, path,
-	).Scan(&s.ID, &s.LibraryID, &s.TmdbID, &s.TvdbID, &s.ImdbID, &s.Title, &s.OriginalTitle, &s.Year,
-		&s.Overview, &s.Status, &s.Rating, &s.ContentRating, &s.Genres, &s.Cast, &s.Crew,
-		&s.Network, &s.PosterPath, &s.BackdropPath, &s.FocalX, &s.FocalY, &s.Path, &addedAt)
-	if err != nil {
-		return nil, err
-	}
-	if addedAt.Valid {
-		s.AddedAt = &addedAt.Time
-	}
-	return &s, nil
-}
-
-func (d *Database) GetShow(id int64) (*Show, error) {
-	var s Show
-	var addedAt sql.NullTime
-	err := d.db.QueryRow(`
-		SELECT id, library_id, tmdb_id, tvdb_id, imdb_id, title, original_title, year,
-			overview, status, rating, content_rating, genres, "cast", crew, network, poster_path, backdrop_path, focal_x, focal_y, path, added_at
-		FROM shows WHERE id = ?`, id,
-	).Scan(&s.ID, &s.LibraryID, &s.TmdbID, &s.TvdbID, &s.ImdbID, &s.Title, &s.OriginalTitle, &s.Year,
-		&s.Overview, &s.Status, &s.Rating, &s.ContentRating, &s.Genres, &s.Cast, &s.Crew,
-		&s.Network, &s.PosterPath, &s.BackdropPath, &s.FocalX, &s.FocalY, &s.Path, &addedAt)
-	if err != nil {
-		return nil, err
-	}
-	if addedAt.Valid {
-		s.AddedAt = &addedAt.Time
-	}
-	return &s, nil
-}
-
-// Season operations
-
-func (d *Database) CreateSeason(season *Season) error {
-	result, err := d.db.Exec(
-		"INSERT INTO seasons (show_id, season_number) VALUES (?, ?)",
-		season.ShowID, season.SeasonNumber,
-	)
-	if err != nil {
-		return err
-	}
-	season.ID, _ = result.LastInsertId()
-	return nil
-}
-
-func (d *Database) UpdateSeasonMetadata(season *Season) error {
-	_, err := d.db.Exec(`
-		UPDATE seasons SET name = ?, overview = ?, poster_path = ?, air_date = ?
-		WHERE id = ?`,
-		season.Name, season.Overview, season.PosterPath, season.AirDate, season.ID,
-	)
-	return err
-}
-
-func (d *Database) GetSeasonsByShow(showID int64) ([]Season, error) {
-	rows, err := d.db.Query(`
-		SELECT id, show_id, season_number, name, overview, poster_path, air_date
-		FROM seasons WHERE show_id = ? ORDER BY season_number`, showID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var seasons []Season
-	for rows.Next() {
-		var s Season
-		if err := rows.Scan(&s.ID, &s.ShowID, &s.SeasonNumber, &s.Name, &s.Overview, &s.PosterPath, &s.AirDate); err != nil {
-			return nil, err
-		}
-		seasons = append(seasons, s)
-	}
-	return seasons, nil
-}
-
-func (d *Database) GetSeason(showID int64, seasonNumber int) (*Season, error) {
-	var s Season
-	err := d.db.QueryRow(`
-		SELECT id, show_id, season_number, name, overview, poster_path, air_date
-		FROM seasons WHERE show_id = ? AND season_number = ?`,
-		showID, seasonNumber,
-	).Scan(&s.ID, &s.ShowID, &s.SeasonNumber, &s.Name, &s.Overview, &s.PosterPath, &s.AirDate)
-	if err != nil {
-		return nil, err
-	}
-	return &s, nil
-}
-
-func (d *Database) GetSeasonByID(id int64) (*Season, error) {
-	var s Season
-	err := d.db.QueryRow(`
-		SELECT id, show_id, season_number, name, overview, poster_path, air_date
-		FROM seasons WHERE id = ?`, id,
-	).Scan(&s.ID, &s.ShowID, &s.SeasonNumber, &s.Name, &s.Overview, &s.PosterPath, &s.AirDate)
-	if err != nil {
-		return nil, err
-	}
-	return &s, nil
-}
-
-// Episode operations
-
-func (d *Database) CreateEpisode(ep *Episode) error {
-	result, err := d.db.Exec(
-		"INSERT INTO episodes (season_id, episode_number, title, path, size) VALUES (?, ?, ?, ?, ?)",
-		ep.SeasonID, ep.EpisodeNumber, ep.Title, ep.Path, ep.Size,
-	)
-	if err != nil {
-		return err
-	}
-	ep.ID, _ = result.LastInsertId()
-	return nil
-}
-
-func (d *Database) UpdateEpisodeMetadata(ep *Episode) error {
-	_, err := d.db.Exec(`
-		UPDATE episodes SET title = ?, overview = ?, air_date = ?, runtime = ?, still_path = ?
-		WHERE id = ?`,
-		ep.Title, ep.Overview, ep.AirDate, ep.Runtime, ep.StillPath, ep.ID,
-	)
-	return err
-}
-
-func (d *Database) GetEpisodesBySeason(seasonID int64) ([]Episode, error) {
-	rows, err := d.db.Query(`
-		SELECT id, season_id, episode_number, title, overview, air_date, runtime, still_path, path, size
-		FROM episodes WHERE season_id = ? ORDER BY episode_number`, seasonID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var episodes []Episode
-	for rows.Next() {
-		var e Episode
-		if err := rows.Scan(&e.ID, &e.SeasonID, &e.EpisodeNumber, &e.Title, &e.Overview, &e.AirDate, &e.Runtime, &e.StillPath, &e.Path, &e.Size); err != nil {
-			return nil, err
-		}
-		episodes = append(episodes, e)
-	}
-	return episodes, nil
-}
-
-func (d *Database) GetEpisodeByPath(path string) (*Episode, error) {
-	var e Episode
-	err := d.db.QueryRow(`
-		SELECT id, season_id, episode_number, title, overview, air_date, runtime, still_path, path, size
-		FROM episodes WHERE path = ?`, path,
-	).Scan(&e.ID, &e.SeasonID, &e.EpisodeNumber, &e.Title, &e.Overview, &e.AirDate, &e.Runtime, &e.StillPath, &e.Path, &e.Size)
-	if err != nil {
-		return nil, err
-	}
-	return &e, nil
-}
-
-// OwnedEpisode represents an owned episode with season/episode numbers
-type OwnedEpisode struct {
-	SeasonNumber  int
-	EpisodeNumber int
-}
-
-// GetOwnedEpisodesByShow returns all owned episodes for a show as season/episode number pairs
-func (d *Database) GetOwnedEpisodesByShow(showID int64) ([]OwnedEpisode, error) {
-	rows, err := d.db.Query(`
-		SELECT s.season_number, e.episode_number
-		FROM episodes e
-		JOIN seasons s ON e.season_id = s.id
-		WHERE s.show_id = ?
-		ORDER BY s.season_number, e.episode_number`, showID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var episodes []OwnedEpisode
-	for rows.Next() {
-		var ep OwnedEpisode
-		if err := rows.Scan(&ep.SeasonNumber, &ep.EpisodeNumber); err != nil {
-			return nil, err
-		}
-		episodes = append(episodes, ep)
-	}
-	return episodes, nil
-}
-
-func (d *Database) GetEpisode(id int64) (*Episode, error) {
-	var e Episode
-	err := d.db.QueryRow(`
-		SELECT id, season_id, episode_number, title, overview, air_date, runtime, still_path, path, size
-		FROM episodes WHERE id = ?`, id,
-	).Scan(&e.ID, &e.SeasonID, &e.EpisodeNumber, &e.Title, &e.Overview, &e.AirDate, &e.Runtime, &e.StillPath, &e.Path, &e.Size)
-	if err != nil {
-		return nil, err
-	}
-	return &e, nil
-}
-
-func (d *Database) GetShowIDForEpisode(episodeID int64) (int64, error) {
-	var showID int64
-	err := d.db.QueryRow(`
-		SELECT s.show_id
-		FROM episodes e
-		JOIN seasons s ON e.season_id = s.id
-		WHERE e.id = ?`, episodeID,
-	).Scan(&showID)
-	return showID, err
-}
-
-// GetEpisodeByShowSeasonEpisode finds an episode by show ID, season number, and episode number
-func (d *Database) GetEpisodeByShowSeasonEpisode(showID int64, seasonNum, episodeNum int) (*Episode, error) {
-	var e Episode
-	err := d.db.QueryRow(`
-		SELECT e.id, e.season_id, e.episode_number, e.title, e.overview, e.air_date, e.runtime, e.still_path, e.path, e.size
-		FROM episodes e
-		JOIN seasons s ON e.season_id = s.id
-		WHERE s.show_id = ? AND s.season_number = ? AND e.episode_number = ?`,
-		showID, seasonNum, episodeNum,
-	).Scan(&e.ID, &e.SeasonID, &e.EpisodeNumber, &e.Title, &e.Overview, &e.AirDate, &e.Runtime, &e.StillPath, &e.Path, &e.Size)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &e, nil
-}
-
-func (d *Database) DeleteEpisode(id int64) error {
-	_, err := d.db.Exec("DELETE FROM episodes WHERE id = ?", id)
-	return err
-}
-
-// GetEpisodesByLibrary retrieves all episodes for a library (for cleanup)
-func (d *Database) GetEpisodesByLibrary(libraryID int64) ([]Episode, error) {
-	rows, err := d.db.Query(`
-		SELECT e.id, e.episode_number, e.path
-		FROM episodes e
-		JOIN seasons sea ON e.season_id = sea.id
-		JOIN shows s ON sea.show_id = s.id
-		WHERE s.library_id = ?`, libraryID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var episodes []Episode
-	for rows.Next() {
-		var e Episode
-		if err := rows.Scan(&e.ID, &e.EpisodeNumber, &e.Path); err != nil {
-			continue
-		}
-		episodes = append(episodes, e)
-	}
-	return episodes, nil
-}
-
-func (d *Database) UpdateEpisodeSize(id int64, size int64) error {
-	_, err := d.db.Exec("UPDATE episodes SET size = ? WHERE id = ?", size, id)
-	return err
-}
-
-func (d *Database) GetEpisodesWithMissingSize() ([]Episode, error) {
-	rows, err := d.db.Query(`
-		SELECT id, season_id, episode_number, title, overview, air_date, runtime, still_path, path, size
-		FROM episodes WHERE size = 0 OR size IS NULL`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var episodes []Episode
-	for rows.Next() {
-		var e Episode
-		if err := rows.Scan(&e.ID, &e.SeasonID, &e.EpisodeNumber, &e.Title, &e.Overview, &e.AirDate, &e.Runtime, &e.StillPath, &e.Path, &e.Size); err != nil {
-			return nil, err
-		}
-		episodes = append(episodes, e)
-	}
-	return episodes, nil
-}
-
-func (d *Database) GetMovie(id int64) (*Movie, error) {
-	var m Movie
-	err := d.db.QueryRow(`
-		SELECT id, library_id, tmdb_id, imdb_id, title, original_title, year, overview, tagline,
-			runtime, rating, content_rating, genres, "cast", crew, director, writer, editor, producers, status, budget, revenue,
-			country, original_language, theatrical_release, digital_release, studios, trailers, poster_path, backdrop_path, focal_x, focal_y, path, size, added_at, last_watched_at, play_count
-		FROM movies WHERE id = ?`, id,
-	).Scan(&m.ID, &m.LibraryID, &m.TmdbID, &m.ImdbID, &m.Title, &m.OriginalTitle, &m.Year,
-		&m.Overview, &m.Tagline, &m.Runtime, &m.Rating, &m.ContentRating, &m.Genres, &m.Cast, &m.Crew,
-		&m.Director, &m.Writer, &m.Editor, &m.Producers, &m.Status, &m.Budget, &m.Revenue,
-		&m.Country, &m.OriginalLanguage, &m.TheatricalRelease, &m.DigitalRelease, &m.Studios, &m.Trailers,
-		&m.PosterPath, &m.BackdropPath, &m.FocalX, &m.FocalY, &m.Path, &m.Size, &m.AddedAt, &m.LastWatchedAt, &m.PlayCount)
-	if err != nil {
-		return nil, err
-	}
-	return &m, nil
-}
-
-// DeleteMovie removes a movie from the database
-func (d *Database) DeleteMovie(id int64) error {
-	_, err := d.db.Exec("DELETE FROM movies WHERE id = ?", id)
-	return err
-}
-
-// GetMoviesByLibrary retrieves all movies for a library (for cleanup)
-func (d *Database) GetMoviesByLibrary(libraryID int64) ([]Movie, error) {
-	rows, err := d.db.Query(`SELECT id, title, path FROM movies WHERE library_id = ?`, libraryID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var movies []Movie
-	for rows.Next() {
-		var m Movie
-		if err := rows.Scan(&m.ID, &m.Title, &m.Path); err != nil {
-			continue
-		}
-		movies = append(movies, m)
-	}
-	return movies, nil
-}
-
-// GetMovieByTmdb retrieves a movie by its TMDB ID
-func (d *Database) GetMovieByTmdb(tmdbID int64) (*Movie, error) {
-	var m Movie
-	err := d.db.QueryRow(`
-		SELECT id, library_id, tmdb_id, imdb_id, title, original_title, year, overview, tagline,
-			runtime, rating, content_rating, genres, "cast", crew, director, writer, editor, producers, status, budget, revenue,
-			country, original_language, theatrical_release, digital_release, studios, trailers, poster_path, backdrop_path, focal_x, focal_y, path, size, added_at, last_watched_at, play_count
-		FROM movies WHERE tmdb_id = ?`, tmdbID,
-	).Scan(&m.ID, &m.LibraryID, &m.TmdbID, &m.ImdbID, &m.Title, &m.OriginalTitle, &m.Year,
-		&m.Overview, &m.Tagline, &m.Runtime, &m.Rating, &m.ContentRating, &m.Genres, &m.Cast, &m.Crew,
-		&m.Director, &m.Writer, &m.Editor, &m.Producers, &m.Status, &m.Budget, &m.Revenue,
-		&m.Country, &m.OriginalLanguage, &m.TheatricalRelease, &m.DigitalRelease, &m.Studios, &m.Trailers,
-		&m.PosterPath, &m.BackdropPath, &m.FocalX, &m.FocalY, &m.Path, &m.Size, &m.AddedAt, &m.LastWatchedAt, &m.PlayCount)
-	if err != nil {
-		return nil, err
-	}
-	return &m, nil
-}
-
-// GetShowByTmdb retrieves a show by its TMDB ID
-func (d *Database) GetShowByTmdb(tmdbID int64) (*Show, error) {
-	var s Show
-	err := d.db.QueryRow(`
-		SELECT id, library_id, tmdb_id, tvdb_id, imdb_id, title, original_title, year, overview,
-			status, rating, content_rating, genres, "cast", crew, network, poster_path, backdrop_path,
-			focal_x, focal_y, path, added_at
-		FROM shows WHERE tmdb_id = ?`, tmdbID,
-	).Scan(&s.ID, &s.LibraryID, &s.TmdbID, &s.TvdbID, &s.ImdbID, &s.Title, &s.OriginalTitle, &s.Year,
-		&s.Overview, &s.Status, &s.Rating, &s.ContentRating, &s.Genres, &s.Cast, &s.Crew, &s.Network,
-		&s.PosterPath, &s.BackdropPath, &s.FocalX, &s.FocalY, &s.Path, &s.AddedAt)
-	if err != nil {
-		return nil, err
-	}
-	return &s, nil
-}
-
-// UpdateMoviePlayCount increments the play count and updates last watched time
-func (d *Database) UpdateMoviePlayCount(id int64) error {
-	now := time.Now().Format(time.RFC3339)
-	_, err := d.db.Exec(`
-		UPDATE movies SET
-			play_count = play_count + 1,
-			last_watched_at = ?
-		WHERE id = ?`, now, id)
-	return err
-}
-
 // Settings operations
 
 func (d *Database) GetSetting(key string) (string, error) {
@@ -2765,282 +2062,6 @@ func (d *Database) SaveSkipSegment(showID int64, segmentType string, startTime, 
 
 func (d *Database) DeleteSkipSegment(showID int64, segmentType string) error {
 	_, err := d.db.Exec("DELETE FROM skip_segments WHERE show_id = ? AND segment_type = ?", showID, segmentType)
-	return err
-}
-
-// User operations
-
-func (d *Database) CreateUser(user *User) error {
-	result, err := d.db.Exec(
-		"INSERT INTO users (username, password_hash, role, content_rating_limit, pin_hash, require_pin) VALUES (?, ?, ?, ?, ?, ?)",
-		user.Username, user.PasswordHash, user.Role, user.ContentRatingLimit, user.PinHash, user.RequirePin,
-	)
-	if err != nil {
-		return err
-	}
-	user.ID, _ = result.LastInsertId()
-	return nil
-}
-
-func (d *Database) GetUserByUsername(username string) (*User, error) {
-	var u User
-	var requirePin int
-	err := d.db.QueryRow(
-		"SELECT id, username, password_hash, role, content_rating_limit, pin_hash, require_pin, created_at FROM users WHERE username = ?", username,
-	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.ContentRatingLimit, &u.PinHash, &requirePin, &u.CreatedAt)
-	if err != nil {
-		return nil, err
-	}
-	u.RequirePin = requirePin == 1
-	return &u, nil
-}
-
-func (d *Database) GetUserByID(id int64) (*User, error) {
-	var u User
-	var requirePin int
-	err := d.db.QueryRow(
-		"SELECT id, username, password_hash, role, content_rating_limit, pin_hash, require_pin, created_at FROM users WHERE id = ?", id,
-	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.ContentRatingLimit, &u.PinHash, &requirePin, &u.CreatedAt)
-	if err != nil {
-		return nil, err
-	}
-	u.RequirePin = requirePin == 1
-	return &u, nil
-}
-
-func (d *Database) GetUsers() ([]User, error) {
-	rows, err := d.db.Query("SELECT id, username, password_hash, role, content_rating_limit, pin_hash, require_pin, created_at FROM users ORDER BY created_at")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var users []User
-	for rows.Next() {
-		var u User
-		var requirePin int
-		if err := rows.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.ContentRatingLimit, &u.PinHash, &requirePin, &u.CreatedAt); err != nil {
-			return nil, err
-		}
-		u.RequirePin = requirePin == 1
-		users = append(users, u)
-	}
-	return users, nil
-}
-
-func (d *Database) UpdateUser(user *User) error {
-	_, err := d.db.Exec(
-		"UPDATE users SET username = ?, role = ?, content_rating_limit = ?, require_pin = ? WHERE id = ?",
-		user.Username, user.Role, user.ContentRatingLimit, user.RequirePin, user.ID,
-	)
-	return err
-}
-
-func (d *Database) UpdateUserPin(id int64, pinHash *string) error {
-	_, err := d.db.Exec("UPDATE users SET pin_hash = ? WHERE id = ?", pinHash, id)
-	return err
-}
-
-func (d *Database) UpdateUserPassword(id int64, passwordHash string) error {
-	_, err := d.db.Exec("UPDATE users SET password_hash = ? WHERE id = ?", passwordHash, id)
-	return err
-}
-
-func (d *Database) DeleteUser(id int64) error {
-	_, err := d.db.Exec("DELETE FROM users WHERE id = ?", id)
-	return err
-}
-
-func (d *Database) CountUsers() (int, error) {
-	var count int
-	err := d.db.QueryRow("SELECT COUNT(*) FROM users").Scan(&count)
-	return count, err
-}
-
-// Profile operations
-
-func (d *Database) CreateProfile(profile *Profile) error {
-	result, err := d.db.Exec(
-		`INSERT INTO profiles (user_id, name, avatar_url, is_default, is_kid, content_rating_limit)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-		profile.UserID, profile.Name, profile.AvatarURL, profile.IsDefault, profile.IsKid, profile.ContentRatingLimit,
-	)
-	if err != nil {
-		return err
-	}
-	profile.ID, _ = result.LastInsertId()
-	return nil
-}
-
-func (d *Database) GetProfile(id int64) (*Profile, error) {
-	var p Profile
-	var isDefault, isKid int
-	err := d.db.QueryRow(
-		`SELECT id, user_id, name, avatar_url, is_default, is_kid, content_rating_limit, created_at
-		 FROM profiles WHERE id = ?`, id,
-	).Scan(&p.ID, &p.UserID, &p.Name, &p.AvatarURL, &isDefault, &isKid, &p.ContentRatingLimit, &p.CreatedAt)
-	if err != nil {
-		return nil, err
-	}
-	p.IsDefault = isDefault == 1
-	p.IsKid = isKid == 1
-	return &p, nil
-}
-
-func (d *Database) GetProfilesByUser(userID int64) ([]Profile, error) {
-	rows, err := d.db.Query(
-		`SELECT id, user_id, name, avatar_url, is_default, is_kid, content_rating_limit, created_at
-		 FROM profiles WHERE user_id = ? ORDER BY is_default DESC, created_at ASC`, userID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var profiles []Profile
-	for rows.Next() {
-		var p Profile
-		var isDefault, isKid int
-		if err := rows.Scan(&p.ID, &p.UserID, &p.Name, &p.AvatarURL, &isDefault, &isKid, &p.ContentRatingLimit, &p.CreatedAt); err != nil {
-			return nil, err
-		}
-		p.IsDefault = isDefault == 1
-		p.IsKid = isKid == 1
-		profiles = append(profiles, p)
-	}
-	return profiles, nil
-}
-
-func (d *Database) GetDefaultProfile(userID int64) (*Profile, error) {
-	var p Profile
-	var isDefault, isKid int
-	err := d.db.QueryRow(
-		`SELECT id, user_id, name, avatar_url, is_default, is_kid, content_rating_limit, created_at
-		 FROM profiles WHERE user_id = ? AND is_default = 1`, userID,
-	).Scan(&p.ID, &p.UserID, &p.Name, &p.AvatarURL, &isDefault, &isKid, &p.ContentRatingLimit, &p.CreatedAt)
-	if err != nil {
-		return nil, err
-	}
-	p.IsDefault = isDefault == 1
-	p.IsKid = isKid == 1
-	return &p, nil
-}
-
-func (d *Database) UpdateProfile(profile *Profile) error {
-	_, err := d.db.Exec(
-		`UPDATE profiles SET name = ?, avatar_url = ?, is_kid = ?, content_rating_limit = ?
-		 WHERE id = ?`,
-		profile.Name, profile.AvatarURL, profile.IsKid, profile.ContentRatingLimit, profile.ID,
-	)
-	return err
-}
-
-func (d *Database) DeleteProfile(id int64) error {
-	_, err := d.db.Exec("DELETE FROM profiles WHERE id = ?", id)
-	return err
-}
-
-func (d *Database) CountProfilesByUser(userID int64) (int, error) {
-	var count int
-	err := d.db.QueryRow("SELECT COUNT(*) FROM profiles WHERE user_id = ?", userID).Scan(&count)
-	return count, err
-}
-
-func (d *Database) CreateDefaultProfileForUser(userID int64, username string) (*Profile, error) {
-	profile := &Profile{
-		UserID:    userID,
-		Name:      username,
-		IsDefault: true,
-		IsKid:     false,
-	}
-	if err := d.CreateProfile(profile); err != nil {
-		return nil, err
-	}
-	return profile, nil
-}
-
-// Session operations
-
-func (d *Database) CreateSession(session *Session) error {
-	result, err := d.db.Exec(
-		"INSERT INTO sessions (user_id, token, expires_at) VALUES (?, ?, ?)",
-		session.UserID, session.Token, session.ExpiresAt,
-	)
-	if err != nil {
-		return err
-	}
-	session.ID, _ = result.LastInsertId()
-	return nil
-}
-
-func (d *Database) GetSessionByToken(token string) (*Session, error) {
-	var s Session
-	err := d.db.QueryRow(
-		"SELECT id, user_id, token, expires_at, active_profile_id FROM sessions WHERE token = ?", token,
-	).Scan(&s.ID, &s.UserID, &s.Token, &s.ExpiresAt, &s.ActiveProfileID)
-	if err != nil {
-		return nil, err
-	}
-	return &s, nil
-}
-
-func (d *Database) SetActiveProfile(token string, profileID int64) error {
-	_, err := d.db.Exec("UPDATE sessions SET active_profile_id = ? WHERE token = ?", profileID, token)
-	return err
-}
-
-func (d *Database) DeleteSession(token string) error {
-	_, err := d.db.Exec("DELETE FROM sessions WHERE token = ?", token)
-	return err
-}
-
-func (d *Database) DeleteExpiredSessions() error {
-	_, err := d.db.Exec("DELETE FROM sessions WHERE expires_at < CURRENT_TIMESTAMP")
-	return err
-}
-
-func (d *Database) DeleteUserSessions(userID int64) error {
-	_, err := d.db.Exec("DELETE FROM sessions WHERE user_id = ?", userID)
-	return err
-}
-
-// PIN elevation operations
-
-func (d *Database) CreatePinElevation(elevation *PinElevation) error {
-	result, err := d.db.Exec(
-		"INSERT INTO pin_elevations (user_id, token, expires_at) VALUES (?, ?, ?)",
-		elevation.UserID, elevation.Token, elevation.ExpiresAt,
-	)
-	if err != nil {
-		return err
-	}
-	elevation.ID, _ = result.LastInsertId()
-	return nil
-}
-
-func (d *Database) GetPinElevationByToken(token string) (*PinElevation, error) {
-	var e PinElevation
-	err := d.db.QueryRow(
-		"SELECT id, user_id, token, expires_at FROM pin_elevations WHERE token = ? AND expires_at > CURRENT_TIMESTAMP", token,
-	).Scan(&e.ID, &e.UserID, &e.Token, &e.ExpiresAt)
-	if err != nil {
-		return nil, err
-	}
-	return &e, nil
-}
-
-func (d *Database) DeletePinElevation(token string) error {
-	_, err := d.db.Exec("DELETE FROM pin_elevations WHERE token = ?", token)
-	return err
-}
-
-func (d *Database) DeleteExpiredPinElevations() error {
-	_, err := d.db.Exec("DELETE FROM pin_elevations WHERE expires_at < CURRENT_TIMESTAMP")
-	return err
-}
-
-func (d *Database) DeleteUserPinElevations(userID int64) error {
-	_, err := d.db.Exec("DELETE FROM pin_elevations WHERE user_id = ?", userID)
 	return err
 }
 
@@ -3434,11 +2455,12 @@ func (d *Database) GetWantedItem(id int64) (*WantedItem, error) {
 func (d *Database) GetWantedByTmdb(itemType string, tmdbID int64) (*WantedItem, error) {
 	var item WantedItem
 	err := d.db.QueryRow(`
-		SELECT id, type, tmdb_id, imdb_id, title, year, poster_path, quality_profile_id, quality_preset_id, monitored, seasons, last_searched, added_at
+		SELECT id, type, tmdb_id, imdb_id, title, year, poster_path, quality_profile_id, quality_preset_id, monitored, seasons, last_searched, added_at,
+		       COALESCE(is_upgrade, 0), existing_media_id, COALESCE(current_score, 0)
 		FROM wanted WHERE type = ? AND tmdb_id = ?`, itemType, tmdbID,
 	).Scan(&item.ID, &item.Type, &item.TmdbID, &item.ImdbID, &item.Title, &item.Year,
 		&item.PosterPath, &item.QualityProfileID, &item.QualityPresetID, &item.Monitored, &item.Seasons,
-		&item.LastSearched, &item.AddedAt)
+		&item.LastSearched, &item.AddedAt, &item.IsUpgrade, &item.ExistingMediaID, &item.CurrentScore)
 	if err != nil {
 		return nil, err
 	}
@@ -3447,7 +2469,8 @@ func (d *Database) GetWantedByTmdb(itemType string, tmdbID int64) (*WantedItem, 
 
 func (d *Database) GetMonitoredItems() ([]WantedItem, error) {
 	rows, err := d.db.Query(`
-		SELECT id, type, tmdb_id, imdb_id, title, year, poster_path, quality_profile_id, quality_preset_id, monitored, seasons, last_searched, added_at
+		SELECT id, type, tmdb_id, imdb_id, title, year, poster_path, quality_profile_id, quality_preset_id, monitored, seasons, last_searched, added_at,
+		       COALESCE(is_upgrade, 0), existing_media_id, COALESCE(current_score, 0)
 		FROM wanted WHERE monitored = 1 ORDER BY added_at DESC`)
 	if err != nil {
 		return nil, err
@@ -3459,7 +2482,7 @@ func (d *Database) GetMonitoredItems() ([]WantedItem, error) {
 		var item WantedItem
 		if err := rows.Scan(&item.ID, &item.Type, &item.TmdbID, &item.ImdbID, &item.Title, &item.Year,
 			&item.PosterPath, &item.QualityProfileID, &item.QualityPresetID, &item.Monitored, &item.Seasons,
-			&item.LastSearched, &item.AddedAt); err != nil {
+			&item.LastSearched, &item.AddedAt, &item.IsUpgrade, &item.ExistingMediaID, &item.CurrentScore); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -4540,6 +3563,7 @@ func (d *Database) GetDefaultQualityPreset() (*QualityPreset, error) {
 	var p QualityPreset
 	var isDefault, isBuiltIn, enabled, preferSeasonPacks, autoUpgrade, preferDualAudio, preferDubbed int
 	var hdrFormatsJSON, audioFormatsJSON *string
+	var cutoffRes, cutoffSrc *string
 	err := d.db.QueryRow(`
 		SELECT id, name, COALESCE(media_type, 'movie') as media_type, is_default, is_built_in, enabled, priority, resolution, source,
 		       hdr_formats, codec, audio_formats, preferred_edition,
@@ -4547,6 +3571,7 @@ func (d *Database) GetDefaultQualityPreset() (*QualityPreset, error) {
 		       COALESCE(prefer_dual_audio, 0) as prefer_dual_audio,
 		       COALESCE(prefer_dubbed, 0) as prefer_dubbed,
 		       COALESCE(preferred_language, 'any') as preferred_language,
+		       cutoff_resolution, cutoff_source,
 		       created_at, updated_at
 		FROM quality_presets WHERE is_default = 1 LIMIT 1
 	`).Scan(
@@ -4554,6 +3579,7 @@ func (d *Database) GetDefaultQualityPreset() (*QualityPreset, error) {
 		&hdrFormatsJSON, &p.Codec, &audioFormatsJSON, &p.PreferredEdition,
 		&p.MinSeeders, &preferSeasonPacks, &autoUpgrade,
 		&preferDualAudio, &preferDubbed, &p.PreferredLanguage,
+		&cutoffRes, &cutoffSrc,
 		&p.CreatedAt, &p.UpdatedAt,
 	)
 	if err != nil {
@@ -4566,6 +3592,12 @@ func (d *Database) GetDefaultQualityPreset() (*QualityPreset, error) {
 	p.AutoUpgrade = autoUpgrade == 1
 	p.PreferDualAudio = preferDualAudio == 1
 	p.PreferDubbed = preferDubbed == 1
+	if cutoffRes != nil {
+		p.CutoffResolution = *cutoffRes
+	}
+	if cutoffSrc != nil {
+		p.CutoffSource = *cutoffSrc
+	}
 	if hdrFormatsJSON != nil && *hdrFormatsJSON != "" {
 		json.Unmarshal([]byte(*hdrFormatsJSON), &p.HDRFormats)
 	}
@@ -4898,12 +3930,14 @@ func (d *Database) GetMediaQualityStatus(mediaID int64, mediaType string) (*Medi
 	err := d.db.QueryRow(`
 		SELECT id, media_id, media_type, current_resolution, current_source,
 		       current_hdr, current_audio, current_edition, target_met,
-		       upgrade_available, last_search, created_at, updated_at
+		       upgrade_available, last_search, COALESCE(current_score, 0), COALESCE(cutoff_score, 0),
+		       created_at, updated_at
 		FROM media_quality_status WHERE media_id = ? AND media_type = ?
 	`, mediaID, mediaType).Scan(
 		&s.ID, &s.MediaID, &s.MediaType, &s.CurrentResolution, &s.CurrentSource,
 		&s.CurrentHDR, &s.CurrentAudio, &s.CurrentEdition, &targetMet,
-		&upgradeAvailable, &s.LastSearch, &s.CreatedAt, &s.UpdatedAt,
+		&upgradeAvailable, &s.LastSearch, &s.CurrentScore, &s.CutoffScore,
+		&s.CreatedAt, &s.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil // No status record exists yet
@@ -4920,8 +3954,8 @@ func (d *Database) UpsertMediaQualityStatus(s *MediaQualityStatus) error {
 	_, err := d.db.Exec(`
 		INSERT INTO media_quality_status (media_id, media_type, current_resolution, current_source,
 		                                  current_hdr, current_audio, current_edition, target_met,
-		                                  upgrade_available, last_search)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		                                  upgrade_available, last_search, current_score, cutoff_score)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(media_id, media_type) DO UPDATE SET
 			current_resolution = excluded.current_resolution,
 			current_source = excluded.current_source,
@@ -4931,10 +3965,12 @@ func (d *Database) UpsertMediaQualityStatus(s *MediaQualityStatus) error {
 			target_met = excluded.target_met,
 			upgrade_available = excluded.upgrade_available,
 			last_search = excluded.last_search,
+			current_score = excluded.current_score,
+			cutoff_score = excluded.cutoff_score,
 			updated_at = CURRENT_TIMESTAMP
 	`, s.MediaID, s.MediaType, s.CurrentResolution, s.CurrentSource,
 		s.CurrentHDR, s.CurrentAudio, s.CurrentEdition, s.TargetMet,
-		s.UpgradeAvailable, s.LastSearch)
+		s.UpgradeAvailable, s.LastSearch, s.CurrentScore, s.CutoffScore)
 	return err
 }
 
@@ -5086,15 +4122,16 @@ func (d *Database) UpdateQualityScores(mediaID int64, mediaType string, currentS
 }
 
 // CreateUpgradeWantedItem creates a wanted item for an upgrade
-func (d *Database) CreateUpgradeWantedItem(mediaType string, tmdbID int64, imdbID, title string, year int, posterPath string, qualityProfileID, existingMediaID int64) error {
+func (d *Database) CreateUpgradeWantedItem(mediaType string, tmdbID int64, imdbID, title string, year int, posterPath string, qualityProfileID, existingMediaID int64, currentScore int) error {
 	_, err := d.db.Exec(`
-		INSERT INTO wanted (type, tmdb_id, imdb_id, title, year, poster_path, quality_profile_id, is_upgrade, existing_media_id, monitored)
-		VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, 1)
+		INSERT INTO wanted (type, tmdb_id, imdb_id, title, year, poster_path, quality_profile_id, is_upgrade, existing_media_id, current_score, monitored)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 1)
 		ON CONFLICT(type, tmdb_id) DO UPDATE SET
 		    is_upgrade = 1,
 		    existing_media_id = excluded.existing_media_id,
-		    quality_profile_id = excluded.quality_profile_id
-	`, mediaType, tmdbID, imdbID, title, year, posterPath, qualityProfileID, existingMediaID)
+		    quality_profile_id = excluded.quality_profile_id,
+		    current_score = excluded.current_score
+	`, mediaType, tmdbID, imdbID, title, year, posterPath, qualityProfileID, existingMediaID, currentScore)
 	return err
 }
 

@@ -325,7 +325,7 @@
 					collections = await getCollections();
 					break;
 			}
-			loadedTabs.add(tab);
+			loadedTabs = new Set([...loadedTabs, tab]);
 		} catch (e) {
 			error = e instanceof Error ? e.message : `Failed to load ${tab}`;
 		} finally {

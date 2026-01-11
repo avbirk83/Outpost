@@ -6,6 +6,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/outpost/outpost/internal/acquisition"
 	"github.com/outpost/outpost/internal/api"
@@ -58,6 +59,12 @@ func main() {
 
 	// Initialize scanner with metadata service
 	scan := scanner.New(db, meta, dataDir)
+
+	// Detect quality for existing media that doesn't have quality info (runs in background after startup settles)
+	go func() {
+		time.Sleep(10 * time.Second) // Wait for startup to complete
+		scan.DetectQualityForExistingMedia()
+	}()
 
 	// Initialize shared managers
 	downloads := downloadclient.NewManager(db)
