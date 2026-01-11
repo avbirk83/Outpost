@@ -69,8 +69,8 @@
 					const showDetail = await getDiscoverShowDetail(item.tmdbId);
 					if (showDetail.seasonDetails) {
 						seasons = showDetail.seasonDetails
-							.filter((s: any) => s.season_number > 0) // Exclude specials
-							.map((s: any) => ({
+							.filter((s: { season_number: number }) => s.season_number > 0) // Exclude specials
+							.map((s: { season_number: number; name?: string; episode_count?: number; air_date?: string }) => ({
 								seasonNumber: s.season_number,
 								name: s.name || `Season ${s.season_number}`,
 								episodeCount: s.episode_count || 0,

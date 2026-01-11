@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
-	import { createRequest, getImageUrl, getSystemStatus, getNotifications, getUnreadCount, markRead, markAllRead, type SystemStatus, type Movie, type Show, type Artist, type Book, type DiscoverItem, type Notification, type Profile, AVATARS } from '$lib/api';
+	import { createRequest, getImageUrl, getSystemStatus, getNotifications, getUnreadCount, markRead, markAllRead, type SystemStatus, type Movie, type Show, type Artist, type Book, type DiscoverItem, type Notification, type Profile, type TmdbMovieResult, type TmdbTVResult, AVATARS } from '$lib/api';
 	import { profileStore } from '$lib/stores/profile';
 	import { onMount, onDestroy } from 'svelte';
 	import { normalizeText, searchScore } from '$lib/utils/search';
@@ -321,8 +321,8 @@
 				await loadLibraryCache();
 				const tmdbResponses = await Promise.all(tmdbPromises);
 
-				let tmdbMovies: any[] = [];
-				let tmdbShows: any[] = [];
+				let tmdbMovies: TmdbMovieResult[] = [];
+				let tmdbShows: TmdbTVResult[] = [];
 				let responseIdx = 0;
 				if (isAdmin && includeMovies && tmdbResponses[responseIdx]) {
 					tmdbMovies = tmdbResponses[responseIdx].ok ? await tmdbResponses[responseIdx].json() : [];
@@ -404,7 +404,7 @@
 		}
 	}
 
-	function navigateToResult(item: any) {
+	function navigateToResult(item: LibrarySearchResult | DiscoverSearchResult) {
 		showSearchDropdown = false;
 		query = '';
 		let path = '';
@@ -440,7 +440,7 @@
 		}
 	}
 
-	async function handleInlineRequest(e: MouseEvent, item: any) {
+	async function handleInlineRequest(e: MouseEvent, item: DiscoverSearchResult) {
 		e.preventDefault();
 		e.stopPropagation();
 		const dateStr = item.release_date || item.first_air_date;

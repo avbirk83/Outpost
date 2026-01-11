@@ -44,7 +44,7 @@
 		conditions = conditions.filter((_, i) => i !== index);
 	}
 
-	function updateCondition(index: number, field: keyof RuleCondition, value: any) {
+	function updateCondition(index: number, field: keyof RuleCondition, value: string | number | boolean) {
 		conditions = conditions.map((c, i) => {
 			if (i === index) {
 				const updated = { ...c, [field]: value };
