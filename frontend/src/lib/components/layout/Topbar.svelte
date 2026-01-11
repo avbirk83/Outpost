@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
-	import { createRequest, getImageUrl, getSystemStatus, type SystemStatus } from '$lib/api';
+	import { createRequest, getImageUrl, getSystemStatus, getNotifications, getUnreadCount, markRead, markAllRead, type SystemStatus, type Movie, type Show, type Artist, type Book, type DiscoverItem, type Notification } from '$lib/api';
 	import { onMount, onDestroy } from 'svelte';
+	import { normalizeText, searchScore } from '$lib/utils/search';
 
 	interface Props {
 		username?: string;
@@ -14,6 +15,13 @@
 
 	let showUserMenu = $state(false);
 
+	// Notifications
+	let showNotifications = $state(false);
+	let notifications = $state<Notification[]>([]);
+	let unreadCount = $state(0);
+	let notificationInterval: ReturnType<typeof setInterval> | null = null;
+	let loadingNotifications = $state(false);
+
 	// System status
 	let systemStatus: SystemStatus | null = $state(null);
 	let statusInterval: ReturnType<typeof setInterval> | null = null;
@@ -23,11 +31,122 @@
 	onMount(() => {
 		loadSystemStatus();
 		statusInterval = setInterval(loadSystemStatus, 5000); // Check more frequently
+
+		// Load notification count on mount and poll every 30 seconds
+		loadUnreadCount();
+		notificationInterval = setInterval(loadUnreadCount, 30000);
 	});
 
 	onDestroy(() => {
 		if (statusInterval) clearInterval(statusInterval);
+		if (notificationInterval) clearInterval(notificationInterval);
 	});
+
+	async function loadUnreadCount() {
+		try {
+			unreadCount = await getUnreadCount();
+		} catch (e) {
+			// Silently fail
+		}
+	}
+
+	async function loadNotifications() {
+		loadingNotifications = true;
+		try {
+			notifications = await getNotifications(false, 20);
+		} catch (e) {
+			// Silently fail
+		}
+		loadingNotifications = false;
+	}
+
+	function toggleNotifications() {
+		showNotifications = !showNotifications;
+		if (showNotifications) {
+			loadNotifications();
+		}
+	}
+
+	function closeNotifications() {
+		showNotifications = false;
+	}
+
+	async function handleMarkAllRead() {
+		try {
+			await markAllRead();
+			notifications = notifications.map((n) => ({ ...n, read: true }));
+			unreadCount = 0;
+		} catch (e) {
+			// Silently fail
+		}
+	}
+
+	async function handleNotificationClick(notification: Notification) {
+		// Mark as read
+		if (!notification.read) {
+			try {
+				await markRead(notification.id);
+				notifications = notifications.map((n) =>
+					n.id === notification.id ? { ...n, read: true } : n
+				);
+				unreadCount = Math.max(0, unreadCount - 1);
+			} catch (e) {
+				// Continue anyway
+			}
+		}
+
+		// Navigate and close
+		if (notification.link) {
+			goto(notification.link);
+		}
+		showNotifications = false;
+	}
+
+	function getNotificationIcon(type: Notification['type']): { path: string; color: string } {
+		switch (type) {
+			case 'new_content':
+			case 'request_approved':
+				return {
+					path: 'M5 13l4 4L19 7',
+					color: 'text-green-400'
+				};
+			case 'request_denied':
+				return {
+					path: 'M6 18L18 6M6 6l12 12',
+					color: 'text-red-400'
+				};
+			case 'download_complete':
+				return {
+					path: 'M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4',
+					color: 'text-blue-400'
+				};
+			case 'download_failed':
+				return {
+					path: 'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z',
+					color: 'text-red-400'
+				};
+			default:
+				return {
+					path: 'M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9',
+					color: 'text-text-muted'
+				};
+		}
+	}
+
+	function formatTimeAgo(dateString: string): string {
+		const date = new Date(dateString);
+		const now = new Date();
+		const seconds = Math.floor((now.getTime() - date.getTime()) / 1000);
+
+		if (seconds < 60) return 'just now';
+		const minutes = Math.floor(seconds / 60);
+		if (minutes < 60) return `${minutes}m ago`;
+		const hours = Math.floor(minutes / 60);
+		if (hours < 24) return `${hours}h ago`;
+		const days = Math.floor(hours / 24);
+		if (days < 7) return `${days}d ago`;
+		return date.toLocaleDateString();
+	}
 
 	async function loadSystemStatus() {
 		try {
@@ -48,10 +167,14 @@
 		goto('/activity');
 	}
 
+	// Search result types
+	type LibrarySearchResult = (Movie | Show | Artist | Book) & { type: string; source: string; score: number };
+	type DiscoverSearchResult = DiscoverItem & { source: string };
+
 	// Search state
 	let query = $state('');
-	let libraryResults = $state<any[]>([]);
-	let discoverResults = $state<any[]>([]);
+	let libraryResults = $state<LibrarySearchResult[]>([]);
+	let discoverResults = $state<DiscoverSearchResult[]>([]);
 	let loading = $state(false);
 	let selectedIndex = $state(0);
 	let showSearchDropdown = $state(false);
@@ -60,10 +183,10 @@
 	let searchFilter = $state<'all' | 'movies' | 'tv' | 'music' | 'books'>('all');
 
 	// Cache library data
-	let cachedMovies: any[] | null = null;
-	let cachedShows: any[] | null = null;
-	let cachedArtists: any[] | null = null;
-	let cachedBooks: any[] | null = null;
+	let cachedMovies: Movie[] | null = null;
+	let cachedShows: Show[] | null = null;
+	let cachedArtists: Artist[] | null = null;
+	let cachedBooks: Book[] | null = null;
 	let cacheTime = 0;
 	const CACHE_DURATION = 60000;
 
@@ -75,6 +198,8 @@
 		{ href: '/library', label: 'Library', match: (path: string) => path.startsWith('/library') || path.startsWith('/movies') || path.startsWith('/tv') || path.startsWith('/music') || path.startsWith('/books') },
 		{ href: '/explore', label: 'Explore', match: (path: string) => path.startsWith('/explore') },
 	];
+
+	const isCalendarActive = $derived($page.url.pathname.startsWith('/calendar'));
 
 	// Close dropdowns on navigation
 	$effect(() => {
@@ -118,64 +243,6 @@
 				showSearchDropdown = false;
 			}
 		}, 200);
-	}
-
-	function normalizeText(text: string): string {
-		return text
-			.toLowerCase()
-			.normalize('NFD')
-			.replace(/[\u0300-\u036f]/g, '')
-			.replace(/[^a-z0-9\s]/g, ' ')
-			.replace(/\s+/g, ' ')
-			.trim();
-	}
-
-	function searchScore(text: string, searchQuery: string): number {
-		if (!text || !searchQuery) return 0;
-		const t = normalizeText(text);
-		const q = normalizeText(searchQuery);
-		if (!t || !q) return 0;
-		if (t === q) return 100;
-		if (t.startsWith(q)) return 95;
-		if (q.startsWith(t)) return 90;
-		if (t.includes(q)) return 85;
-		const textWords = t.split(' ').filter(w => w.length > 0);
-		const queryWords = q.split(' ').filter(w => w.length > 0);
-		for (const word of textWords) {
-			if (word.startsWith(q)) return 80;
-		}
-		for (const word of textWords) {
-			if (word.length >= 2 && q.startsWith(word)) return 75;
-		}
-		if (queryWords.length > 1) {
-			let allMatch = true;
-			let matchCount = 0;
-			for (const qWord of queryWords) {
-				const found = textWords.some(tWord => tWord.includes(qWord) || qWord.includes(tWord));
-				if (found) matchCount++;
-				else allMatch = false;
-			}
-			if (allMatch) return 70;
-			if (matchCount > 0) return 50 + (matchCount / queryWords.length) * 20;
-		}
-		for (const word of textWords) {
-			if (word.includes(q)) return 60;
-		}
-		for (const word of textWords) {
-			if (word.length >= 3 && q.includes(word)) return 55;
-		}
-		let matchLen = 0;
-		let tIdx = 0;
-		for (let i = 0; i < q.length && tIdx < t.length; i++) {
-			const foundIdx = t.indexOf(q[i], tIdx);
-			if (foundIdx !== -1) {
-				matchLen++;
-				tIdx = foundIdx + 1;
-			}
-		}
-		const seqScore = (matchLen / q.length) * 40;
-		if (seqScore >= 30) return seqScore;
-		return 0;
 	}
 
 	async function loadLibraryCache() {
@@ -240,34 +307,34 @@
 				const searchTerm = query.trim();
 
 				const scoredMovies = includeMovies ? (cachedMovies || [])
-					.map((m: any) => ({ ...m, type: 'movie', source: 'library', score: searchScore(m.title, searchTerm) }))
-					.filter((m: any) => m.score > 0) : [];
+					.map((m) => ({ ...m, type: 'movie' as const, source: 'library' as const, score: searchScore(m.title, searchTerm) }))
+					.filter((m) => m.score > 0) : [];
 				const scoredShows = includeTV ? (cachedShows || [])
-					.map((s: any) => ({ ...s, type: 'show', source: 'library', score: searchScore(s.title, searchTerm) }))
-					.filter((s: any) => s.score > 0) : [];
+					.map((s) => ({ ...s, type: 'show' as const, source: 'library' as const, score: searchScore(s.title, searchTerm) }))
+					.filter((s) => s.score > 0) : [];
 				const scoredArtists = includeMusic ? (cachedArtists || [])
-					.map((a: any) => ({ ...a, type: 'artist', source: 'library', score: searchScore(a.name, searchTerm) }))
-					.filter((a: any) => a.score > 0) : [];
+					.map((a) => ({ ...a, type: 'artist' as const, source: 'library' as const, score: searchScore(a.name, searchTerm) }))
+					.filter((a) => a.score > 0) : [];
 				const scoredBooks = includeBooks ? (cachedBooks || [])
-					.map((b: any) => ({ ...b, type: 'book', source: 'library', score: searchScore(b.title, searchTerm) }))
-					.filter((b: any) => b.score > 0) : [];
+					.map((b) => ({ ...b, type: 'book' as const, source: 'library' as const, score: searchScore(b.title, searchTerm) }))
+					.filter((b) => b.score > 0) : [];
 
 				libraryResults = [...scoredMovies, ...scoredShows, ...scoredArtists, ...scoredBooks]
 					.sort((a, b) => b.score - a.score)
 					.slice(0, 10);
 
 				const libraryTmdbIds = new Set([
-					...(cachedMovies || []).map((m: any) => m.tmdbId),
-					...(cachedShows || []).map((s: any) => s.tmdbId),
+					...(cachedMovies || []).map((m) => m.tmdbId),
+					...(cachedShows || []).map((s) => s.tmdbId),
 				]);
 
 				const allDiscoverResults = [
 					...tmdbMovies
-						.filter((m: any) => !libraryTmdbIds.has(m.id))
-						.map((m: any) => ({ ...m, type: 'movie', source: 'discover', popularity: m.popularity || 0 })),
+						.filter((m) => !libraryTmdbIds.has(m.id))
+						.map((m) => ({ ...m, type: 'movie' as const, source: 'discover' as const, popularity: m.popularity || 0 })),
 					...tmdbShows
-						.filter((s: any) => !libraryTmdbIds.has(s.id))
-						.map((s: any) => ({ ...s, type: 'show', source: 'discover', popularity: s.popularity || 0 })),
+						.filter((s) => !libraryTmdbIds.has(s.id))
+						.map((s) => ({ ...s, type: 'show' as const, source: 'discover' as const, popularity: s.popularity || 0 })),
 				]
 					.sort((a, b) => b.popularity - a.popularity)
 					.slice(0, 10);
@@ -394,7 +461,7 @@
 	<!-- Center: Search -->
 	<div class="flex-1 max-w-2xl mx-8 relative">
 		<div class="relative z-50">
-			<div class="flex items-center h-11 w-full px-5 gap-3 bg-[#1a1a1a] rounded-2xl {showSearchDropdown ? 'rounded-b-none' : ''}">
+			<div class="flex items-center h-11 w-full px-5 gap-3 bg-bg-input rounded-2xl {showSearchDropdown ? 'rounded-b-none' : ''}">
 				<svg class="w-4 h-4 text-text-muted flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
 				</svg>
@@ -421,7 +488,7 @@
 					onclick={() => { showSearchDropdown = false; }}
 					aria-label="Close search"
 				></button>
-				<div class="search-dropdown absolute left-0 right-0 top-full bg-[#1a1a1a] rounded-b-2xl z-50 shadow-2xl overflow-hidden">
+				<div class="search-dropdown absolute left-0 right-0 top-full bg-bg-input rounded-b-2xl z-50 shadow-2xl overflow-hidden">
 					<!-- Filter Tabs -->
 					<div class="flex items-center gap-1 p-3 border-t border-white/5">
 						{#each filterOptions as option}
@@ -604,6 +671,94 @@
 			</button>
 		{/if}
 
+		<!-- Calendar -->
+		<button
+			onclick={() => goto('/calendar')}
+			class="btn-icon-circle {isCalendarActive ? '!bg-amber-400 !text-black' : ''}"
+			title="Calendar"
+		>
+			<svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+			</svg>
+		</button>
+
+		<!-- Notifications -->
+		<div class="relative">
+			<button
+				onclick={toggleNotifications}
+				class="btn-icon-circle relative"
+				title="Notifications"
+			>
+				<svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+				</svg>
+				{#if unreadCount > 0}
+					<span class="absolute -top-1 -right-1 min-w-[18px] h-[18px] flex items-center justify-center bg-red-500 text-white text-[10px] font-semibold rounded-full px-1 animate-pulse">
+						{unreadCount > 99 ? '99+' : unreadCount}
+					</span>
+				{/if}
+			</button>
+
+			{#if showNotifications}
+				<button
+					class="fixed inset-0 z-40"
+					onclick={closeNotifications}
+					aria-label="Close notifications"
+				></button>
+
+				<div class="absolute right-0 top-full mt-2 w-[360px] max-h-[480px] rounded-xl bg-bg-card backdrop-blur-xl border border-border-subtle z-50 shadow-2xl overflow-hidden">
+					<div class="flex items-center justify-between px-4 py-3 border-b border-border-subtle">
+						<h3 class="text-sm font-semibold text-text-primary">Notifications</h3>
+						{#if unreadCount > 0}
+							<button
+								onclick={handleMarkAllRead}
+								class="text-xs text-text-muted hover:text-cream transition-colors"
+							>
+								Mark all read
+							</button>
+						{/if}
+					</div>
+
+					<div class="overflow-y-auto max-h-[400px]">
+						{#if loadingNotifications}
+							<div class="flex items-center justify-center py-8">
+								<div class="w-5 h-5 border-2 border-cream/30 border-t-cream rounded-full animate-spin"></div>
+							</div>
+						{:else if notifications.length === 0}
+							<div class="flex flex-col items-center justify-center py-8 text-text-muted">
+								<svg class="w-10 h-10 mb-2 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+								</svg>
+								<span class="text-sm">No notifications yet</span>
+							</div>
+						{:else}
+							{#each notifications as notification}
+								{@const icon = getNotificationIcon(notification.type)}
+								<button
+									onclick={() => handleNotificationClick(notification)}
+									class="w-full flex items-start gap-3 px-4 py-3 hover:bg-cream/5 transition-colors text-left {!notification.read ? 'bg-cream/5' : ''}"
+								>
+									<div class="flex-shrink-0 w-8 h-8 rounded-full bg-bg-elevated flex items-center justify-center {icon.color}">
+										<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d={icon.path} />
+										</svg>
+									</div>
+									<div class="flex-1 min-w-0">
+										<p class="text-sm font-medium text-text-primary truncate">{notification.title}</p>
+										<p class="text-xs text-text-muted line-clamp-2">{notification.message}</p>
+										<p class="text-xs text-text-muted/60 mt-1">{formatTimeAgo(notification.createdAt)}</p>
+									</div>
+									{#if !notification.read}
+										<div class="flex-shrink-0 w-2 h-2 rounded-full bg-blue-500 mt-2"></div>
+									{/if}
+								</button>
+							{/each}
+						{/if}
+					</div>
+				</div>
+			{/if}
+		</div>
+
 		<!-- GitHub Sponsor -->
 		<a
 			href="https://github.com/sponsors/avbirk83"
@@ -635,7 +790,7 @@
 					aria-label="Close menu"
 				></button>
 
-				<div class="absolute right-0 top-full mt-2 min-w-[180px] rounded-xl bg-[#111111] backdrop-blur-xl border border-border-subtle py-1 z-50 shadow-2xl">
+				<div class="absolute right-0 top-full mt-2 min-w-[180px] rounded-xl bg-bg-card backdrop-blur-xl border border-border-subtle py-1 z-50 shadow-2xl">
 					<div class="px-3 py-2 border-b border-border-subtle">
 						<p class="text-sm font-medium text-text-primary">{username}</p>
 						<p class="text-xs text-text-muted">{isAdmin ? 'Administrator' : 'User'}</p>

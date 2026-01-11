@@ -6,8 +6,12 @@
 		getMediaInfo,
 		getSubtitleTracks,
 		getSubtitleTrackUrl,
+		getChapters,
+		getSkipSegments,
 		type SubtitleTrack,
-		type MediaInfo
+		type MediaInfo,
+		type Chapter,
+		type SkipSegments
 	} from '$lib/api';
 	import { formatTime } from '$lib/utils';
 	import {
@@ -27,13 +31,14 @@
 		subtitle?: string;
 		mediaType: 'movie' | 'episode';
 		mediaId: number;
+		showId?: number | null;
 		onClose?: () => void;
 		initialSubtitle?: number | null;
 		nextEpisodeData?: NextEpisode | null;
 		onNextEpisode?: (episodeId: number) => void;
 	}
 
-	let { src, title, subtitle = '', mediaType, mediaId, onClose, initialSubtitle = null, nextEpisodeData = null, onNextEpisode }: Props = $props();
+	let { src, title, subtitle = '', mediaType, mediaId, showId = null, onClose, initialSubtitle = null, nextEpisodeData = null, onNextEpisode }: Props = $props();
 
 	// Core video state
 	let video: HTMLVideoElement;
@@ -56,8 +61,31 @@
 
 	// Playback settings
 	let playbackSpeed = $state(1);
+	let savedPlaybackSpeed = 1; // For long press restore
 	type AspectRatio = 'fit' | 'fill' | '16:9' | '4:3' | '21:9';
 	let aspectRatio = $state<AspectRatio>('fit');
+
+	// UI states
+	let showShortcutsOverlay = $state(false);
+	let theaterMode = $state(false);
+	let pipActive = $state(false);
+	let showTimeRemaining = $state(false);
+
+	// Speed boost (long press)
+	let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+	let isSpeedBoosting = $state(false);
+
+	// Touch gestures
+	let touchGestureActive = false; // Track if gesture started on valid area (not buttons)
+	let touchStartX = 0;
+	let touchStartY = 0;
+	let touchStartTime = 0;
+	let touchStartVolume = 0;
+	let lastTapTime = 0;
+	let lastTapX = 0;
+	let doubleTapTimeout: ReturnType<typeof setTimeout> | null = null;
+	let seekIndicator = $state<{ show: boolean; amount: number; x: number }>({ show: false, amount: 0, x: 0 });
+	let swipeIndicator = $state<{ show: boolean; type: 'volume' | 'brightness'; level: number }>({ show: false, type: 'volume', level: 0 });
 
 	// Menu states
 	let showSettingsMenu = $state(false);
@@ -107,6 +135,18 @@
 	let pendingSubtitleRestore: number | null = null;
 	let subtitleOffset = $state(0);
 
+	// Chapters
+	let chapters = $state<Chapter[]>([]);
+	let currentChapter = $state<Chapter | null>(null);
+	let showChapterList = $state(false);
+
+	// Skip segments (intro/credits)
+	let skipSegments = $state<SkipSegments>({});
+	let showSkipIntro = $state(false);
+	let showSkipCredits = $state(false);
+	let skipIntroTimeout: ReturnType<typeof setTimeout> | null = null;
+	let inCreditsRange = $state(false);
+
 	// Custom subtitle rendering
 	interface SubtitleCue {
 		start: number;
@@ -127,10 +167,33 @@
 	let clickCount = 0;
 
 	onMount(async () => {
-		const [mediaInfoResult, progressResult, subtitlesResult] = await Promise.allSettled([
+		// Load saved volume from localStorage
+		const savedVolume = localStorage.getItem('outpost_player_volume');
+		if (savedVolume !== null) {
+			volume = parseFloat(savedVolume);
+		}
+
+		// Load saved time display preference
+		const savedTimeDisplay = localStorage.getItem('outpost_player_time_remaining');
+		if (savedTimeDisplay === 'true') {
+			showTimeRemaining = true;
+		}
+
+		// Load playback speed for episodes (per show) or reset for movies
+		if (mediaType === 'episode' && showId) {
+			const savedSpeed = localStorage.getItem(`outpost_playback_speed_${showId}`);
+			if (savedSpeed !== null) {
+				playbackSpeed = parseFloat(savedSpeed);
+			}
+		} else {
+			playbackSpeed = 1; // Reset to 1x for movies
+		}
+
+		const [mediaInfoResult, progressResult, subtitlesResult, chaptersResult] = await Promise.allSettled([
 			getMediaInfo(mediaType, mediaId),
 			getProgress(mediaType, mediaId),
-			getSubtitleTracks(mediaType, mediaId)
+			getSubtitleTracks(mediaType, mediaId),
+			getChapters(mediaType, mediaId)
 		]);
 
 		if (mediaInfoResult.status === 'fulfilled') {
@@ -142,6 +205,19 @@
 			subtitleTracks = subtitlesResult.value;
 			if (subtitleTracks.length > 0) {
 				preloadSubtitle(subtitleTracks[0].index);
+			}
+		}
+
+		if (chaptersResult.status === 'fulfilled') {
+			chapters = chaptersResult.value;
+		}
+
+		// Load skip segments for episodes
+		if (mediaType === 'episode' && showId) {
+			try {
+				skipSegments = await getSkipSegments(showId);
+			} catch (e) {
+				// Ignore errors - skip segments are optional
 			}
 		}
 
@@ -165,6 +241,10 @@
 		}, 10000);
 
 		document.addEventListener('keydown', handleKeydown);
+
+		// Listen for PiP changes
+		video?.addEventListener('enterpictureinpicture', () => { pipActive = true; });
+		video?.addEventListener('leavepictureinpicture', () => { pipActive = false; });
 	});
 
 	onDestroy(() => {
@@ -173,6 +253,9 @@
 		if (clickTimeout) clearTimeout(clickTimeout);
 		if (nextEpisodeTimer) clearInterval(nextEpisodeTimer);
 		if (playbackInfoInterval) clearInterval(playbackInfoInterval);
+		if (skipIntroTimeout) clearTimeout(skipIntroTimeout);
+		if (longPressTimer) clearTimeout(longPressTimer);
+		if (doubleTapTimeout) clearTimeout(doubleTapTimeout);
 		document.removeEventListener('keydown', handleKeydown);
 		originalVttText.clear();
 		if (audioContext) {
@@ -187,20 +270,29 @@
 	function handleKeydown(e: KeyboardEvent) {
 		if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
+		// Close shortcuts overlay on any key if open (except '?')
+		if (showShortcutsOverlay && e.key !== '?') {
+			showShortcutsOverlay = false;
+		}
+
 		switch (e.key) {
 			case ' ': case 'k': case 'K': e.preventDefault(); togglePlay(); break;
 			case 'ArrowLeft': case 'j': case 'J': e.preventDefault(); seek(-10); break;
 			case 'ArrowRight': case 'l': case 'L': e.preventDefault(); seek(10); break;
-			case 'ArrowUp': e.preventDefault(); volume = Math.min(1, volume + 0.05); break;
-			case 'ArrowDown': e.preventDefault(); volume = Math.max(0, volume - 0.05); break;
+			case 'ArrowUp': e.preventDefault(); setVolume(Math.min(1, volume + 0.05)); break;
+			case 'ArrowDown': e.preventDefault(); setVolume(Math.max(0, volume - 0.05)); break;
 			case 'f': case 'F': e.preventDefault(); toggleFullscreen(); break;
 			case 'm': case 'M': e.preventDefault(); muted = !muted; break;
-			case 'c': case 'C': e.preventDefault(); toggleSubtitles(); break;
-			case 's': case 'S': e.preventDefault(); cycleSubtitleTrack(); break;
+			case 'c': case 'C': e.preventDefault(); showChapterList = !showChapterList; break;
 			case 'g': e.preventDefault(); adjustSubtitleOffset(0.5); break;
 			case 'G': e.preventDefault(); adjustSubtitleOffset(-0.5); break;
 			case 'h': case 'H': e.preventDefault(); subtitleOffset = 0; break;
-			case 'Escape': if (fullscreen) document.exitFullscreen(); else if (onClose) onClose(); break;
+			case 'Escape':
+				if (showShortcutsOverlay) showShortcutsOverlay = false;
+				else if (theaterMode) toggleTheaterMode();
+				else if (fullscreen) document.exitFullscreen();
+				else if (onClose) onClose();
+				break;
 			case 'Home': e.preventDefault(); seekToTime(0); break;
 			case 'End': e.preventDefault(); seekToTime(getDuration() - 1); break;
 			case '0': case '1': case '2': case '3': case '4':
@@ -209,10 +301,21 @@
 			case 'i': case 'I': e.preventDefault(); togglePlaybackInfo(); break;
 			case 'a': case 'A': e.preventDefault(); cycleAspectRatio(); break;
 			case 'n': case 'N': e.preventDefault(); if (nextEpisode && onNextEpisode) playNextEpisode(); break;
+			case ',': case '<': e.preventDefault(); previousChapter(); break;
+			case '.': case '>': e.preventDefault(); nextChapter(); break;
+			case 'p': case 'P': e.preventDefault(); togglePiP(); break;
+			case 't': case 'T': e.preventDefault(); toggleTheaterMode(); break;
+			case 's':
+				e.preventDefault();
+				if (showSkipIntro) skipIntro();
+				else if (showSkipCredits) skipCredits();
+				break;
+			case '?': e.preventDefault(); showShortcutsOverlay = !showShortcutsOverlay; break;
 		}
 	}
 
 	function togglePlay() {
+		if (!video) return;
 		if (video.paused) video.play(); else video.pause();
 	}
 
@@ -269,8 +372,181 @@
 	}
 
 	function toggleFullscreen() {
+		if (!container) return;
 		if (!document.fullscreenElement) container.requestFullscreen();
 		else document.exitFullscreen();
+	}
+
+	// Volume with localStorage persistence
+	function setVolume(newVolume: number) {
+		volume = newVolume;
+		localStorage.setItem('outpost_player_volume', String(newVolume));
+	}
+
+	// Theater mode
+	function toggleTheaterMode() {
+		theaterMode = !theaterMode;
+		// Dispatch event for parent to handle
+		container?.dispatchEvent(new CustomEvent('theatermode', { detail: theaterMode, bubbles: true }));
+	}
+
+	// Picture-in-Picture
+	async function togglePiP() {
+		if (!video) return;
+		try {
+			if (document.pictureInPictureElement) {
+				await document.exitPictureInPicture();
+			} else if (document.pictureInPictureEnabled) {
+				await video.requestPictureInPicture();
+			}
+		} catch (e) {
+			console.error('PiP failed:', e);
+		}
+	}
+
+	// Time display toggle
+	function toggleTimeDisplay() {
+		showTimeRemaining = !showTimeRemaining;
+		localStorage.setItem('outpost_player_time_remaining', String(showTimeRemaining));
+	}
+
+	// Touch gesture handlers
+	function handleTouchStart(e: TouchEvent) {
+		if (e.touches.length !== 1) return;
+
+		// Ignore touches on interactive elements
+		const target = e.target as HTMLElement;
+		if (target.closest('button') || target.closest('.player-controls') || target.closest('.player-top-bar') ||
+			target.closest('.settings-menu') || target.closest('.subtitle-menu') || target.closest('.audio-menu') ||
+			target.closest('.chapter-list-panel') || target.closest('.shortcuts-overlay')) {
+			touchGestureActive = false;
+			return;
+		}
+
+		// Mark gesture as active for this touch sequence
+		touchGestureActive = true;
+
+		const touch = e.touches[0];
+		touchStartX = touch.clientX;
+		touchStartY = touch.clientY;
+		touchStartTime = Date.now();
+		touchStartVolume = volume;
+
+		// Long press detection
+		longPressTimer = setTimeout(() => {
+			if (!isSpeedBoosting) {
+				savedPlaybackSpeed = playbackSpeed;
+				playbackSpeed = 2;
+				if (video) video.playbackRate = 2;
+				isSpeedBoosting = true;
+			}
+		}, 500);
+	}
+
+	function handleTouchMove(e: TouchEvent) {
+		// Only process if gesture started on valid area (not buttons)
+		if (!touchGestureActive || e.touches.length !== 1 || !container) return;
+
+		const touch = e.touches[0];
+		const rect = container.getBoundingClientRect();
+		const deltaX = touch.clientX - touchStartX;
+		const deltaY = touch.clientY - touchStartY;
+
+		// Cancel long press if moved significantly
+		if (Math.abs(deltaX) > 10 || Math.abs(deltaY) > 10) {
+			if (longPressTimer) {
+				clearTimeout(longPressTimer);
+				longPressTimer = null;
+			}
+		}
+
+		// Vertical swipe for volume (right half of screen)
+		const isRightHalf = touchStartX > rect.width / 2;
+		if (isRightHalf && Math.abs(deltaY) > 20 && Math.abs(deltaY) > Math.abs(deltaX)) {
+			e.preventDefault();
+			const volumeDelta = -deltaY / rect.height;
+			const newVolume = Math.max(0, Math.min(1, touchStartVolume + volumeDelta));
+			setVolume(newVolume);
+			swipeIndicator = { show: true, type: 'volume', level: newVolume };
+		}
+	}
+
+	function handleTouchEnd(e: TouchEvent) {
+		// Clear long press timer
+		if (longPressTimer) {
+			clearTimeout(longPressTimer);
+			longPressTimer = null;
+		}
+
+		// Restore speed if was boosting
+		if (isSpeedBoosting) {
+			playbackSpeed = savedPlaybackSpeed;
+			if (video) video.playbackRate = savedPlaybackSpeed;
+			isSpeedBoosting = false;
+		}
+
+		// Hide swipe indicator
+		if (swipeIndicator.show) {
+			setTimeout(() => { swipeIndicator = { ...swipeIndicator, show: false }; }, 300);
+		}
+
+		// If gesture wasn't active (touch started on button), don't process
+		if (!touchGestureActive) {
+			return;
+		}
+
+		// Reset gesture flag
+		touchGestureActive = false;
+
+		// Double-tap detection
+		const now = Date.now();
+		const touch = e.changedTouches[0];
+		if (!touch || !container) return;
+
+		const rect = container.getBoundingClientRect();
+		const x = touch.clientX - rect.left;
+		const third = rect.width / 3;
+
+		// Check if it's a quick tap (not a swipe)
+		const deltaX = touch.clientX - touchStartX;
+		const deltaY = touch.clientY - touchStartY;
+		const tapDuration = now - touchStartTime;
+
+		if (tapDuration < 300 && Math.abs(deltaX) < 20 && Math.abs(deltaY) < 20) {
+			// Check for double tap
+			if (now - lastTapTime < 300 && Math.abs(x - lastTapX) < 50) {
+				// Double tap detected
+				e.preventDefault();
+				if (doubleTapTimeout) clearTimeout(doubleTapTimeout);
+
+				if (x < third) {
+					// Left third - seek back
+					seek(-10);
+					showSeekIndicator(-10, x);
+				} else if (x > third * 2) {
+					// Right third - seek forward
+					seek(10);
+					showSeekIndicator(10, x + 40);
+				} else {
+					// Center - toggle fullscreen
+					toggleFullscreen();
+				}
+				lastTapTime = 0;
+			} else {
+				// First tap - wait for potential double tap
+				lastTapTime = now;
+				lastTapX = x;
+				doubleTapTimeout = setTimeout(() => {
+					// Single tap - toggle play
+					togglePlay();
+				}, 300);
+			}
+		}
+	}
+
+	function showSeekIndicator(amount: number, x: number) {
+		seekIndicator = { show: true, amount, x };
+		setTimeout(() => { seekIndicator = { ...seekIndicator, show: false }; }, 600);
 	}
 
 	function getActualTime(): number { return seekOffset + currentTime; }
@@ -284,17 +560,87 @@
 	}
 
 	function handleTimeUpdate() {
+		if (!video) return;
 		currentTime = video.currentTime;
-		if (video.buffered.length > 0) buffered = video.buffered.end(video.buffered.length - 1);
+		try {
+			if (video.buffered && video.buffered.length > 0) {
+				buffered = video.buffered.end(video.buffered.length - 1);
+			}
+		} catch (e) {
+			// Ignore buffered access errors
+		}
 		updateCurrentSubtitle();
+		updateCurrentChapter();
+		updateSkipSegments();
 		if (nextEpisode && mediaType === 'episode') {
 			const remaining = getDuration() - getActualTime();
-			if (remaining > 0 && remaining <= 30 && !showNextEpisode) startNextEpisodeCountdown();
+			if (remaining > 0 && remaining <= 30 && !showNextEpisode && !inCreditsRange) startNextEpisodeCountdown();
 			else if (remaining > 30 && showNextEpisode) clearNextEpisodeTimer();
 		}
 	}
 
+	function updateSkipSegments() {
+		const time = getActualTime();
+
+		// Check intro segment
+		if (skipSegments.intro) {
+			const inIntro = time >= skipSegments.intro.startTime && time < skipSegments.intro.endTime;
+			if (inIntro && !showSkipIntro) {
+				showSkipIntro = true;
+				// Auto-hide after 5 seconds
+				if (skipIntroTimeout) clearTimeout(skipIntroTimeout);
+				skipIntroTimeout = setTimeout(() => {
+					showSkipIntro = false;
+				}, 5000);
+			} else if (!inIntro && showSkipIntro) {
+				showSkipIntro = false;
+				if (skipIntroTimeout) {
+					clearTimeout(skipIntroTimeout);
+					skipIntroTimeout = null;
+				}
+			}
+		}
+
+		// Check credits segment
+		if (skipSegments.credits) {
+			const wasInCredits = inCreditsRange;
+			inCreditsRange = time >= skipSegments.credits.startTime && time < skipSegments.credits.endTime;
+
+			if (inCreditsRange && !wasInCredits) {
+				// Entered credits range
+				if (nextEpisode && onNextEpisode) {
+					// Start next episode countdown
+					startNextEpisodeCountdown();
+				} else {
+					// Show skip credits button
+					showSkipCredits = true;
+				}
+			} else if (!inCreditsRange && wasInCredits) {
+				// Left credits range
+				showSkipCredits = false;
+				if (!nextEpisode) {
+					clearNextEpisodeTimer();
+				}
+			}
+		}
+	}
+
+	function skipIntro() {
+		if (skipSegments.intro) {
+			seekToTime(skipSegments.intro.endTime);
+			showSkipIntro = false;
+		}
+	}
+
+	function skipCredits() {
+		if (skipSegments.credits) {
+			seekToTime(skipSegments.credits.endTime);
+			showSkipCredits = false;
+		}
+	}
+
 	function handleLoadedMetadata() {
+		if (!video) return;
 		duration = video.duration;
 		video.playbackRate = playbackSpeed;
 		detectAudioTracks();
@@ -431,6 +777,7 @@
 
 	// Audio tracks
 	function detectAudioTracks() {
+		if (!video) return;
 		const tracks: AudioTrackInfo[] = [];
 		const vat = (video as any).audioTracks;
 		if (vat?.length > 0) {
@@ -442,6 +789,7 @@
 	}
 
 	function selectAudioTrack(index: number) {
+		if (!video) return;
 		const vat = (video as any).audioTracks;
 		if (vat) { for (let i = 0; i < vat.length; i++) vat[i].enabled = (i === index); }
 		selectedAudioTrack = index;
@@ -573,6 +921,40 @@
 		return { cleanText, speaker, isSoundEffect };
 	}
 
+	// Chapters
+	function updateCurrentChapter() {
+		if (chapters.length === 0) { currentChapter = null; return; }
+		const time = getActualTime();
+		const chapter = chapters.find(c => time >= c.startTime && time < c.endTime);
+		currentChapter = chapter || null;
+	}
+
+	function nextChapter() {
+		if (chapters.length === 0) return;
+		const time = getActualTime();
+		const next = chapters.find(c => c.startTime > time + 0.5);
+		if (next) seekToTime(next.startTime);
+	}
+
+	function previousChapter() {
+		if (chapters.length === 0) return;
+		const time = getActualTime();
+		// If more than 3 seconds into current chapter, go to start of current
+		// Otherwise, go to previous chapter
+		const current = chapters.find(c => time >= c.startTime && time < c.endTime);
+		if (current && time - current.startTime > 3) {
+			seekToTime(current.startTime);
+		} else {
+			const prev = [...chapters].reverse().find(c => c.startTime < time - 0.5);
+			if (prev) seekToTime(prev.startTime);
+		}
+	}
+
+	function seekToChapter(chapter: Chapter) {
+		seekToTime(chapter.startTime);
+		showChapterList = false;
+	}
+
 	// Effects
 	$effect(() => { if (video) { video.volume = volume; video.muted = muted; } });
 
@@ -589,7 +971,7 @@
 
 <svelte:document onfullscreenchange={() => fullscreen = !!document.fullscreenElement} />
 
-<div bind:this={container} class="player-container" onmousemove={handleMouseMove} onclick={handleContainerClick} role="application" aria-label="Video player">
+<div bind:this={container} class="player-container {theaterMode ? 'theater-mode' : ''}" onmousemove={handleMouseMove} onclick={handleContainerClick} ontouchstart={handleTouchStart} ontouchmove={handleTouchMove} ontouchend={handleTouchEnd} role="application" aria-label="Video player">
 	{#if loading}
 		<div class="player-loading"><div class="loading-spinner"></div></div>
 	{/if}
@@ -599,6 +981,71 @@
 		onplay={handlePlay} onpause={handlePause} onclick={handleVideoClick}
 		crossorigin="anonymous" autoplay>
 	</video>
+
+	<!-- Keyboard shortcuts overlay -->
+	{#if showShortcutsOverlay}
+		<div class="shortcuts-overlay" onclick={() => showShortcutsOverlay = false} role="dialog" aria-label="Keyboard shortcuts">
+			<div class="shortcuts-panel" onclick={(e) => e.stopPropagation()}>
+				<div class="shortcuts-header">
+					<h3>Keyboard Shortcuts</h3>
+					<button class="shortcuts-close" onclick={() => showShortcutsOverlay = false}>
+						<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+						</svg>
+					</button>
+				</div>
+				<div class="shortcuts-columns">
+					<div class="shortcuts-column">
+						<h4>Playback</h4>
+						<div class="shortcut-item"><span class="shortcut-key">Space / K</span><span>Play / Pause</span></div>
+						<div class="shortcut-item"><span class="shortcut-key">← / J</span><span>Seek -10s</span></div>
+						<div class="shortcut-item"><span class="shortcut-key">→ / L</span><span>Seek +10s</span></div>
+						<div class="shortcut-item"><span class="shortcut-key">↑ / ↓</span><span>Volume</span></div>
+						<div class="shortcut-item"><span class="shortcut-key">M</span><span>Mute</span></div>
+						<div class="shortcut-item"><span class="shortcut-key">0-9</span><span>Seek to %</span></div>
+						<div class="shortcut-item"><span class="shortcut-key">S</span><span>Skip intro/credits</span></div>
+					</div>
+					<div class="shortcuts-column">
+						<h4>Navigation</h4>
+						<div class="shortcut-item"><span class="shortcut-key">F</span><span>Fullscreen</span></div>
+						<div class="shortcut-item"><span class="shortcut-key">T</span><span>Theater mode</span></div>
+						<div class="shortcut-item"><span class="shortcut-key">P</span><span>Picture-in-Picture</span></div>
+						<div class="shortcut-item"><span class="shortcut-key">, / .</span><span>Prev/Next chapter</span></div>
+						<div class="shortcut-item"><span class="shortcut-key">C</span><span>Chapter list</span></div>
+						<div class="shortcut-item"><span class="shortcut-key">I</span><span>Playback info</span></div>
+						<div class="shortcut-item"><span class="shortcut-key">?</span><span>Show/hide this</span></div>
+					</div>
+				</div>
+			</div>
+		</div>
+	{/if}
+
+	<!-- Speed boost indicator -->
+	{#if isSpeedBoosting}
+		<div class="speed-boost-indicator">2×</div>
+	{/if}
+
+	<!-- Double-tap seek indicator -->
+	{#if seekIndicator.show}
+		<div class="seek-indicator" style="left: {seekIndicator.x}px">
+			<div class="seek-indicator-ripple"></div>
+			<span>{seekIndicator.amount > 0 ? '+' : ''}{seekIndicator.amount}s</span>
+		</div>
+	{/if}
+
+	<!-- Volume swipe indicator -->
+	{#if swipeIndicator.show}
+		<div class="swipe-indicator">
+			<svg class="w-8 h-8" fill="currentColor" viewBox="0 0 24 24">
+				{#if swipeIndicator.type === 'volume'}
+					<path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/>
+				{/if}
+			</svg>
+			<div class="swipe-level-bar">
+				<div class="swipe-level-fill" style="height: {swipeIndicator.level * 100}%"></div>
+			</div>
+		</div>
+	{/if}
 
 	{#if showPlaybackInfo && playbackInfo}
 		<PlaybackInfoOverlay info={playbackInfo} />
@@ -624,6 +1071,48 @@
 		</div>
 	{/if}
 
+	{#if showSkipIntro}
+		<button class="skip-button" onclick={skipIntro}>
+			Skip Intro
+			<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+			</svg>
+		</button>
+	{/if}
+
+	{#if showSkipCredits && !nextEpisode}
+		<button class="skip-button" onclick={skipCredits}>
+			Skip Credits
+			<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+			</svg>
+		</button>
+	{/if}
+
+	{#if showChapterList && chapters && chapters.length > 0}
+		<div class="chapter-list-panel">
+			<div class="chapter-list-header">
+				<h3>Chapters</h3>
+				<button class="chapter-list-close" onclick={() => showChapterList = false} aria-label="Close chapters">
+					<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+					</svg>
+				</button>
+			</div>
+			<div class="chapter-list-items">
+				{#each chapters as chapter}
+					<button
+						class="chapter-item {currentChapter?.index === chapter.index ? 'active' : ''}"
+						onclick={() => seekToChapter(chapter)}
+					>
+						<span class="chapter-time">{formatTime(chapter.startTime)}</span>
+						<span class="chapter-name">{chapter.title || `Chapter ${chapter.index + 1}`}</span>
+					</button>
+				{/each}
+			</div>
+		</div>
+	{/if}
+
 	<div class="player-overlay {showControls ? 'visible' : ''}">
 		<div class="player-top-gradient"></div>
 		<div class="player-top-bar">
@@ -643,12 +1132,21 @@
 
 		<div class="player-bottom-gradient"></div>
 		<div class="player-controls">
+			{#if currentChapter}
+				<div class="current-chapter-display">
+					<span class="chapter-label">Chapter:</span>
+					<span class="chapter-title">{currentChapter.title}</span>
+				</div>
+			{/if}
 			<PlayerProgressBar
 				currentTime={getActualTime()}
 				duration={getDuration()}
 				{buffered}
+				{chapters}
 				endTime={getEndTime()}
+				showRemaining={showTimeRemaining}
 				onSeek={seekToTime}
+				onToggleTimeDisplay={toggleTimeDisplay}
 			/>
 
 			<div class="controls-row">
@@ -666,7 +1164,19 @@
 					<button class="player-btn" onclick={() => seek(10)} aria-label="Skip forward 10s">
 						<svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><path d="M11.5 3C6.85 3 2.92 6.03 1.53 10.22L3.9 11C4.95 7.81 7.96 5.5 11.5 5.5C13.46 5.5 15.23 6.22 16.62 7.38L14 10H21V3L18.4 5.6C16.55 4 14.15 3 11.5 3M10 12V22H8V14H6V12H10M18 14V20C18 21.11 17.11 22 16 22H14C12.9 22 12 21.1 12 20V14C12 12.9 12.9 12 14 12H16C17.11 12 18 12.9 18 14M14 14V20H16V14H14Z"/></svg>
 					</button>
-					<PlayerVolumeControl {volume} {muted} onVolumeChange={(v) => { volume = v; muted = false; }} onMuteToggle={() => muted = !muted} />
+					<PlayerVolumeControl {volume} {muted} onVolumeChange={(v) => { setVolume(v); muted = false; }} onMuteToggle={() => muted = !muted} />
+					{#if chapters && chapters.length > 0}
+						<div class="chapter-nav-divider"></div>
+						<button class="player-btn" onclick={previousChapter} aria-label="Previous chapter" title="Previous Chapter (,)">
+							<svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6V6zm3.5 6l8.5 6V6l-8.5 6z"/></svg>
+						</button>
+						<button class="player-btn {showChapterList ? 'active' : ''}" onclick={() => { showChapterList = !showChapterList; }} aria-label="Chapters" title="Chapters (P)">
+							<svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/></svg>
+						</button>
+						<button class="player-btn" onclick={nextChapter} aria-label="Next chapter" title="Next Chapter (.)">
+							<svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zm2-8.14L11.03 12 8 14.14V9.86zM16 6h2v12h-2V6z"/></svg>
+						</button>
+					{/if}
 				</div>
 
 				<div class="controls-right">
@@ -701,9 +1211,43 @@
 						{playbackSpeed}
 						{aspectRatio}
 						onToggle={() => { showSettingsMenu = !showSettingsMenu; showSubtitleMenu = false; showAudioMenu = false; }}
-						onSpeedChange={(s) => { playbackSpeed = s; if (video) video.playbackRate = s; }}
+						onSpeedChange={(s) => {
+							playbackSpeed = s;
+							if (video) video.playbackRate = s;
+							// Save speed per show for episodes
+							if (mediaType === 'episode' && showId) {
+								localStorage.setItem(`outpost_playback_speed_${showId}`, String(s));
+							}
+						}}
 						onAspectChange={(r) => aspectRatio = r}
 					/>
+
+					<!-- Speed indicator badge -->
+					{#if playbackSpeed !== 1}
+						<div class="speed-badge">{playbackSpeed}×</div>
+					{/if}
+
+					<!-- Picture-in-Picture button -->
+					<button class="player-btn {pipActive ? 'active' : ''}" onclick={togglePiP} aria-label="Picture-in-Picture" title="Picture-in-Picture (P)">
+						<svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
+							{#if pipActive}
+								<path d="M19 7h-8v6h8V7zm2-4H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H3V5h18v14z"/>
+							{:else}
+								<path d="M19 7h-8v6h8V7zm4-4H1v17h22V3zm-2 15H3V5h18v13z"/>
+							{/if}
+						</svg>
+					</button>
+
+					<!-- Theater mode button -->
+					<button class="player-btn {theaterMode ? 'active' : ''}" onclick={toggleTheaterMode} aria-label="Theater mode" title="Theater Mode (T)">
+						<svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
+							{#if theaterMode}
+								<path d="M19 6H5c-1.1 0-2 .9-2 2v8c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 10H5V8h14v8z"/>
+							{:else}
+								<path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z"/>
+							{/if}
+						</svg>
+					</button>
 
 					<button class="player-btn" onclick={toggleFullscreen} aria-label={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}>
 						{#if fullscreen}
@@ -750,6 +1294,253 @@
 	.subtitle-content { display: flex; flex-direction: column; align-items: center; gap: 4px; max-width: 85%; }
 	.subtitle-speaker { color: #E8A849; font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif; font-size: 16px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.95), -1px -1px 2px rgba(0, 0, 0, 0.95), 0 0 4px rgba(0, 0, 0, 0.7); }
 	.subtitle-text { color: #F5E6C8; font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif; font-size: 28px; font-weight: 600; line-height: 1.4; text-align: center; text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.95), -1px -1px 2px rgba(0, 0, 0, 0.95), 1px -1px 2px rgba(0, 0, 0, 0.95), -1px 1px 2px rgba(0, 0, 0, 0.95), 0 0 6px rgba(0, 0, 0, 0.7); }
+
+	/* Skip button styles */
+	.skip-button {
+		position: absolute;
+		right: 24px;
+		bottom: 140px;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 12px 20px;
+		background: rgba(232, 168, 73, 0.9);
+		color: #0a0a0a;
+		border: none;
+		border-radius: 24px;
+		font-size: 14px;
+		font-weight: 600;
+		cursor: pointer;
+		transition: all 0.2s;
+		z-index: 35;
+		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+	}
+	.skip-button:hover {
+		background: #E8A849;
+		transform: scale(1.05);
+	}
+	.skip-button svg {
+		width: 16px;
+		height: 16px;
+	}
+
+	/* Chapter styles */
+	.current-chapter-display { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+	.chapter-label { color: rgba(245, 230, 200, 0.5); font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+	.chapter-title { color: #E8A849; font-size: 13px; font-weight: 500; }
+
+	.chapter-nav-divider { width: 1px; height: 20px; background: rgba(245, 230, 200, 0.2); margin: 0 4px; }
+
+	.chapter-list-panel { position: absolute; right: 24px; bottom: 120px; width: 320px; max-height: 400px; background: rgba(10, 10, 10, 0.95); backdrop-filter: blur(12px); border: 1px solid rgba(245, 230, 200, 0.15); border-radius: 12px; z-index: 40; display: flex; flex-direction: column; overflow: hidden; }
+	.chapter-list-header { display: flex; align-items: center; justify-content: space-between; padding: 16px; border-bottom: 1px solid rgba(245, 230, 200, 0.1); }
+	.chapter-list-header h3 { color: #F5E6C8; font-size: 14px; font-weight: 600; margin: 0; }
+	.chapter-list-close { background: none; border: none; color: rgba(245, 230, 200, 0.6); cursor: pointer; padding: 4px; border-radius: 4px; display: flex; align-items: center; justify-content: center; }
+	.chapter-list-close:hover { color: #F5E6C8; background: rgba(255, 255, 255, 0.1); }
+	.chapter-list-items { overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 2px; }
+	.chapter-item { display: flex; align-items: center; gap: 12px; padding: 10px 12px; background: none; border: none; border-radius: 8px; cursor: pointer; text-align: left; width: 100%; transition: background 0.2s; }
+	.chapter-item:hover { background: rgba(255, 255, 255, 0.08); }
+	.chapter-item.active { background: rgba(232, 168, 73, 0.15); }
+	.chapter-item.active .chapter-time { color: #E8A849; }
+	.chapter-time { color: rgba(245, 230, 200, 0.5); font-size: 12px; font-variant-numeric: tabular-nums; min-width: 50px; }
+	.chapter-name { color: #F5E6C8; font-size: 13px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+	/* Keyboard shortcuts overlay */
+	.shortcuts-overlay {
+		position: absolute;
+		inset: 0;
+		background: rgba(0, 0, 0, 0.8);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		z-index: 60;
+		backdrop-filter: blur(4px);
+	}
+
+	.shortcuts-panel {
+		background: rgba(10, 10, 10, 0.95);
+		border: 1px solid rgba(245, 230, 200, 0.2);
+		border-radius: 16px;
+		padding: 24px;
+		max-width: 600px;
+		width: 90%;
+	}
+
+	.shortcuts-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		margin-bottom: 20px;
+		padding-bottom: 12px;
+		border-bottom: 1px solid rgba(245, 230, 200, 0.1);
+	}
+
+	.shortcuts-header h3 {
+		color: #F5E6C8;
+		font-size: 18px;
+		font-weight: 600;
+		margin: 0;
+	}
+
+	.shortcuts-close {
+		background: none;
+		border: none;
+		color: rgba(245, 230, 200, 0.6);
+		cursor: pointer;
+		padding: 6px;
+		border-radius: 6px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.shortcuts-close:hover {
+		color: #F5E6C8;
+		background: rgba(255, 255, 255, 0.1);
+	}
+
+	.shortcuts-columns {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 32px;
+	}
+
+	.shortcuts-column h4 {
+		color: #E8A849;
+		font-size: 13px;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.5px;
+		margin: 0 0 12px 0;
+	}
+
+	.shortcut-item {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 8px 0;
+		color: rgba(245, 230, 200, 0.8);
+		font-size: 13px;
+	}
+
+	.shortcut-key {
+		background: rgba(245, 230, 200, 0.1);
+		color: #F5E6C8;
+		padding: 4px 8px;
+		border-radius: 4px;
+		font-family: monospace;
+		font-size: 12px;
+		font-weight: 500;
+	}
+
+	/* Speed badge */
+	.speed-badge {
+		background: rgba(232, 168, 73, 0.2);
+		color: #E8A849;
+		padding: 4px 8px;
+		border-radius: 4px;
+		font-size: 12px;
+		font-weight: 600;
+	}
+
+	/* Speed boost indicator */
+	.speed-boost-indicator {
+		position: absolute;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+		background: rgba(232, 168, 73, 0.9);
+		color: #0a0a0a;
+		padding: 16px 32px;
+		border-radius: 12px;
+		font-size: 32px;
+		font-weight: 700;
+		z-index: 45;
+		pointer-events: none;
+		animation: pulse 0.5s ease-in-out infinite alternate;
+	}
+
+	@keyframes pulse {
+		from { transform: translate(-50%, -50%) scale(1); }
+		to { transform: translate(-50%, -50%) scale(1.05); }
+	}
+
+	/* Seek indicator (double-tap) */
+	.seek-indicator {
+		position: absolute;
+		top: 50%;
+		transform: translateY(-50%);
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 8px;
+		color: #F5E6C8;
+		font-size: 24px;
+		font-weight: 600;
+		z-index: 45;
+		pointer-events: none;
+	}
+
+	.seek-indicator-ripple {
+		position: absolute;
+		width: 80px;
+		height: 80px;
+		border-radius: 50%;
+		background: rgba(245, 230, 200, 0.3);
+		animation: ripple 0.6s ease-out forwards;
+	}
+
+	@keyframes ripple {
+		from {
+			transform: scale(0.5);
+			opacity: 1;
+		}
+		to {
+			transform: scale(1.5);
+			opacity: 0;
+		}
+	}
+
+	/* Swipe indicator (volume/brightness) */
+	.swipe-indicator {
+		position: absolute;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 8px;
+		color: #F5E6C8;
+		z-index: 45;
+		pointer-events: none;
+	}
+
+	.swipe-level-bar {
+		width: 6px;
+		height: 100px;
+		background: rgba(245, 230, 200, 0.2);
+		border-radius: 3px;
+		overflow: hidden;
+		position: relative;
+	}
+
+	.swipe-level-fill {
+		position: absolute;
+		bottom: 0;
+		left: 0;
+		right: 0;
+		background: #E8A849;
+		border-radius: 3px;
+		transition: height 0.1s;
+	}
+
+	/* Theater mode */
+	.player-container.theater-mode {
+		position: fixed;
+		inset: 0;
+		z-index: 9999;
+		background: #000;
+	}
 
 	@media (max-width: 768px) {
 		.subtitle-overlay { bottom: 80px; padding: 0 16px; }

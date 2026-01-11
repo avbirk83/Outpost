@@ -314,8 +314,11 @@ func (s *Scanner) scanMovies(lib *database.Library) error {
 					log.Printf("Failed to fetch metadata for %s: %v", title, err)
 				}
 			}
-			// Organize folder and extract subtitles in background
-			go s.OrganizeAndExtractSubtitles(movie, lib.Path)
+			// Organize folder, extract subtitles, and extract chapters in background
+			go func(m *database.Movie, libPath string) {
+				s.OrganizeAndExtractSubtitles(m, libPath)
+				s.ExtractChapters("movie", m.ID, m.Path)
+			}(movie, lib.Path)
 		}
 	}
 
@@ -436,8 +439,11 @@ func (s *Scanner) scanTV(lib *database.Library) error {
 		} else {
 			added++
 			log.Printf("Added episode: %s S%02dE%02d", showTitle, seasonNum, episodeNum)
-			// Extract subtitles in background
-			go s.ExtractSubtitles(path)
+			// Extract subtitles and chapters in background
+			go func(ep *database.Episode, p string) {
+				s.ExtractSubtitles(p)
+				s.ExtractChapters("episode", ep.ID, p)
+			}(episode, path)
 		}
 
 		// Fetch show metadata if this is a new show
@@ -973,4 +979,71 @@ func (s *Scanner) ExtractSubtitles(videoPath string) {
 	}
 
 	log.Printf("Finished extracting subtitles from %s", baseName)
+}
+
+// ExtractChapters extracts chapter information from a video file and saves to database
+func (s *Scanner) ExtractChapters(mediaType string, mediaID int64, videoPath string) {
+	baseName := filepath.Base(videoPath)
+
+	// Get chapter info using ffprobe
+	cmd := exec.Command("ffprobe",
+		"-v", "quiet",
+		"-print_format", "json",
+		"-show_chapters",
+		videoPath,
+	)
+	output, err := cmd.Output()
+	if err != nil {
+		// Not an error - many files don't have chapters
+		return
+	}
+
+	var probeResult struct {
+		Chapters []struct {
+			ID        int               `json:"id"`
+			TimeBase  string            `json:"time_base"`
+			Start     int64             `json:"start"`
+			StartTime string            `json:"start_time"`
+			End       int64             `json:"end"`
+			EndTime   string            `json:"end_time"`
+			Tags      map[string]string `json:"tags"`
+		} `json:"chapters"`
+	}
+	if err := json.Unmarshal(output, &probeResult); err != nil {
+		log.Printf("Failed to parse ffprobe chapters output for %s: %v", baseName, err)
+		return
+	}
+
+	if len(probeResult.Chapters) == 0 {
+		return
+	}
+
+	log.Printf("Found %d chapters in %s", len(probeResult.Chapters), baseName)
+
+	var chapters []database.Chapter
+	for i, ch := range probeResult.Chapters {
+		// Parse start/end times from string (in seconds)
+		startTime, _ := strconv.ParseFloat(ch.StartTime, 64)
+		endTime, _ := strconv.ParseFloat(ch.EndTime, 64)
+
+		title := ""
+		if t, ok := ch.Tags["title"]; ok {
+			title = t
+		}
+
+		chapters = append(chapters, database.Chapter{
+			MediaType:    mediaType,
+			MediaID:      mediaID,
+			ChapterIndex: i,
+			Title:        title,
+			StartTime:    startTime,
+			EndTime:      endTime,
+		})
+	}
+
+	if err := s.db.SaveChapters(mediaType, mediaID, chapters); err != nil {
+		log.Printf("Failed to save chapters for %s: %v", baseName, err)
+	} else {
+		log.Printf("Saved %d chapters for %s", len(chapters), baseName)
+	}
 }

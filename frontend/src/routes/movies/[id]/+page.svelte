@@ -6,8 +6,8 @@
 		getMovie, refreshMovieMetadata, deleteMovie, getImageUrl,
 		getQualityProfiles, getWatchStatus, markAsWatched, markAsUnwatched,
 		getMediaInfo, getMovieSuggestions, addToWatchlist, removeFromWatchlist, isInWatchlist,
-		getMovieQuality, setMovieQuality,
-		type Movie, type QualityProfile, type MediaInfo, type TMDBMovieResult, type QualityInfo
+		getMovieQuality, setMovieQuality, getQualityPresets,
+		type Movie, type QualityProfile, type MediaInfo, type TMDBMovieResult, type QualityInfo, type QualityPreset
 	} from '$lib/api';
 	import { auth } from '$lib/stores/auth';
 	import { toast } from '$lib/stores/toast';
@@ -19,6 +19,8 @@
 	import TrailerModal from '$lib/components/TrailerModal.svelte';
 	import IconButton from '$lib/components/IconButton.svelte';
 	import MediaDetail from '$lib/components/MediaDetail.svelte';
+	import Select from '$lib/components/ui/Select.svelte';
+	import AddToCollectionButton from '$lib/components/AddToCollectionButton.svelte';
 
 	let movie: Movie | null = $state(null);
 	let loading = $state(true);
@@ -42,6 +44,8 @@
 	let qualityInfo: QualityInfo | null = $state(null);
 	let monitored = $state(true);
 	let monitoringLoading = $state(false);
+	let qualityPresets: QualityPreset[] = $state([]);
+	let selectedPresetId: number | null = $state(null);
 
 	auth.subscribe((value) => {
 		user = value;
@@ -63,13 +67,26 @@
 			if (movie?.tmdbId) {
 				inWatchlist = await isInWatchlist(movie.tmdbId, 'movie').catch(() => false);
 			}
+			// Load quality presets
+			try {
+				const allPresets = await getQualityPresets();
+				qualityPresets = allPresets.filter(p => p.enabled && p.mediaType === 'movie');
+			} catch { /* Presets are optional */ }
+
 			// Load quality/monitoring info
 			try {
 				qualityInfo = await getMovieQuality(id);
 				if (qualityInfo?.override) {
 					monitored = qualityInfo.override.monitored;
+					selectedPresetId = qualityInfo.override.presetId ?? null;
 				}
 			} catch { /* Quality info is optional */ }
+
+			// Set default preset if none selected
+			if (!selectedPresetId && qualityPresets.length > 0) {
+				const defaultPreset = qualityPresets.find(p => p.isDefault);
+				selectedPresetId = defaultPreset?.id ?? qualityPresets[0].id;
+			}
 			// Load suggestions based on genres, excluding library items
 			if (movie) {
 				try {
@@ -165,7 +182,7 @@
 		monitoringLoading = true;
 		try {
 			const newMonitored = !monitored;
-			await setMovieQuality(movie.id, { monitored: newMonitored });
+			await setMovieQuality(movie.id, { monitored: newMonitored, presetId: selectedPresetId });
 			monitored = newMonitored;
 			toast.success(newMonitored ? 'Monitoring enabled' : 'Monitoring disabled');
 		} catch (e) {
@@ -173,6 +190,18 @@
 			toast.error('Failed to update monitoring');
 		} finally {
 			monitoringLoading = false;
+		}
+	}
+
+	async function handlePresetChange(presetId: number) {
+		if (!movie) return;
+		selectedPresetId = presetId;
+		try {
+			await setMovieQuality(movie.id, { monitored, presetId });
+			toast.success('Quality preset updated');
+		} catch (e) {
+			console.error('Failed to update quality preset:', e);
+			toast.error('Failed to update quality preset');
 		}
 	}
 
@@ -256,6 +285,17 @@
 		trailersJson={movie.trailers}
 	>
 		{#snippet actionButtons()}
+			<!-- Add to Collection -->
+			{#if movie?.tmdbId}
+				<AddToCollectionButton
+					tmdbId={movie.tmdbId}
+					mediaType="movie"
+					title={movie.title}
+					year={movie.year}
+					posterPath={movie.posterPath}
+				/>
+			{/if}
+
 			<!-- Watchlist -->
 			<IconButton
 				onclick={handleToggleWatchlist}
@@ -310,7 +350,7 @@
 			<!-- Manage dropdown -->
 			<div class="relative">
 				<IconButton
-					onclick={() => showManageMenu = !showManageMenu}
+					onclick={(e: MouseEvent) => { e.stopPropagation(); showManageMenu = !showManageMenu; }}
 					title="More options"
 				>
 					<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -318,13 +358,18 @@
 					</svg>
 				</IconButton>
 				{#if showManageMenu}
-					<button
-						type="button"
-						class="fixed inset-0 z-[55] cursor-default"
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<!-- svelte-ignore a11y_click_events_have_key_events -->
+					<div
+						class="fixed inset-0 z-[55]"
 						onclick={() => showManageMenu = false}
-						aria-label="Close menu"
-					></button>
-					<div class="absolute left-1/2 -translate-x-1/2 mt-2 w-48 py-1 z-[60] bg-[#141416] border border-white/10 rounded-2xl shadow-xl overflow-hidden">
+					></div>
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<!-- svelte-ignore a11y_click_events_have_key_events -->
+					<div
+						class="absolute left-1/2 -translate-x-1/2 mt-2 w-48 py-1 z-[60] bg-bg-dropdown border border-white/10 rounded-2xl shadow-xl overflow-hidden"
+						onclick={(e: MouseEvent) => e.stopPropagation()}
+					>
 						<button
 							onclick={() => { handleRefresh(); showManageMenu = false; }}
 							class="w-full text-left px-4 py-2.5 text-sm text-text-secondary hover:bg-white/10 hover:text-text-primary transition-colors"
@@ -341,8 +386,8 @@
 		{/snippet}
 
 		{#snippet centerExtra()}
-			{#if mediaInfo}
-				<div class="flex items-center gap-3">
+			<div class="flex items-center gap-3">
+				{#if mediaInfo}
 					{#if mediaInfo.videoStreams?.length}
 						<div class="w-[120px]">
 							<Dropdown
@@ -380,8 +425,22 @@
 							inline={true}
 						/>
 					</div>
-				</div>
-			{/if}
+					{#if qualityPresets.length > 0}
+						<span class="text-text-muted">|</span>
+					{/if}
+				{/if}
+				{#if qualityPresets.length > 0}
+					<div class="w-[160px]">
+						<Dropdown
+							icon="quality"
+							options={qualityPresets.map(p => ({ value: p.id, label: p.name + (p.isDefault ? ' ★' : '') }))}
+							value={selectedPresetId ?? 0}
+							onchange={(v) => handlePresetChange(v as number)}
+							inline={true}
+						/>
+					</div>
+				{/if}
+			</div>
 		{/snippet}
 
 		{#snippet extraInfoRows()}
@@ -415,7 +474,7 @@
 							<button
 								onclick={handleToggleMonitoring}
 								disabled={monitoringLoading}
-								class="absolute top-2 right-2 z-10 px-2 py-1 rounded-lg text-xs font-medium transition-all flex items-center gap-1 {monitored ? 'bg-black/70 text-white' : 'bg-black/50 text-white/50'} hover:bg-black/80"
+								class="absolute top-2 right-2 z-[5] px-2 py-1 rounded-lg text-xs font-medium transition-all flex items-center gap-1 {monitored ? 'bg-black/70 text-white' : 'bg-black/50 text-white/50'} hover:bg-black/80"
 								title={monitored ? 'Monitored (click to disable)' : 'Not monitored (click to enable)'}
 							>
 								{#if monitoringLoading}

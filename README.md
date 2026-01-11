@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>A unified self-hosted media server for movies and TV shows.</strong>
+  <strong>A unified self-hosted media server for movies, TV shows, anime, music, and books.</strong>
 </p>
 
 <p align="center">
@@ -19,40 +19,58 @@
 
 ### Library Management
 - **Unified Library** — All your media in one place with smart organization
+- **Multi-Media Support** — Movies, TV shows, anime, music, and books
 - **Automatic Metadata** — Rich metadata from TMDB with posters, backdrops, and cast info
-- **Watch Status Tracking** — Track what you've watched across movies and TV shows
+- **Watch Status Tracking** — Track what you've watched across all media types
 - **Quality Detection** — Automatic parsing of resolution, source, HDR, audio format, and more
+- **Collections** — Organize media into collections (auto-generated from TMDB or custom)
 
-### Explore & Requests
-- **Explore** — Browse trending, popular, and top-rated content from TMDB with detailed views
-- **Request System** — Users can request content with admin approval workflow and season selection for TV
-- **Watchlist** — Save content to watch later, even before it's in your library
+### Explore & Discovery
+- **Explore** — Browse trending, popular, and top-rated content from TMDB
+- **Calendar** — View upcoming releases and track air dates
+- **Person Details** — Browse filmography and discover related content
+- **Request System** — Users can request content with admin approval workflow
+- **Watchlist** — Save content to watch later
 
 ### Quality Management
-- **Quality Presets** — Built-in presets (Best Quality, High Quality, Balanced, Storage Saver, Anime)
+- **Quality Presets** — Built-in presets for movies, TV, and anime with customizable options
 - **Custom Formats** — Create custom scoring rules based on resolution, source, codec, audio, HDR, release groups
 - **Auto-Upgrade** — Automatically upgrade to better quality when available
 - **Cutoff System** — Stop upgrading after reaching target quality
 - **Per-Item Monitoring** — Toggle monitoring for individual movies or TV seasons
+- **Delay Profiles** — Wait for preferred quality before grabbing
 
 ### Automation
-- **Prowlarr Integration** — Sync indexers directly from Prowlarr with auto-sync support
+- **Prowlarr Integration** — Sync indexers directly from Prowlarr with auto-sync
 - **Indexer Support** — Connect to Newznab and Torznab indexers
 - **Download Clients** — Integration with qBittorrent, Transmission, SABnzbd, NZBGet
 - **Automated Search** — Scheduled searches for missing and wanted content
 - **RSS Feeds** — Monitor indexer RSS feeds for new releases
 - **Import Queue** — Automatic import of completed downloads with rename support
 - **Blocklist** — Automatically block failed releases and groups
+- **Naming Templates** — Customizable folder and file naming
 
 ### Playback
 - **Built-in Player** — Stream directly in browser with full playback controls
 - **Track Selection** — Choose video, audio, and subtitle tracks
+- **Skip Segments** — Configure intro/credits skip for TV shows
+- **Chapter Support** — Navigate by chapters
 - **Progress Sync** — Resume where you left off across devices
 
 ### Multi-User
 - **User Accounts** — Create accounts for family and friends
 - **Role-Based Access** — Admin and user roles with different permissions
+- **Content Ratings** — Restrict content by rating (G, PG, PG-13, R, NC-17)
+- **PIN Protection** — Optional PIN for user profiles
 - **Per-User Tracking** — Individual watch history and watchlists
+
+### System Administration
+- **Health Monitoring** — Real-time health checks for database, indexers, download clients, disk space
+- **Storage Analytics** — View storage usage by library, quality, year with duplicate detection
+- **Logs Viewer** — Browse and download application logs
+- **Scheduled Tasks** — Configure and monitor background tasks
+- **Backup & Restore** — Export and import configuration with merge/replace modes
+- **Notifications** — In-app notification system for events
 
 ---
 
@@ -105,16 +123,17 @@ docker run -d \
 ### Initial Setup
 
 1. Navigate to `http://localhost:8080`
-2. Create your admin account
-3. Add your TMDB API key in Settings
+2. Complete the setup wizard to create your admin account
+3. Add libraries, download clients, and configure Prowlarr
+4. Start scanning your media
 
 ### Libraries
 
 Add your media libraries through Settings:
 
-1. Go to **Settings** → **Libraries**
+1. Go to **Settings** → **General**
 2. Click **Add Library**
-3. Select type (Movies or TV)
+3. Select type (Movies, TV, Anime, Music, Books)
 4. Enter the path to your media folder
 5. Save and scan
 
@@ -122,14 +141,25 @@ Add your media libraries through Settings:
 
 ## Automation
 
-### Indexers
+### Prowlarr Integration
 
-Outpost supports Newznab and Torznab indexers:
+The recommended way to manage indexers:
 
-1. Go to **Settings** → **Indexers**
+1. Go to **Settings** → **Sources** → **Prowlarr Sync**
+2. Enter your Prowlarr URL and API key
+3. Test the connection
+4. Enable auto-sync and save
+5. Click **Sync Now** to import indexers
+
+### Manual Indexers
+
+Add indexers manually:
+
+1. Go to **Settings** → **Sources** → **Indexers**
 2. Click **Add Indexer**
-3. Enter the indexer URL and API key
-4. Test the connection and save
+3. Select type (Torznab or Newznab)
+4. Enter the indexer URL and API key
+5. Test and save
 
 ### Download Clients
 
@@ -142,7 +172,7 @@ Supported download clients:
 | SABnzbd | Usenet |
 | NZBGet | Usenet |
 
-Configure in **Settings** → **Download Clients**.
+Configure in **Settings** → **Sources** → **Download Clients**.
 
 ### Quality Presets
 
@@ -152,10 +182,41 @@ Built-in presets organized by media type:
 
 **TV Shows** — 4K HDR, 4K, 1080p, 1080p HDTV, 720p, Any
 
-**Anime** — 4K, 1080p, 720p, 480p with editable preferences for:
-- Dual Audio toggle
-- Dubbed toggle
-- Language preference (Any, English, Japanese)
+**Anime** — 4K, 1080p, 720p, 480p with preferences for dual audio, dubbed, and language
+
+Customize or create new presets in **Settings** → **Quality**.
+
+---
+
+## System Management
+
+### Backup & Restore
+
+Export your configuration for backup or migration:
+
+1. Go to **Settings** → **General** → **Backup & Restore**
+2. Click **Download Backup** to export settings
+3. To restore, upload a backup file and choose merge or replace mode
+
+Backups include: settings, libraries, download clients, indexers, quality presets, collections, naming templates, and more.
+
+### Health Monitoring
+
+Monitor system health in **Settings** → **Health**:
+
+- Database connectivity
+- Download client status
+- Indexer availability
+- Disk space usage
+- TMDB API connectivity
+
+### Storage Analytics
+
+View detailed storage information in **Settings** → **Storage**:
+
+- Usage by library, quality, and year
+- Largest items
+- Duplicate detection
 
 ---
 
@@ -163,11 +224,11 @@ Built-in presets organized by media type:
 
 | Component | Technology |
 |-----------|------------|
-| Frontend | SvelteKit, TailwindCSS |
+| Frontend | SvelteKit 5, TailwindCSS |
 | Backend | Go |
 | Database | SQLite |
 | Metadata | TMDB API |
-| Transcoding | FFmpeg |
+| Streaming | FFmpeg |
 
 ---
 

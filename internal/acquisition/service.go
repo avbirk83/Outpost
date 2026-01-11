@@ -20,6 +20,13 @@ import (
 	"github.com/outpost/outpost/internal/request"
 )
 
+// NotificationHandler is called when notifications should be sent
+type NotificationHandler interface {
+	NotifyDownloadComplete(title string, mediaType string, mediaID int64, posterPath *string) error
+	NotifyDownloadFailed(title string, errorMsg string, posterPath *string) error
+	NotifyNewContent(userID int64, title, mediaType string, mediaID int64, posterPath *string) error
+}
+
 // Service orchestrates the download lifecycle using TrackedDownload
 type Service struct {
 	db         *database.Database
@@ -35,6 +42,8 @@ type Service struct {
 	autoBlockAfter    int
 	deleteOnFail      bool
 	searchAlternative bool
+
+	notifications NotificationHandler
 
 	stopCh  chan struct{}
 	wg      sync.WaitGroup
@@ -101,6 +110,11 @@ func NewService(db *database.Database, rawDB *sql.DB, clients *downloadclient.Ma
 	return svc
 }
 
+// SetNotificationHandler sets the notification handler for download events
+func (s *Service) SetNotificationHandler(handler NotificationHandler) {
+	s.notifications = handler
+}
+
 // Start begins the service
 func (s *Service) Start() {
 	s.mu.Lock()
@@ -163,6 +177,23 @@ func (s *Service) handleReadyForImport(td *download.TrackedDownload) {
 	}
 
 	log.Printf("Successfully imported: %s -> %s", td.Title, importPath)
+
+	// Send notifications
+	if s.notifications != nil {
+		// Notify admins of download completion
+		posterPath := strPtrOrNil(td.PosterPath)
+		go s.notifications.NotifyDownloadComplete(td.Title, td.MediaType, safeMediaID(td.MediaID), posterPath)
+
+		// If this was from a request, notify the requesting user that their content is now available
+		if td.RequestID != nil {
+			// Get the request to find the user
+			var userID int64
+			err := s.rawDB.QueryRow("SELECT user_id FROM requests WHERE id = ?", *td.RequestID).Scan(&userID)
+			if err == nil && userID > 0 && td.MediaID != nil {
+				go s.notifications.NotifyNewContent(userID, td.Title, td.MediaType, *td.MediaID, posterPath)
+			}
+		}
+	}
 }
 
 // runImport performs the actual import
@@ -325,6 +356,12 @@ func (s *Service) handleImportFailure(td *download.TrackedDownload, err error) {
 	// Search for alternative
 	if s.searchAlternative && td.MediaID != nil {
 		go s.searchAlternative_(*td.MediaID, td.MediaType)
+	}
+
+	// Notify admins of failure
+	if s.notifications != nil {
+		posterPath := strPtrOrNil(td.PosterPath)
+		go s.notifications.NotifyDownloadFailed(td.Title, err.Error(), posterPath)
 	}
 }
 
@@ -701,4 +738,20 @@ func generateSubtitlePath(videoPath, subPath string) string {
 	}
 
 	return videoBase + lang + subExt
+}
+
+// safeMediaID returns the mediaID value or 0 if nil
+func safeMediaID(ptr *int64) int64 {
+	if ptr == nil {
+		return 0
+	}
+	return *ptr
+}
+
+// strPtrOrNil returns a pointer to the string or nil if empty
+func strPtrOrNil(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }

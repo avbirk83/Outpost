@@ -3,11 +3,14 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import {
-		getShow, refreshShowMetadata, getImageUrl,
+		getShow, refreshShowMetadata, getImageUrl, getTmdbImageUrl,
 		getQualityProfiles, getWatchStatus, markAsWatched, markAsUnwatched,
 		getShowSuggestions, addToWatchlist, removeFromWatchlist, isInWatchlist,
-		deleteEpisode, getShowQuality, setShowQuality,
-		type ShowDetail, type QualityProfile, type TMDBShowResult, type QualityInfo
+		deleteEpisode, getShowQuality, setShowQuality, getQualityPresets,
+		getSkipSegments, saveSkipSegment, deleteSkipSegment,
+		getMissingEpisodes, requestMissingEpisodes,
+		type ShowDetail, type QualityProfile, type TMDBShowResult, type QualityInfo, type QualityPreset, type SkipSegments,
+		type MissingEpisodesResult, type MissingEpisode
 	} from '$lib/api';
 	import { auth } from '$lib/stores/auth';
 	import { toast } from '$lib/stores/toast';
@@ -15,6 +18,8 @@
 	import TrailerModal from '$lib/components/TrailerModal.svelte';
 	import IconButton from '$lib/components/IconButton.svelte';
 	import MediaDetail from '$lib/components/MediaDetail.svelte';
+	import Dropdown from '$lib/components/Dropdown.svelte';
+	import AddToCollectionButton from '$lib/components/AddToCollectionButton.svelte';
 
 	let show: ShowDetail | null = $state(null);
 	let loading = $state(true);
@@ -35,6 +40,58 @@
 	let monitoringLoading = $state(false);
 	let monitoredSeasons = $state<Set<number>>(new Set());
 	let togglingSeasonMonitor: number | null = $state(null);
+	let qualityPresets: QualityPreset[] = $state([]);
+	let selectedPresetId: number | null = $state(null);
+	let preferredAudioLang = $state<string>('');
+	let preferredSubtitleLang = $state<string>('');
+
+	// Skip segments
+	let skipSegments = $state<SkipSegments>({});
+	let introStartInput = $state('');
+	let introEndInput = $state('');
+	let creditsStartInput = $state('');
+	let creditsEndInput = $state('');
+	let savingIntro = $state(false);
+	let savingCredits = $state(false);
+	let deletingIntro = $state(false);
+	let deletingCredits = $state(false);
+
+	// Missing episodes
+	let missingData = $state<MissingEpisodesResult | null>(null);
+	let loadingMissing = $state(false);
+	let requestingMissing = $state(false);
+	let requestingSeasonMissing = $state<number | null>(null);
+	let showMissingSection = $state(false);
+
+	// Common language options for audio/subtitle preferences
+	const languageOptions = [
+		{ value: '', label: 'Default' },
+		{ value: 'en', label: 'English' },
+		{ value: 'ja', label: 'Japanese' },
+		{ value: 'es', label: 'Spanish' },
+		{ value: 'fr', label: 'French' },
+		{ value: 'de', label: 'German' },
+		{ value: 'it', label: 'Italian' },
+		{ value: 'pt', label: 'Portuguese' },
+		{ value: 'ko', label: 'Korean' },
+		{ value: 'zh', label: 'Chinese' },
+		{ value: 'ru', label: 'Russian' },
+	];
+
+	const subtitleOptions = [
+		{ value: '', label: 'Default' },
+		{ value: 'off', label: 'Off' },
+		{ value: 'en', label: 'English' },
+		{ value: 'ja', label: 'Japanese' },
+		{ value: 'es', label: 'Spanish' },
+		{ value: 'fr', label: 'French' },
+		{ value: 'de', label: 'German' },
+		{ value: 'it', label: 'Italian' },
+		{ value: 'pt', label: 'Portuguese' },
+		{ value: 'ko', label: 'Korean' },
+		{ value: 'zh', label: 'Chinese' },
+		{ value: 'ru', label: 'Russian' },
+	];
 
 	auth.subscribe((value) => {
 		user = value;
@@ -51,11 +108,20 @@
 			if (show?.tmdbId) {
 				inWatchlist = await isInWatchlist(show.tmdbId, 'tv').catch(() => false);
 			}
+			// Load quality presets
+			try {
+				const allPresets = await getQualityPresets();
+				qualityPresets = allPresets.filter(p => p.enabled && p.mediaType === 'tv');
+			} catch { /* Presets are optional */ }
+
 			// Load quality/monitoring info
 			try {
 				qualityInfo = await getShowQuality(id);
 				if (qualityInfo?.override) {
 					monitored = qualityInfo.override.monitored;
+					selectedPresetId = qualityInfo.override.presetId ?? null;
+					preferredAudioLang = qualityInfo.override.preferredAudioLang ?? '';
+					preferredSubtitleLang = qualityInfo.override.preferredSubtitleLang ?? '';
 					// Parse monitored seasons
 					if (qualityInfo.override.monitoredSeasons) {
 						try {
@@ -69,12 +135,37 @@
 					monitoredSeasons = new Set(show.seasons.map(s => s.seasonNumber));
 				}
 			} catch { /* Quality info is optional */ }
+
+			// Set default preset if none selected
+			if (!selectedPresetId && qualityPresets.length > 0) {
+				const defaultPreset = qualityPresets.find(p => p.isDefault);
+				selectedPresetId = defaultPreset?.id ?? qualityPresets[0].id;
+			}
+
+			// Load skip segments
+			try {
+				skipSegments = await getSkipSegments(id);
+				if (skipSegments.intro) {
+					introStartInput = formatTimeInput(skipSegments.intro.startTime);
+					introEndInput = formatTimeInput(skipSegments.intro.endTime);
+				}
+				if (skipSegments.credits) {
+					creditsStartInput = formatTimeInput(skipSegments.credits.startTime);
+					creditsEndInput = formatTimeInput(skipSegments.credits.endTime);
+				}
+			} catch { /* Skip segments are optional */ }
+
 			// Load suggestions
 			if (show) {
 				try {
 					const suggestResult = await getShowSuggestions(show.id);
 					recommendations = suggestResult.results.slice(0, 20);
 				} catch { /* Suggestions are optional */ }
+			}
+
+			// Load missing episodes (for shows with TMDB ID)
+			if (show?.tmdbId) {
+				loadMissingEpisodes();
 			}
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load show';
@@ -189,7 +280,8 @@
 			const newMonitored = !monitored;
 			await setShowQuality(show.id, {
 				monitored: newMonitored,
-				monitoredSeasons: JSON.stringify(Array.from(monitoredSeasons))
+				monitoredSeasons: JSON.stringify(Array.from(monitoredSeasons)),
+				presetId: selectedPresetId
 			});
 			monitored = newMonitored;
 			toast.success(newMonitored ? 'Monitoring enabled' : 'Monitoring disabled');
@@ -198,6 +290,60 @@
 			toast.error('Failed to update monitoring');
 		} finally {
 			monitoringLoading = false;
+		}
+	}
+
+	async function handlePresetChange(presetId: number) {
+		if (!show) return;
+		selectedPresetId = presetId;
+		try {
+			await setShowQuality(show.id, {
+				monitored,
+				monitoredSeasons: JSON.stringify(Array.from(monitoredSeasons)),
+				presetId,
+				preferredAudioLang,
+				preferredSubtitleLang
+			});
+			toast.success('Quality preset updated');
+		} catch (e) {
+			console.error('Failed to update quality preset:', e);
+			toast.error('Failed to update quality preset');
+		}
+	}
+
+	async function handleAudioLangChange(lang: string) {
+		if (!show) return;
+		preferredAudioLang = lang;
+		try {
+			await setShowQuality(show.id, {
+				monitored,
+				monitoredSeasons: JSON.stringify(Array.from(monitoredSeasons)),
+				presetId: selectedPresetId,
+				preferredAudioLang: lang,
+				preferredSubtitleLang
+			});
+			toast.success('Audio preference updated');
+		} catch (e) {
+			console.error('Failed to update audio preference:', e);
+			toast.error('Failed to update audio preference');
+		}
+	}
+
+	async function handleSubtitleLangChange(lang: string) {
+		if (!show) return;
+		preferredSubtitleLang = lang;
+		try {
+			await setShowQuality(show.id, {
+				monitored,
+				monitoredSeasons: JSON.stringify(Array.from(monitoredSeasons)),
+				presetId: selectedPresetId,
+				preferredAudioLang,
+				preferredSubtitleLang: lang
+			});
+			toast.success('Subtitle preference updated');
+		} catch (e) {
+			console.error('Failed to update subtitle preference:', e);
+			toast.error('Failed to update subtitle preference');
 		}
 	}
 
@@ -213,7 +359,8 @@
 			}
 			await setShowQuality(show.id, {
 				monitored: monitored,
-				monitoredSeasons: JSON.stringify(Array.from(newMonitoredSeasons))
+				monitoredSeasons: JSON.stringify(Array.from(newMonitoredSeasons)),
+				presetId: selectedPresetId
 			});
 			monitoredSeasons = newMonitoredSeasons;
 		} catch (e) {
@@ -298,6 +445,163 @@
 		}
 	}
 
+	// Skip segment helper functions
+	function formatTimeInput(seconds: number): string {
+		const mins = Math.floor(seconds / 60);
+		const secs = Math.floor(seconds % 60);
+		return `${mins}:${secs.toString().padStart(2, '0')}`;
+	}
+
+	function parseTimeInput(input: string): number | null {
+		const trimmed = input.trim();
+		if (!trimmed) return null;
+
+		// Try MM:SS format
+		const colonMatch = trimmed.match(/^(\d+):(\d{1,2})$/);
+		if (colonMatch) {
+			const mins = parseInt(colonMatch[1]);
+			const secs = parseInt(colonMatch[2]);
+			if (secs < 60) {
+				return mins * 60 + secs;
+			}
+		}
+
+		// Try plain seconds
+		const num = parseFloat(trimmed);
+		if (!isNaN(num) && num >= 0) {
+			return num;
+		}
+
+		return null;
+	}
+
+	async function handleSaveIntro() {
+		if (!show) return;
+		const start = parseTimeInput(introStartInput);
+		const end = parseTimeInput(introEndInput);
+
+		if (start === null || end === null) {
+			toast.error('Invalid time format. Use MM:SS or seconds.');
+			return;
+		}
+		if (start >= end) {
+			toast.error('Start time must be before end time.');
+			return;
+		}
+
+		savingIntro = true;
+		try {
+			await saveSkipSegment(show.id, 'intro', start, end);
+			skipSegments = { ...skipSegments, intro: { startTime: start, endTime: end } };
+			toast.success('Intro skip saved');
+		} catch (e) {
+			toast.error('Failed to save intro skip');
+		} finally {
+			savingIntro = false;
+		}
+	}
+
+	async function handleDeleteIntro() {
+		if (!show) return;
+		deletingIntro = true;
+		try {
+			await deleteSkipSegment(show.id, 'intro');
+			skipSegments = { ...skipSegments, intro: undefined };
+			introStartInput = '';
+			introEndInput = '';
+			toast.success('Intro skip removed');
+		} catch (e) {
+			toast.error('Failed to delete intro skip');
+		} finally {
+			deletingIntro = false;
+		}
+	}
+
+	async function handleSaveCredits() {
+		if (!show) return;
+		const start = parseTimeInput(creditsStartInput);
+		const end = parseTimeInput(creditsEndInput);
+
+		if (start === null || end === null) {
+			toast.error('Invalid time format. Use MM:SS or seconds.');
+			return;
+		}
+		if (start >= end) {
+			toast.error('Start time must be before end time.');
+			return;
+		}
+
+		savingCredits = true;
+		try {
+			await saveSkipSegment(show.id, 'credits', start, end);
+			skipSegments = { ...skipSegments, credits: { startTime: start, endTime: end } };
+			toast.success('Credits skip saved');
+		} catch (e) {
+			toast.error('Failed to save credits skip');
+		} finally {
+			savingCredits = false;
+		}
+	}
+
+	async function handleDeleteCredits() {
+		if (!show) return;
+		deletingCredits = true;
+		try {
+			await deleteSkipSegment(show.id, 'credits');
+			skipSegments = { ...skipSegments, credits: undefined };
+			creditsStartInput = '';
+			creditsEndInput = '';
+			toast.success('Credits skip removed');
+		} catch (e) {
+			toast.error('Failed to delete credits skip');
+		} finally {
+			deletingCredits = false;
+		}
+	}
+
+	async function loadMissingEpisodes() {
+		if (!show?.tmdbId) return;
+		loadingMissing = true;
+		try {
+			missingData = await getMissingEpisodes(show.id);
+			showMissingSection = missingData.missing.length > 0;
+		} catch (e) {
+			console.error('Failed to load missing episodes:', e);
+		} finally {
+			loadingMissing = false;
+		}
+	}
+
+	async function handleRequestAllMissing() {
+		if (!show) return;
+		requestingMissing = true;
+		try {
+			const result = await requestMissingEpisodes(show.id);
+			toast.success(`Added ${result.addedCount} episodes to wanted list`);
+			// Refresh missing data
+			await loadMissingEpisodes();
+		} catch (e) {
+			toast.error('Failed to request missing episodes');
+		} finally {
+			requestingMissing = false;
+		}
+	}
+
+	async function handleRequestSeasonMissing(seasonNumber: number) {
+		if (!show) return;
+		requestingSeasonMissing = seasonNumber;
+		try {
+			const result = await requestMissingEpisodes(show.id, seasonNumber);
+			toast.success(`Added ${result.addedCount} episodes to wanted list`);
+			// Refresh missing data
+			await loadMissingEpisodes();
+		} catch (e) {
+			toast.error('Failed to request missing episodes');
+		} finally {
+			requestingSeasonMissing = null;
+		}
+	}
+
 	// Get tags from genres
 	const tags = $derived(parseGenres(show?.genres));
 
@@ -373,6 +677,17 @@
 		trailersJson={show.trailers}
 	>
 		{#snippet actionButtons()}
+			<!-- Add to Collection -->
+			{#if show?.tmdbId}
+				<AddToCollectionButton
+					tmdbId={show.tmdbId}
+					mediaType="show"
+					title={show.title}
+					year={show.year}
+					posterPath={show.posterPath}
+				/>
+			{/if}
+
 			<!-- Watchlist -->
 			<IconButton
 				onclick={handleToggleWatchlist}
@@ -415,7 +730,7 @@
 			<!-- Manage dropdown -->
 			<div class="relative">
 				<IconButton
-					onclick={() => showManageMenu = !showManageMenu}
+					onclick={(e: MouseEvent) => { e.stopPropagation(); showManageMenu = !showManageMenu; }}
 					title="More options"
 				>
 					<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -423,13 +738,18 @@
 					</svg>
 				</IconButton>
 				{#if showManageMenu}
-					<button
-						type="button"
-						class="fixed inset-0 z-[55] cursor-default"
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<!-- svelte-ignore a11y_click_events_have_key_events -->
+					<div
+						class="fixed inset-0 z-[55]"
 						onclick={() => showManageMenu = false}
-						aria-label="Close menu"
-					></button>
-					<div class="absolute left-1/2 -translate-x-1/2 mt-2 w-48 py-1 z-[60] bg-[#141416] border border-white/10 rounded-2xl shadow-xl overflow-hidden">
+					></div>
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<!-- svelte-ignore a11y_click_events_have_key_events -->
+					<div
+						class="absolute left-1/2 -translate-x-1/2 mt-2 w-48 py-1 z-[60] bg-bg-dropdown border border-white/10 rounded-2xl shadow-xl overflow-hidden"
+						onclick={(e: MouseEvent) => e.stopPropagation()}
+					>
 						<button
 							onclick={() => { handleRefresh(); showManageMenu = false; }}
 							class="w-full text-left px-4 py-2.5 text-sm text-text-secondary hover:bg-white/10 hover:text-text-primary transition-colors"
@@ -477,6 +797,39 @@
 			{/if}
 		{/snippet}
 
+		{#snippet centerExtra()}
+			<div class="flex items-center gap-2">
+				<div class="w-[110px]">
+					<Dropdown
+						icon="audio"
+						options={languageOptions}
+						value={preferredAudioLang}
+						onchange={(v) => handleAudioLangChange(v as string)}
+						placeholder="Audio"
+					/>
+				</div>
+				<div class="w-[110px]">
+					<Dropdown
+						icon="subtitles"
+						options={subtitleOptions}
+						value={preferredSubtitleLang}
+						onchange={(v) => handleSubtitleLangChange(v as string)}
+						placeholder="Subtitles"
+					/>
+				</div>
+				{#if qualityPresets.length > 0}
+					<div class="w-[140px]">
+						<Dropdown
+							icon="quality"
+							options={qualityPresets.map(p => ({ value: p.id, label: p.name + (p.isDefault ? ' ★' : '') }))}
+							value={selectedPresetId ?? 0}
+							onchange={(v) => handlePresetChange(v as number)}
+						/>
+					</div>
+				{/if}
+			</div>
+		{/snippet}
+
 		{#snippet extraSections()}
 			<!-- Episodes Section -->
 			<section class="px-[60px]">
@@ -490,7 +843,7 @@
 								<button
 									onclick={() => selectedSeasonIndex = i}
 									class="px-4 py-2 rounded-l-full text-sm font-medium transition-all {selectedSeasonIndex === i
-										? 'bg-[#f5f5dc] text-black'
+										? 'bg-cream text-black'
 										: 'bg-glass border border-border-subtle border-r-0 text-text-secondary hover:bg-glass-hover hover:text-text-primary'}"
 								>
 									Season {season.seasonNumber}
@@ -499,7 +852,7 @@
 									onclick={() => handleToggleSeasonMonitoring(season.seasonNumber)}
 									disabled={togglingSeasonMonitor === season.seasonNumber}
 									class="px-2 py-2 rounded-r-full text-sm transition-all {selectedSeasonIndex === i
-										? 'bg-[#f5f5dc] text-black'
+										? 'bg-cream text-black'
 										: 'bg-glass border border-border-subtle border-l-0 text-text-secondary hover:bg-glass-hover'} {monitoredSeasons.has(season.seasonNumber) ? '' : 'opacity-50'}"
 									title={monitoredSeasons.has(season.seasonNumber) ? 'Monitored (click to disable)' : 'Not monitored (click to enable)'}
 								>
@@ -657,6 +1010,234 @@
 					</div>
 				{/if}
 			</section>
+
+			<!-- Missing Episodes Section -->
+			{#if showMissingSection && missingData && missingData.missing.length > 0}
+				<section class="px-[60px] mt-8">
+					<div class="flex items-center justify-between mb-4">
+						<div class="flex items-center gap-3">
+							<h2 class="text-lg font-semibold text-text-primary">Missing Episodes</h2>
+							<span class="px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/20 text-amber-400">
+								{missingData.missing.length} missing
+							</span>
+						</div>
+						{#if user?.role === 'admin'}
+							<button
+								onclick={handleRequestAllMissing}
+								disabled={requestingMissing}
+								class="px-4 py-2 bg-cream text-black text-sm font-medium rounded-lg hover:bg-cream/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+							>
+								{#if requestingMissing}
+									<div class="spinner-sm"></div>
+									Requesting...
+								{:else}
+									<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+									</svg>
+									Request All Missing
+								{/if}
+							</button>
+						{/if}
+					</div>
+
+					<!-- Season summary cards -->
+					{#if missingData.missingBySeason.length > 0}
+						<div class="flex gap-3 mb-4 overflow-x-auto pb-2 scrollbar-thin">
+							{#each missingData.missingBySeason.filter(s => s.missingCount > 0) as seasonSummary}
+								<div class="flex-shrink-0 bg-glass border border-border-subtle rounded-xl p-3 min-w-[160px]">
+									<div class="flex items-center justify-between gap-3">
+										<div>
+											<p class="text-xs text-text-muted">Season {seasonSummary.seasonNumber}</p>
+											<p class="text-sm text-text-primary font-medium">
+												{seasonSummary.missingCount} / {seasonSummary.totalEpisodes} missing
+											</p>
+										</div>
+										{#if user?.role === 'admin'}
+											<button
+												onclick={() => handleRequestSeasonMissing(seasonSummary.seasonNumber)}
+												disabled={requestingSeasonMissing === seasonSummary.seasonNumber}
+												class="p-2 rounded-lg bg-cream/10 text-cream hover:bg-cream/20 disabled:opacity-50 transition-colors"
+												title="Request season {seasonSummary.seasonNumber}"
+											>
+												{#if requestingSeasonMissing === seasonSummary.seasonNumber}
+													<div class="spinner-sm"></div>
+												{:else}
+													<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+														<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+													</svg>
+												{/if}
+											</button>
+										{/if}
+									</div>
+								</div>
+							{/each}
+						</div>
+					{/if}
+
+					<!-- Missing episodes list -->
+					<div class="flex gap-3 overflow-x-auto pb-2 scrollbar-thin">
+						{#each missingData.missing.slice(0, 20) as episode}
+							<div class="flex-shrink-0 w-64 rounded-xl overflow-hidden bg-bg-elevated border border-border-subtle">
+								<!-- Image container -->
+								<div class="relative aspect-video bg-gradient-to-br from-[#1a1a2e] to-[#2d2d44]">
+									{#if episode.stillPath}
+										<img
+											src={getTmdbImageUrl(episode.stillPath, 'w300')}
+											alt={episode.title}
+											class="w-full h-full object-cover opacity-60"
+										/>
+									{:else if show?.backdropPath}
+										<img
+											src={getImageUrl(show.backdropPath)}
+											alt={episode.title}
+											class="w-full h-full object-cover opacity-30"
+										/>
+									{/if}
+									<!-- Missing badge -->
+									<div class="absolute top-2 right-2 px-2 py-1 rounded text-[10px] font-bold uppercase bg-amber-500 text-black">
+										Missing
+									</div>
+								</div>
+
+								<!-- Info section -->
+								<div class="p-3">
+									<div class="flex items-center gap-2 mb-1">
+										<span class="text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded bg-white/10 text-text-secondary">
+											S{episode.seasonNumber} E{episode.episodeNumber}
+										</span>
+										{#if episode.airDate}
+											<span class="text-[10px] text-text-muted">
+												{new Date(episode.airDate).toLocaleDateString()}
+											</span>
+										{/if}
+									</div>
+									<h3 class="text-sm font-semibold text-text-primary truncate" title={episode.title}>
+										{episode.title || `Episode ${episode.episodeNumber}`}
+									</h3>
+									{#if episode.overview}
+										<p class="text-xs text-text-muted mt-1 line-clamp-2">{episode.overview}</p>
+									{/if}
+								</div>
+							</div>
+						{/each}
+						{#if missingData.missing.length > 20}
+							<div class="flex-shrink-0 w-64 rounded-xl bg-bg-elevated border border-border-subtle flex items-center justify-center">
+								<p class="text-sm text-text-muted">+{missingData.missing.length - 20} more</p>
+							</div>
+						{/if}
+					</div>
+				</section>
+			{/if}
+
+			<!-- Skip Segments Section -->
+			{#if user?.role === 'admin'}
+				<section class="px-[60px] mt-8">
+					<h2 class="text-lg font-semibold text-text-primary mb-4">Playback Settings</h2>
+					<p class="text-sm text-text-muted mb-4">These skip times apply to all episodes of this show.</p>
+
+					<div class="space-y-4 max-w-xl">
+						<!-- Intro Skip -->
+						<div class="bg-glass border border-border-subtle rounded-xl p-4">
+							<h3 class="text-sm font-semibold text-text-primary mb-3">Skip Intro</h3>
+							<div class="flex items-center gap-3">
+								<div class="flex-1">
+									<label class="text-xs text-text-muted block mb-1">Start (MM:SS)</label>
+									<input
+										type="text"
+										bind:value={introStartInput}
+										placeholder="0:30"
+										class="w-full px-3 py-2 bg-bg-input border border-border-subtle rounded-lg text-sm text-text-primary placeholder:text-text-muted focus:border-cream focus:outline-none"
+									/>
+								</div>
+								<div class="flex-1">
+									<label class="text-xs text-text-muted block mb-1">End (MM:SS)</label>
+									<input
+										type="text"
+										bind:value={introEndInput}
+										placeholder="1:30"
+										class="w-full px-3 py-2 bg-bg-input border border-border-subtle rounded-lg text-sm text-text-primary placeholder:text-text-muted focus:border-cream focus:outline-none"
+									/>
+								</div>
+								<div class="flex items-end gap-2 pb-0.5">
+									<button
+										onclick={handleSaveIntro}
+										disabled={savingIntro || !introStartInput || !introEndInput}
+										class="px-4 py-2 bg-cream text-black text-sm font-medium rounded-lg hover:bg-cream/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+									>
+										{savingIntro ? 'Saving...' : 'Save'}
+									</button>
+									{#if skipSegments.intro}
+										<button
+											onclick={handleDeleteIntro}
+											disabled={deletingIntro}
+											class="px-3 py-2 text-red-400 hover:bg-red-500/20 rounded-lg transition-colors"
+											title="Delete intro skip"
+										>
+											{#if deletingIntro}
+												<div class="spinner-sm"></div>
+											{:else}
+												<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+													<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+												</svg>
+											{/if}
+										</button>
+									{/if}
+								</div>
+							</div>
+						</div>
+
+						<!-- Credits Skip -->
+						<div class="bg-glass border border-border-subtle rounded-xl p-4">
+							<h3 class="text-sm font-semibold text-text-primary mb-3">Skip Credits</h3>
+							<div class="flex items-center gap-3">
+								<div class="flex-1">
+									<label class="text-xs text-text-muted block mb-1">Start (MM:SS)</label>
+									<input
+										type="text"
+										bind:value={creditsStartInput}
+										placeholder="21:00"
+										class="w-full px-3 py-2 bg-bg-input border border-border-subtle rounded-lg text-sm text-text-primary placeholder:text-text-muted focus:border-cream focus:outline-none"
+									/>
+								</div>
+								<div class="flex-1">
+									<label class="text-xs text-text-muted block mb-1">End (MM:SS)</label>
+									<input
+										type="text"
+										bind:value={creditsEndInput}
+										placeholder="22:00"
+										class="w-full px-3 py-2 bg-bg-input border border-border-subtle rounded-lg text-sm text-text-primary placeholder:text-text-muted focus:border-cream focus:outline-none"
+									/>
+								</div>
+								<div class="flex items-end gap-2 pb-0.5">
+									<button
+										onclick={handleSaveCredits}
+										disabled={savingCredits || !creditsStartInput || !creditsEndInput}
+										class="px-4 py-2 bg-cream text-black text-sm font-medium rounded-lg hover:bg-cream/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+									>
+										{savingCredits ? 'Saving...' : 'Save'}
+									</button>
+									{#if skipSegments.credits}
+										<button
+											onclick={handleDeleteCredits}
+											disabled={deletingCredits}
+											class="px-3 py-2 text-red-400 hover:bg-red-500/20 rounded-lg transition-colors"
+											title="Delete credits skip"
+										>
+											{#if deletingCredits}
+												<div class="spinner-sm"></div>
+											{:else}
+												<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+													<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+												</svg>
+											{/if}
+										</button>
+									{/if}
+								</div>
+							</div>
+						</div>
+					</div>
+				</section>
+			{/if}
 		{/snippet}
 	</MediaDetail>
 

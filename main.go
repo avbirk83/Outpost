@@ -14,12 +14,18 @@ import (
 	"github.com/outpost/outpost/internal/database"
 	"github.com/outpost/outpost/internal/downloadclient"
 	"github.com/outpost/outpost/internal/indexer"
+	"github.com/outpost/outpost/internal/logging"
 	"github.com/outpost/outpost/internal/metadata"
+	"github.com/outpost/outpost/internal/notification"
 	"github.com/outpost/outpost/internal/scanner"
 	"github.com/outpost/outpost/internal/scheduler"
 )
 
 func main() {
+	// Initialize logging with 1000 entry ring buffer
+	log.SetOutput(logging.Initialize(1000))
+	log.SetFlags(log.Ldate | log.Ltime)
+
 	cfg := config.Load()
 
 	// Ensure data directory exists
@@ -63,8 +69,14 @@ func main() {
 	// Initialize acquisition service for download tracking and import
 	acqSvc := acquisition.NewService(db, db.DB(), downloads, indexers, nil)
 
+	// Initialize notification service
+	notifSvc := notification.New(db)
+
+	// Wire notification service to acquisition for download events
+	acqSvc.SetNotificationHandler(notifSvc)
+
 	// Initialize server with scheduler and acquisition service
-	server := api.NewServer(cfg, db, scan, meta, authSvc, downloads, indexers, sched, acqSvc)
+	server := api.NewServer(cfg, db, scan, meta, authSvc, downloads, indexers, sched, acqSvc, notifSvc)
 
 	// Start scheduler
 	sched.Start()

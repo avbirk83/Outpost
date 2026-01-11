@@ -140,6 +140,7 @@ export async function parseReleaseName(name: string): Promise<ParsedRelease> {
 export interface QualityPreset {
 	id: number;
 	name: string;
+	mediaType: string;
 	isDefault: boolean;
 	isBuiltIn: boolean;
 	enabled: boolean;

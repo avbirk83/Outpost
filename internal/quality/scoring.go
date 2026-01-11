@@ -434,34 +434,24 @@ func ValidateFormat(release *parser.ParsedRelease, settings *database.FormatSett
 		return nil // No settings means accept all
 	}
 
-	// Check for disc releases
-	if settings.RejectDiscs && release.IsDisc {
-		return &FormatRejection{
-			Reason:    "Disc release not accepted (BDMV/VIDEO_TS/full disc)",
-			Permanent: true,
-		}
-	}
+	titleLower := strings.ToLower(release.RawTitle)
 
-	// Check for archive releases
-	if settings.RejectArchives && release.IsArchive {
-		return &FormatRejection{
-			Reason:    "Archive release not accepted (RAR/ZIP)",
-			Permanent: true,
+	// Check rejected keywords
+	if len(settings.RejectedKeywords) > 0 {
+		for _, keyword := range settings.RejectedKeywords {
+			if keyword != "" && strings.Contains(titleLower, strings.ToLower(keyword)) {
+				return &FormatRejection{
+					Reason:    "Contains rejected keyword: " + keyword,
+					Permanent: true,
+				}
+			}
 		}
 	}
 
 	// Check container if detected
 	if release.Container != "" && len(settings.AcceptedContainers) > 0 {
 		containerLower := strings.ToLower(release.Container)
-		
-		// Check if it's an unacceptable container (ISO, RAR, etc.)
-		if containerLower == "iso" || containerLower == "rar" || containerLower == "zip" || containerLower == "7z" {
-			return &FormatRejection{
-				Reason:    "Container type not accepted: " + release.Container,
-				Permanent: true,
-			}
-		}
-		
+
 		// Check if container is in accepted list
 		found := false
 		for _, accepted := range settings.AcceptedContainers {

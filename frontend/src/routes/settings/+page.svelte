@@ -3,8 +3,13 @@
 	import Select from '$lib/components/ui/Select.svelte';
 	import DirectoryBrowser from '$lib/components/DirectoryBrowser.svelte';
 	import AutomationTab from './_components/AutomationTab.svelte';
+	import BackupSection from './_components/BackupSection.svelte';
 	import GeneralTab from './_components/GeneralTab.svelte';
+	import HealthTab from './_components/HealthTab.svelte';
+	import LogsTab from './_components/LogsTab.svelte';
+	import StorageTab from './_components/StorageTab.svelte';
 	import { toast } from '$lib/stores/toast';
+	import { auth } from '$lib/stores/auth';
 	import {
 		getLibraries,
 		createLibrary,
@@ -168,15 +173,23 @@
 	let showClearConfirm = $state(false);
 
 	// Tab navigation
-	type SettingsTab = 'general' | 'quality' | 'sources' | 'automation';
+	type SettingsTab = 'general' | 'quality' | 'sources' | 'automation' | 'storage' | 'health' | 'logs';
 	let currentTab: SettingsTab = $state('general');
 
-	const tabs: { id: SettingsTab; label: string; icon: string }[] = [
+	// Check if user is admin for admin-only tabs
+	const isAdmin = $derived($auth?.role === 'admin');
+
+	const baseTabs: { id: SettingsTab; label: string; icon: string; adminOnly?: boolean }[] = [
 		{ id: 'general', label: 'General', icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z' },
 		{ id: 'quality', label: 'Quality', icon: 'M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z' },
 		{ id: 'sources', label: 'Sources', icon: 'M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9' },
-		{ id: 'automation', label: 'Automation', icon: 'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15' }
+		{ id: 'automation', label: 'Automation', icon: 'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15' },
+		{ id: 'storage', label: 'Storage', icon: 'M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4', adminOnly: true },
+		{ id: 'health', label: 'Health', icon: 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z', adminOnly: true },
+		{ id: 'logs', label: 'Logs', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z', adminOnly: true }
 	];
+
+	const tabs = $derived(baseTabs.filter(tab => !tab.adminOnly || isAdmin));
 
 	onMount(async () => {
 		await Promise.all([loadLibraries(), loadSettings(), loadDownloadClients(), loadIndexers(), loadProwlarrConfig(), loadQualityPresets(), loadStorageStatus(), loadTasks()]);
@@ -1037,6 +1050,11 @@
 			onScanLibrary={handleScan}
 			onBrowse={() => showBrowser = true}
 		/>
+
+		<!-- Backup & Restore (Admin only) -->
+		{#if isAdmin}
+			<BackupSection />
+		{/if}
 	{/if}
 
 	<!-- ============================================ -->
@@ -1809,6 +1827,27 @@
 			onSaveTaskInterval={handleSaveTaskInterval}
 			onEditInterval={(taskId, value) => editingTaskInterval[taskId] = value}
 		/>
+	{/if}
+
+	<!-- ============================================ -->
+	<!-- STORAGE TAB -->
+	<!-- ============================================ -->
+	{#if currentTab === 'storage' && isAdmin}
+		<StorageTab />
+	{/if}
+
+	<!-- ============================================ -->
+	<!-- HEALTH TAB -->
+	<!-- ============================================ -->
+	{#if currentTab === 'health' && isAdmin}
+		<HealthTab />
+	{/if}
+
+	<!-- ============================================ -->
+	<!-- LOGS TAB -->
+	<!-- ============================================ -->
+	{#if currentTab === 'logs' && isAdmin}
+		<LogsTab />
 	{/if}
 </div>
 

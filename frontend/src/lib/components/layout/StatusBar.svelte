@@ -127,7 +127,7 @@
 			class="fixed inset-0 z-30"
 			onclick={() => expanded = false}
 		></div>
-		<div class="fixed bottom-8 left-0 right-0 max-h-80 bg-[#111111]/98 backdrop-blur-md border-t border-white/10 z-40 overflow-hidden animate-slideUp">
+		<div class="fixed bottom-8 left-0 right-0 max-h-80 bg-bg-card/98 backdrop-blur-md border-t border-white/10 z-40 overflow-hidden animate-slideUp">
 			<div class="flex items-center justify-between px-4 py-2 border-b border-white/5">
 				<h3 class="text-sm font-medium text-text-primary">Recent Activity</h3>
 				<button
@@ -174,7 +174,7 @@
 	{/if}
 
 	<!-- Main Status Bar -->
-	<div class="fixed bottom-0 left-0 right-0 h-8 bg-[#111111]/95 backdrop-blur-sm border-t border-white/10 flex items-center justify-end px-4 text-xs z-40">
+	<div class="fixed bottom-0 left-0 right-0 h-8 bg-bg-card/95 backdrop-blur-sm border-t border-white/10 flex items-center justify-end px-4 text-xs z-40">
 		<!-- All content on right side -->
 		<div class="flex items-center gap-4">
 			<!-- Downloads/Pending stats -->

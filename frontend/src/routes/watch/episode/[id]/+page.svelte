@@ -2,14 +2,20 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
-	import { getStreamUrl } from '$lib/api';
+	import { getStreamUrl, getEpisode, type EpisodeDetail } from '$lib/api';
 	import VideoPlayer from '$lib/components/VideoPlayer.svelte';
 
 	let episodeId: number;
+	let episode = $state<EpisodeDetail | null>(null);
 	let loading = $state(true);
 
-	onMount(() => {
+	onMount(async () => {
 		episodeId = parseInt($page.params.id);
+		try {
+			episode = await getEpisode(episodeId);
+		} catch (e) {
+			console.error('Failed to fetch episode:', e);
+		}
 		loading = false;
 	});
 
@@ -30,9 +36,10 @@
 	<div class="fixed inset-0 bg-black z-50">
 		<VideoPlayer
 			src={getStreamUrl('episode', episodeId)}
-			title="Episode"
+			title={episode?.title || 'Episode'}
 			mediaType="episode"
 			mediaId={episodeId}
+			showId={episode?.showId}
 			onClose={handleClose}
 		/>
 	</div>

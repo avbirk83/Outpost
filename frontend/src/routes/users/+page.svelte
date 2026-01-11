@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { getUsers, createUser, updateUser, deleteUser, type User } from '$lib/api';
+	import { getUsers, createUser, updateUser, deleteUser, type User, type ContentRating } from '$lib/api';
 	import Select from '$lib/components/ui/Select.svelte';
 	import { toast } from '$lib/stores/toast';
 
@@ -14,6 +14,21 @@
 	let username = $state('');
 	let password = $state('');
 	let role = $state('user');
+
+	// Parental controls state
+	let contentRatingLimit = $state<ContentRating | null>(null);
+	let requirePin = $state(false);
+	let pin = $state('');
+	let clearPin = $state(false);
+
+	const contentRatingOptions = [
+		{ value: '', label: 'No Limit' },
+		{ value: 'G', label: 'G - General Audiences' },
+		{ value: 'PG', label: 'PG - Parental Guidance' },
+		{ value: 'PG-13', label: 'PG-13 - Parents Strongly Cautioned' },
+		{ value: 'R', label: 'R - Restricted' },
+		{ value: 'NC-17', label: 'NC-17 - Adults Only' }
+	];
 
 	onMount(async () => {
 		await loadUsers();
@@ -36,11 +51,21 @@
 			return;
 		}
 
+		if (requirePin && (!pin || pin.length !== 4)) {
+			error = 'PIN must be 4 digits';
+			return;
+		}
+
 		try {
-			await createUser(username, password, role);
-			username = '';
-			password = '';
-			role = 'user';
+			await createUser({
+				username,
+				password,
+				role,
+				contentRatingLimit: contentRatingLimit || null,
+				requirePin,
+				pin: requirePin ? pin : undefined
+			});
+			resetForm();
 			showAddForm = false;
 			await loadUsers();
 			toast.success('User created');
@@ -53,25 +78,39 @@
 	async function handleUpdateUser() {
 		if (!editingUser) return;
 
+		if (requirePin && pin && pin.length !== 4) {
+			error = 'PIN must be 4 digits';
+			return;
+		}
+
 		try {
-			const data: { username?: string; password?: string; role?: string } = {
-				username: username,
-				role: role
-			};
-			if (password) {
-				data.password = password;
-			}
-			await updateUser(editingUser.id, data);
+			await updateUser(editingUser.id, {
+				username,
+				password: password || undefined,
+				role,
+				contentRatingLimit: contentRatingLimit || null,
+				requirePin,
+				pin: pin || undefined,
+				clearPin
+			});
 			editingUser = null;
-			username = '';
-			password = '';
-			role = 'user';
+			resetForm();
 			await loadUsers();
 			toast.success('User updated');
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to update user';
 			toast.error('Failed to update user');
 		}
+	}
+
+	function resetForm() {
+		username = '';
+		password = '';
+		role = 'user';
+		contentRatingLimit = null;
+		requirePin = false;
+		pin = '';
+		clearPin = false;
 	}
 
 	async function handleDeleteUser(id: number) {
@@ -92,21 +131,21 @@
 		username = user.username;
 		password = '';
 		role = user.role;
+		contentRatingLimit = user.contentRatingLimit || null;
+		requirePin = user.requirePin || false;
+		pin = '';
+		clearPin = false;
 		showAddForm = false;
 	}
 
 	function cancelEdit() {
 		editingUser = null;
-		username = '';
-		password = '';
-		role = 'user';
+		resetForm();
 	}
 
 	function cancelAdd() {
 		showAddForm = false;
-		username = '';
-		password = '';
-		role = 'user';
+		resetForm();
 	}
 
 	function getRoleBadgeColor(userRole: string): string {
@@ -218,6 +257,52 @@
 					/>
 				</div>
 			</div>
+
+			<!-- Parental Controls Section -->
+			<div class="border-t border-border-subtle pt-4 mt-4">
+				<h3 class="text-sm font-medium text-text-primary mb-3">Parental Controls</h3>
+				<div class="grid sm:grid-cols-3 gap-4">
+					<div>
+						<label for="contentRating" class={labelClass}>Content Rating Limit</label>
+						<select
+							id="contentRating"
+							bind:value={contentRatingLimit}
+							class={selectClass}
+						>
+							{#each contentRatingOptions as option}
+								<option value={option.value || null}>{option.label}</option>
+							{/each}
+						</select>
+						<p class="text-xs text-text-muted mt-1">User will only see content at or below this rating</p>
+					</div>
+					<div>
+						<label class={labelClass}>Require PIN</label>
+						<label class="flex items-center gap-2 mt-2 cursor-pointer">
+							<input
+								type="checkbox"
+								bind:checked={requirePin}
+								class="w-4 h-4 rounded border-border-subtle"
+							/>
+							<span class="text-sm text-text-secondary">Require PIN for restricted content</span>
+						</label>
+					</div>
+					{#if requirePin}
+						<div>
+							<label for="pin" class={labelClass}>Set PIN (4 digits)</label>
+							<input
+								type="password"
+								id="pin"
+								bind:value={pin}
+								maxlength="4"
+								pattern="[0-9]{4}"
+								class={inputClass}
+								placeholder="0000"
+							/>
+						</div>
+					{/if}
+				</div>
+			</div>
+
 			<div class="flex gap-3 pt-2">
 				<button type="submit" class="liquid-btn">
 					Create User
@@ -276,6 +361,64 @@
 					/>
 				</div>
 			</div>
+
+			<!-- Parental Controls Section -->
+			<div class="border-t border-border-subtle pt-4 mt-4">
+				<h3 class="text-sm font-medium text-text-primary mb-3">Parental Controls</h3>
+				<div class="grid sm:grid-cols-3 gap-4">
+					<div>
+						<label for="edit-contentRating" class={labelClass}>Content Rating Limit</label>
+						<select
+							id="edit-contentRating"
+							bind:value={contentRatingLimit}
+							class={selectClass}
+						>
+							{#each contentRatingOptions as option}
+								<option value={option.value || null}>{option.label}</option>
+							{/each}
+						</select>
+						<p class="text-xs text-text-muted mt-1">User will only see content at or below this rating</p>
+					</div>
+					<div>
+						<label class={labelClass}>Require PIN</label>
+						<label class="flex items-center gap-2 mt-2 cursor-pointer">
+							<input
+								type="checkbox"
+								bind:checked={requirePin}
+								class="w-4 h-4 rounded border-border-subtle"
+							/>
+							<span class="text-sm text-text-secondary">Require PIN for restricted content</span>
+						</label>
+					</div>
+					{#if requirePin}
+						<div>
+							<label for="edit-pin" class={labelClass}>
+								{editingUser.hasPin ? 'Change PIN (4 digits)' : 'Set PIN (4 digits)'}
+							</label>
+							<input
+								type="password"
+								id="edit-pin"
+								bind:value={pin}
+								maxlength="4"
+								pattern="[0-9]{4}"
+								class={inputClass}
+								placeholder={editingUser.hasPin ? 'Leave blank to keep current' : '0000'}
+							/>
+							{#if editingUser.hasPin}
+								<label class="flex items-center gap-2 mt-2 cursor-pointer">
+									<input
+										type="checkbox"
+										bind:checked={clearPin}
+										class="w-4 h-4 rounded border-border-subtle"
+									/>
+									<span class="text-xs text-text-muted">Remove PIN</span>
+								</label>
+							{/if}
+						</div>
+					{/if}
+				</div>
+			</div>
+
 			<div class="flex gap-3 pt-2">
 				<button type="submit" class="liquid-btn">
 					Save Changes
@@ -311,6 +454,7 @@
 					<tr>
 						<th class="text-left px-4 py-3 text-sm font-medium text-text-muted">User</th>
 						<th class="text-left px-4 py-3 text-sm font-medium text-text-muted">Role</th>
+						<th class="text-left px-4 py-3 text-sm font-medium text-text-muted">Content Limit</th>
 						<th class="text-right px-4 py-3 text-sm font-medium text-text-muted">Actions</th>
 					</tr>
 				</thead>
@@ -324,13 +468,29 @@
 											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={getRoleIcon(user.role)} />
 										</svg>
 									</div>
-									<span class="font-medium text-text-primary">{user.username}</span>
+									<div>
+										<span class="font-medium text-text-primary">{user.username}</span>
+										{#if user.requirePin}
+											<span class="ml-2 text-xs text-amber-400" title="PIN protected">
+												<svg class="w-3.5 h-3.5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+													<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+												</svg>
+											</span>
+										{/if}
+									</div>
 								</div>
 							</td>
 							<td class="px-4 py-4">
 								<span class="{getRoleBadgeColor(user.role)}">
 									{user.role.charAt(0).toUpperCase() + user.role.slice(1)}
 								</span>
+							</td>
+							<td class="px-4 py-4">
+								{#if user.contentRatingLimit}
+									<span class="text-sm text-text-secondary">{user.contentRatingLimit}</span>
+								{:else}
+									<span class="text-sm text-text-muted">None</span>
+								{/if}
 							</td>
 							<td class="px-4 py-4 text-right">
 								<div class="flex items-center justify-end gap-2">

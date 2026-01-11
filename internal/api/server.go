@@ -13,11 +13,14 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/outpost/outpost/internal/auth"
 	"github.com/outpost/outpost/internal/config"
 	"github.com/outpost/outpost/internal/database"
 	"github.com/outpost/outpost/internal/download"
+	"github.com/outpost/outpost/internal/health"
+	"github.com/outpost/outpost/internal/logging"
 	"github.com/outpost/outpost/internal/downloadclient"
 	"github.com/outpost/outpost/internal/indexer"
 	"github.com/outpost/outpost/internal/metadata"
@@ -26,6 +29,7 @@ import (
 	"github.com/outpost/outpost/internal/quality"
 	"github.com/outpost/outpost/internal/scanner"
 	"github.com/outpost/outpost/internal/storage"
+	"github.com/outpost/outpost/internal/tmdb"
 )
 
 type contextKey string
@@ -42,6 +46,8 @@ type Server struct {
 	indexers      *indexer.Manager
 	scheduler     Scheduler
 	acquisition   AcquisitionService
+	notifications NotificationService
+	healthChecker *health.Checker
 	mux           *http.ServeMux
 	subtitleCache map[string][]byte
 	subtitleMu    sync.RWMutex
@@ -64,7 +70,23 @@ type AcquisitionService interface {
 	DeleteTrackedDownload(id int64, deleteFromClient bool, deleteFiles bool) error
 }
 
-func NewServer(cfg *config.Config, db *database.Database, scan *scanner.Scanner, meta *metadata.Service, authSvc *auth.Service, downloads *downloadclient.Manager, indexers *indexer.Manager, sched Scheduler, acq AcquisitionService) *Server {
+// NotificationService interface for in-app notifications
+type NotificationService interface {
+	Create(userID int64, notifType, title, message string, imageURL, link *string) error
+	CreateForAdmins(notifType, title, message string, imageURL, link *string) error
+	GetForUser(userID int64, unreadOnly bool, limit int) ([]database.Notification, error)
+	GetUnreadCount(userID int64) (int, error)
+	MarkRead(notificationID int64) error
+	MarkAllRead(userID int64) error
+	Delete(notificationID int64) error
+	NotifyNewContent(userID int64, title, mediaType string, mediaID int64, posterPath *string) error
+	NotifyRequestApproved(userID int64, title string, tmdbID int64, mediaType string, posterPath *string) error
+	NotifyRequestDenied(userID int64, title string, reason string, posterPath *string) error
+	NotifyDownloadComplete(title string, mediaType string, mediaID int64, posterPath *string) error
+	NotifyDownloadFailed(title string, errorMsg string, posterPath *string) error
+}
+
+func NewServer(cfg *config.Config, db *database.Database, scan *scanner.Scanner, meta *metadata.Service, authSvc *auth.Service, downloads *downloadclient.Manager, indexers *indexer.Manager, sched Scheduler, acq AcquisitionService, notif NotificationService) *Server {
 	s := &Server{
 		config:        cfg,
 		db:            db,
@@ -75,6 +97,8 @@ func NewServer(cfg *config.Config, db *database.Database, scan *scanner.Scanner,
 		indexers:      indexers,
 		scheduler:     sched,
 		acquisition:   acq,
+		notifications: notif,
+		healthChecker: health.NewChecker(db, downloads, indexers),
 		mux:           http.NewServeMux(),
 		subtitleCache: make(map[string][]byte),
 	}
@@ -125,6 +149,11 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/auth/logout", s.handleLogout)
 	s.mux.HandleFunc("/api/auth/me", s.handleMe)
 	s.mux.HandleFunc("/api/auth/setup", s.handleSetup)
+	s.mux.HandleFunc("/api/auth/verify-pin", s.requireAuth(s.handleVerifyPin))
+
+	// Setup wizard routes (admin only after initial setup)
+	s.mux.HandleFunc("/api/setup/status", s.handleSetupStatus)
+	s.mux.HandleFunc("/api/setup/complete", s.requireAdmin(s.handleSetupComplete))
 
 	// User management routes (admin only)
 	s.mux.HandleFunc("/api/users", s.requireAdmin(s.handleUsers))
@@ -164,6 +193,12 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/progress", s.requireAuth(s.handleProgress))
 	s.mux.HandleFunc("/api/progress/", s.requireAuth(s.handleProgressGet))
 	s.mux.HandleFunc("/api/continue-watching", s.requireAuth(s.handleContinueWatching))
+
+	// Chapter routes (authenticated)
+	s.mux.HandleFunc("/api/chapters/", s.requireAuth(s.handleChapters))
+
+	// Skip segments routes (authenticated)
+	s.mux.HandleFunc("/api/skip-segments/", s.requireAuth(s.handleSkipSegments))
 
 	// Watch state routes (authenticated)
 	s.mux.HandleFunc("/api/watched/", s.requireAuth(s.handleWatched))
@@ -213,6 +248,10 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/quality/presets", s.requireAuth(s.handleQualityPresets))
 	s.mux.HandleFunc("/api/quality/presets/", s.requireAdmin(s.handleQualityPreset))
 
+	// Collection routes (GET is auth only, modifications are admin only)
+	s.mux.HandleFunc("/api/collections", s.requireAuth(s.handleCollections))
+	s.mux.HandleFunc("/api/collections/", s.requireAuth(s.handleCollection))
+
 	// Download tracking routes (admin only)
 	s.mux.HandleFunc("/api/download-items", s.requireAdmin(s.handleDownloadItems))
 	s.mux.HandleFunc("/api/download-items/", s.requireAdmin(s.handleDownloadItem))
@@ -221,6 +260,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/imports/history", s.requireAdmin(s.handleImportHistory))
 	s.mux.HandleFunc("/api/settings/naming", s.requireAdmin(s.handleNamingTemplates))
 	s.mux.HandleFunc("/api/storage/status", s.requireAdmin(s.handleStorageStatus))
+	s.mux.HandleFunc("/api/storage/analytics", s.requireAdmin(s.handleStorageAnalytics))
 
 	// Wanted/Monitoring routes (admin only)
 	s.mux.HandleFunc("/api/wanted", s.requireAdmin(s.handleWantedItems))
@@ -251,6 +291,15 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/movie/recommendations/", s.requireAuth(s.handleMovieRecommendations))
 	s.mux.HandleFunc("/api/movies/suggestions/", s.requireAuth(s.handleMovieSuggestions))
 	s.mux.HandleFunc("/api/shows/suggestions/", s.requireAuth(s.handleShowSuggestions))
+
+	// Calendar route
+	s.mux.HandleFunc("/api/calendar", s.requireAuth(s.handleCalendar))
+
+	// Notification routes
+	s.mux.HandleFunc("/api/notifications", s.requireAuth(s.handleNotifications))
+	s.mux.HandleFunc("/api/notifications/unread-count", s.requireAuth(s.handleNotificationUnreadCount))
+	s.mux.HandleFunc("/api/notifications/read-all", s.requireAuth(s.handleNotificationReadAll))
+	s.mux.HandleFunc("/api/notifications/", s.requireAuth(s.handleNotification))
 
 	// Request routes
 	s.mux.HandleFunc("/api/requests", s.requireAuth(s.handleRequests))
@@ -297,6 +346,18 @@ func (s *Server) setupRoutes() {
 
 	// System status route (authenticated)
 	s.mux.HandleFunc("/api/system/status", s.requireAuth(s.handleSystemStatus))
+
+	// Logs routes (admin only)
+	s.mux.HandleFunc("/api/logs", s.requireAdmin(s.handleLogs))
+	s.mux.HandleFunc("/api/logs/download", s.requireAdmin(s.handleLogsDownload))
+
+	// Health check routes (admin only)
+	s.mux.HandleFunc("/api/health/full", s.requireAdmin(s.handleHealthFull))
+	s.mux.HandleFunc("/api/health/check/", s.requireAdmin(s.handleHealthCheck))
+
+	// Backup/Restore routes (admin only)
+	s.mux.HandleFunc("/api/backup", s.requireAdmin(s.handleBackup))
+	s.mux.HandleFunc("/api/backup/restore", s.requireAdmin(s.handleRestore))
 
 	// Filesystem browse route (admin only)
 	s.mux.HandleFunc("/api/filesystem/browse", s.requireAdmin(s.handleFilesystemBrowse))
@@ -515,21 +576,54 @@ func (s *Server) handleScanProgress(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(progress)
 }
 
-// Content filtering for kids
-var kidFriendlyRatings = map[string]bool{
-	"G":     true,
-	"PG":    true,
-	"TV-Y":  true,
-	"TV-Y7": true,
-	"TV-G":  true,
-	"TV-PG": true,
+// Content filtering for parental controls
+
+// isContentAllowed checks if content is allowed for a user based on their content rating limit
+func (s *Server) isContentAllowed(user *database.User, contentRating *string, r *http.Request) bool {
+	// No user or no limit means all content allowed
+	if user == nil || user.ContentRatingLimit == nil {
+		return true
+	}
+
+	userLimit := database.ContentRatingLevel(*user.ContentRatingLimit)
+
+	// If user requires PIN and is elevated, allow all content
+	if user.RequirePin {
+		elevationToken := s.getElevationToken(r)
+		if elevationToken != "" {
+			elevation, err := s.db.GetPinElevationByToken(elevationToken)
+			if err == nil && elevation.UserID == user.ID {
+				return true
+			}
+		}
+	}
+
+	// Unknown/unrated content is restricted for users with limits
+	if contentRating == nil || *contentRating == "" {
+		return false
+	}
+
+	// Normalize the content rating
+	normalizedRating := database.NormalizeContentRating(*contentRating, "")
+	contentLevel := database.ContentRatingLevel(normalizedRating)
+
+	// If content level is 0 (unknown), it's restricted
+	if contentLevel == 0 {
+		return false
+	}
+
+	return contentLevel <= userLimit
 }
 
+// isKidFriendly is a legacy function for basic kid filtering (kept for backwards compatibility)
 func (s *Server) isKidFriendly(contentRating *string) bool {
 	if contentRating == nil || *contentRating == "" {
-		return false // Unknown ratings are not kid-friendly
+		return false
 	}
-	return kidFriendlyRatings[*contentRating]
+	normalizedRating := database.NormalizeContentRating(*contentRating, "")
+	level := database.ContentRatingLevel(normalizedRating)
+	// G and PG are kid-friendly (levels 1 and 2)
+	return level > 0 && level <= 2
 }
 
 // Media handlers
@@ -558,12 +652,12 @@ func (s *Server) handleMovies(w http.ResponseWriter, r *http.Request) {
 		movies = []database.Movie{}
 	}
 
-	// Filter for kid profiles
+	// Filter based on user's content rating limit
 	user := s.getCurrentUser(r)
-	if user != nil && user.Role == "kid" {
+	if user != nil && user.ContentRatingLimit != nil {
 		var filtered []database.Movie
 		for _, m := range movies {
-			if s.isKidFriendly(m.ContentRating) {
+			if s.isContentAllowed(user, m.ContentRating, r) {
 				filtered = append(filtered, m)
 			}
 		}
@@ -614,12 +708,12 @@ func (s *Server) handleShows(w http.ResponseWriter, r *http.Request) {
 		shows = []database.Show{}
 	}
 
-	// Filter for kid profiles
+	// Filter based on user's content rating limit
 	user := s.getCurrentUser(r)
-	if user != nil && user.Role == "kid" {
+	if user != nil && user.ContentRatingLimit != nil {
 		var filtered []database.Show
 		for _, sh := range shows {
-			if s.isKidFriendly(sh.ContentRating) {
+			if s.isContentAllowed(user, sh.ContentRating, r) {
 				filtered = append(filtered, sh)
 			}
 		}
@@ -670,6 +764,18 @@ func (s *Server) handleShow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check content rating restriction
+	user := s.getCurrentUser(r)
+	if user != nil && user.ContentRatingLimit != nil && !s.isContentAllowed(user, show.ContentRating, r) {
+		// Content is restricted - check if PIN is required
+		if user.RequirePin {
+			http.Error(w, "Content restricted - PIN required", http.StatusForbidden)
+		} else {
+			http.Error(w, "Content not available", http.StatusForbidden)
+		}
+		return
+	}
+
 	// Handle refresh endpoint
 	if len(parts) == 2 && parts[1] == "refresh" {
 		if r.Method != http.MethodPost {
@@ -708,6 +814,26 @@ func (s *Server) handleShow(w http.ResponseWriter, r *http.Request) {
 			show, _ = s.db.GetShow(id)
 		}
 		s.sendShowDetail(w, show)
+		return
+	}
+
+	// Handle missing episodes endpoint
+	if len(parts) == 2 && parts[1] == "missing" {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		s.handleMissingEpisodes(w, r, show)
+		return
+	}
+
+	// Handle request-missing endpoint
+	if len(parts) == 2 && parts[1] == "request-missing" {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		s.handleRequestMissingEpisodes(w, r, show)
 		return
 	}
 
@@ -776,7 +902,19 @@ func (s *Server) handleEpisode(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		json.NewEncoder(w).Encode(episode)
+		// Get showId for the episode
+		showID, err := s.db.GetShowIDForEpisode(id)
+		if err != nil {
+			log.Printf("Failed to get show ID for episode %d: %v", id, err)
+		}
+		response := struct {
+			*database.Episode
+			ShowID int64 `json:"showId"`
+		}{
+			Episode: episode,
+			ShowID:  showID,
+		}
+		json.NewEncoder(w).Encode(response)
 	case http.MethodDelete:
 		// Delete the file if it exists
 		if episode.Path != "" {
@@ -845,6 +983,18 @@ func (s *Server) handleMovie(w http.ResponseWriter, r *http.Request) {
 	movie, err := s.db.GetMovie(id)
 	if err != nil {
 		http.Error(w, "Movie not found", http.StatusNotFound)
+		return
+	}
+
+	// Check content rating restriction
+	user := s.getCurrentUser(r)
+	if user != nil && user.ContentRatingLimit != nil && !s.isContentAllowed(user, movie.ContentRating, r) {
+		// Content is restricted - check if PIN is required
+		if user.RequirePin {
+			http.Error(w, "Content restricted - PIN required", http.StatusForbidden)
+		} else {
+			http.Error(w, "Content not available", http.StatusForbidden)
+		}
 		return
 	}
 
@@ -1399,6 +1549,120 @@ func (s *Server) handleProgressGet(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(progress)
 }
 
+func (s *Server) handleChapters(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Parse path: /api/chapters/{type}/{id}
+	path := strings.TrimPrefix(r.URL.Path, "/api/chapters/")
+	parts := strings.Split(path, "/")
+
+	if len(parts) != 2 {
+		http.Error(w, "Invalid chapters path", http.StatusBadRequest)
+		return
+	}
+
+	mediaType := parts[0]
+	id, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid ID", http.StatusBadRequest)
+		return
+	}
+
+	chapters, err := s.db.GetChapters(mediaType, id)
+	if err != nil {
+		// No chapters, return empty array
+		json.NewEncoder(w).Encode([]database.Chapter{})
+		return
+	}
+
+	json.NewEncoder(w).Encode(chapters)
+}
+
+func (s *Server) handleSkipSegments(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	// Parse path: /api/skip-segments/{showId} or /api/skip-segments/{showId}/{type}
+	path := strings.TrimPrefix(r.URL.Path, "/api/skip-segments/")
+	parts := strings.Split(path, "/")
+
+	if len(parts) < 1 || parts[0] == "" {
+		http.Error(w, "Invalid skip-segments path", http.StatusBadRequest)
+		return
+	}
+
+	showID, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid show ID", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		segments, err := s.db.GetSkipSegments(showID)
+		if err != nil {
+			http.Error(w, "Failed to get skip segments", http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(segments)
+
+	case http.MethodPost:
+		var req struct {
+			Type      string  `json:"type"`
+			StartTime float64 `json:"startTime"`
+			EndTime   float64 `json:"endTime"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		if req.Type != "intro" && req.Type != "credits" {
+			http.Error(w, "Type must be 'intro' or 'credits'", http.StatusBadRequest)
+			return
+		}
+
+		if req.StartTime >= req.EndTime {
+			http.Error(w, "Start time must be less than end time", http.StatusBadRequest)
+			return
+		}
+
+		if err := s.db.SaveSkipSegment(showID, req.Type, req.StartTime, req.EndTime); err != nil {
+			http.Error(w, "Failed to save skip segment", http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+
+	case http.MethodDelete:
+		if len(parts) < 2 {
+			http.Error(w, "Segment type required for delete", http.StatusBadRequest)
+			return
+		}
+		segmentType := parts[1]
+		if segmentType != "intro" && segmentType != "credits" {
+			http.Error(w, "Type must be 'intro' or 'credits'", http.StatusBadRequest)
+			return
+		}
+
+		if err := s.db.DeleteSkipSegment(showID, segmentType); err != nil {
+			http.Error(w, "Failed to delete skip segment", http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
 func (s *Server) handleContinueWatching(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
@@ -1869,10 +2133,124 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check if user has PIN elevation
+	isElevated := false
+	elevationToken := s.getElevationToken(r)
+	if elevationToken != "" {
+		elevation, err := s.db.GetPinElevationByToken(elevationToken)
+		if err == nil && elevation.UserID == user.ID {
+			isElevated = true
+		}
+	}
+
+	response := map[string]interface{}{
+		"id":                 user.ID,
+		"username":           user.Username,
+		"role":               user.Role,
+		"contentRatingLimit": user.ContentRatingLimit,
+		"requirePin":         user.RequirePin,
+		"isElevated":         isElevated,
+		"hasPin":             user.PinHash != nil && *user.PinHash != "",
+	}
+
+	json.NewEncoder(w).Encode(response)
+}
+
+// getElevationToken extracts the elevation token from request headers or cookies
+func (s *Server) getElevationToken(r *http.Request) string {
+	// Check header first
+	token := r.Header.Get("X-Elevation-Token")
+	if token != "" {
+		return token
+	}
+
+	// Check cookie
+	cookie, err := r.Cookie("elevation_token")
+	if err == nil {
+		return cookie.Value
+	}
+
+	return ""
+}
+
+func (s *Server) handleVerifyPin(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	user := s.getCurrentUser(r)
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var req struct {
+		Pin string `json:"pin"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Pin == "" || len(req.Pin) != 4 {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"valid": false,
+			"error": "PIN must be 4 digits",
+		})
+		return
+	}
+
+	// Check if user has a PIN set
+	if user.PinHash == nil || *user.PinHash == "" {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"valid": false,
+			"error": "No PIN set for this user",
+		})
+		return
+	}
+
+	// Verify PIN
+	if !auth.CheckPassword(req.Pin, *user.PinHash) {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"valid": false,
+			"error": "Incorrect PIN",
+		})
+		return
+	}
+
+	// Create elevation token (valid for 1 hour)
+	elevationToken, err := auth.GenerateToken()
+	if err != nil {
+		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
+		return
+	}
+	elevation := &database.PinElevation{
+		UserID:    user.ID,
+		Token:     elevationToken,
+		ExpiresAt: time.Now().Add(1 * time.Hour),
+	}
+
+	if err := s.db.CreatePinElevation(elevation); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Set elevation token as cookie
+	http.SetCookie(w, &http.Cookie{
+		Name:     "elevation_token",
+		Value:    elevationToken,
+		Path:     "/",
+		Expires:  elevation.ExpiresAt,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"id":       user.ID,
-		"username": user.Username,
-		"role":     user.Role,
+		"valid": true,
+		"token": elevationToken,
 	})
 }
 
@@ -1933,6 +2311,99 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Setup wizard handlers
+
+func (s *Server) handleSetupStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	// Check setup_completed setting first
+	setupCompleted, _ := s.db.GetSetting("setup_completed")
+	if setupCompleted == "true" {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"needsSetup":     false,
+			"setupCompleted": true,
+		})
+		return
+	}
+
+	// Check each step
+	steps := map[string]bool{
+		"adminCreated":             false,
+		"libraryAdded":             false,
+		"downloadClientConfigured": false,
+		"indexerConfigured":        false,
+		"qualityProfileSet":        false,
+	}
+
+	// 1. Check if admin exists
+	userCount, _ := s.db.CountUsers()
+	steps["adminCreated"] = userCount > 0
+
+	// 2. Check if any library exists
+	libraries, _ := s.db.GetLibraries()
+	steps["libraryAdded"] = len(libraries) > 0
+
+	// 3. Check if download client is configured
+	downloadClients, _ := s.db.GetDownloadClients()
+	for _, dc := range downloadClients {
+		if dc.Enabled {
+			steps["downloadClientConfigured"] = true
+			break
+		}
+	}
+
+	// 4. Check if indexers are configured (direct or via Prowlarr)
+	enabledIndexers, _ := s.db.GetEnabledIndexers()
+	prowlarrConfig, _ := s.db.GetProwlarrConfig()
+	steps["indexerConfigured"] = len(enabledIndexers) > 0 || (prowlarrConfig != nil && prowlarrConfig.URL != "")
+
+	// 5. Check if quality presets exist
+	presets, _ := s.db.GetQualityPresets()
+	for _, p := range presets {
+		if p.Enabled {
+			steps["qualityProfileSet"] = true
+			break
+		}
+	}
+
+	// Determine if setup is needed (admin must exist, but other steps can be skipped)
+	needsSetup := !steps["adminCreated"] || !steps["libraryAdded"]
+
+	// All steps except admin can be skipped
+	canSkip := steps["adminCreated"]
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"needsSetup":     needsSetup,
+		"setupCompleted": false,
+		"steps":          steps,
+		"canSkip":        canSkip,
+	})
+}
+
+func (s *Server) handleSetupComplete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	// Set setup_completed flag
+	if err := s.db.SetSetting("setup_completed", "true"); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+	})
+}
+
 // User management handlers
 
 func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
@@ -1952,9 +2423,12 @@ func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
 
 	case http.MethodPost:
 		var req struct {
-			Username string `json:"username"`
-			Password string `json:"password"`
-			Role     string `json:"role"`
+			Username           string  `json:"username"`
+			Password           string  `json:"password"`
+			Role               string  `json:"role"`
+			ContentRatingLimit *string `json:"contentRatingLimit"`
+			RequirePin         bool    `json:"requirePin"`
+			Pin                string  `json:"pin"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -1970,10 +2444,37 @@ func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
 			req.Role = "user"
 		}
 
+		// For kid role, default to PG if no limit set
+		if req.Role == "kid" && req.ContentRatingLimit == nil {
+			pg := "PG"
+			req.ContentRatingLimit = &pg
+		}
+
 		user, err := s.auth.CreateUser(req.Username, req.Password, req.Role)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
+		}
+
+		// Set parental controls
+		user.ContentRatingLimit = req.ContentRatingLimit
+		user.RequirePin = req.RequirePin
+		if err := s.db.UpdateUser(user); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Set PIN if provided
+		if req.Pin != "" && len(req.Pin) == 4 {
+			pinHash, err := auth.HashPassword(req.Pin)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if err := s.db.UpdateUserPin(user.ID, &pinHash); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 		}
 
 		w.WriteHeader(http.StatusCreated)
@@ -2006,9 +2507,13 @@ func (s *Server) handleUser(w http.ResponseWriter, r *http.Request) {
 
 	case http.MethodPut:
 		var req struct {
-			Username string `json:"username"`
-			Password string `json:"password"`
-			Role     string `json:"role"`
+			Username           string  `json:"username"`
+			Password           string  `json:"password"`
+			Role               string  `json:"role"`
+			ContentRatingLimit *string `json:"contentRatingLimit"`
+			RequirePin         *bool   `json:"requirePin"`
+			Pin                string  `json:"pin"`
+			ClearPin           bool    `json:"clearPin"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -2026,6 +2531,19 @@ func (s *Server) handleUser(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.Role != "" {
 			user.Role = req.Role
+			// For kid role, default to PG if no limit set
+			if req.Role == "kid" && user.ContentRatingLimit == nil && req.ContentRatingLimit == nil {
+				pg := "PG"
+				user.ContentRatingLimit = &pg
+			}
+		}
+
+		// Handle content rating limit - allow setting to nil to remove limit
+		// The request sends the field, so we update it
+		user.ContentRatingLimit = req.ContentRatingLimit
+
+		if req.RequirePin != nil {
+			user.RequirePin = *req.RequirePin
 		}
 
 		if err := s.db.UpdateUser(user); err != nil {
@@ -2041,6 +2559,24 @@ func (s *Server) handleUser(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if err := s.db.UpdateUserPassword(id, hash); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+
+		// Update or clear PIN
+		if req.ClearPin {
+			if err := s.db.UpdateUserPin(id, nil); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		} else if req.Pin != "" && len(req.Pin) == 4 {
+			pinHash, err := auth.HashPassword(req.Pin)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if err := s.db.UpdateUserPin(user.ID, &pinHash); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
@@ -4866,6 +5402,20 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 			} else {
 				log.Printf("Already in wanted list: %s", request.Title)
 			}
+
+			// Notify the requesting user that their request was approved
+			if s.notifications != nil {
+				go s.notifications.NotifyRequestApproved(request.UserID, request.Title, request.TmdbID, request.Type, request.PosterPath)
+			}
+		} else if updates.Status == "denied" {
+			// Notify the requesting user that their request was denied
+			if s.notifications != nil {
+				reason := ""
+				if updates.StatusReason != nil {
+					reason = *updates.StatusReason
+				}
+				go s.notifications.NotifyRequestDenied(request.UserID, request.Title, reason, request.PosterPath)
+			}
 		}
 
 		// Fetch updated request
@@ -6214,6 +6764,75 @@ func (s *Server) handleStorageStatus(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+func (s *Server) handleStorageAnalytics(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Get disk usage
+	var diskTotal, diskUsed, diskFree int64
+	for _, checkPath := range []string{"/media", "/app/data", "/"} {
+		usage, err := storage.GetDiskUsage(checkPath)
+		if err == nil {
+			diskTotal = int64(usage.Total)
+			diskUsed = int64(usage.Used)
+			diskFree = int64(usage.Free)
+			break
+		}
+	}
+
+	// Get storage by library
+	byLibrary, err := s.db.GetStorageByLibrary()
+	if err != nil {
+		log.Printf("Error getting storage by library: %v", err)
+		byLibrary = []database.LibrarySize{}
+	}
+
+	// Get storage by quality
+	byQuality, err := s.db.GetStorageByQuality()
+	if err != nil {
+		log.Printf("Error getting storage by quality: %v", err)
+		byQuality = []database.QualitySize{}
+	}
+
+	// Get storage by year
+	byYear, err := s.db.GetStorageByYear()
+	if err != nil {
+		log.Printf("Error getting storage by year: %v", err)
+		byYear = []database.YearSize{}
+	}
+
+	// Get largest items
+	largest, err := s.db.GetLargestItems(20)
+	if err != nil {
+		log.Printf("Error getting largest items: %v", err)
+		largest = []database.LargestItem{}
+	}
+
+	// Get duplicates
+	duplicates, err := s.db.GetMovieDuplicates()
+	if err != nil {
+		log.Printf("Error getting duplicates: %v", err)
+		duplicates = []database.DuplicateItem{}
+	}
+
+	response := database.StorageAnalytics{
+		Total:      diskTotal,
+		Used:       diskUsed,
+		Free:       diskFree,
+		ByLibrary:  byLibrary,
+		ByQuality:  byQuality,
+		ByYear:     byYear,
+		Largest:    largest,
+		Duplicates: duplicates,
+	}
+
+	json.NewEncoder(w).Encode(response)
+}
+
 // Blocklist handlers
 
 func (s *Server) handleBlocklist(w http.ResponseWriter, r *http.Request) {
@@ -6944,4 +7563,1147 @@ func (s *Server) handleFilesystemBrowse(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(fsResponse)
+}
+
+// Calendar types and handler
+
+type CalendarItem struct {
+	Date       string  `json:"date"`       // YYYY-MM-DD
+	Type       string  `json:"type"`       // episode, movie
+	Title      string  `json:"title"`      // Show name or movie title
+	Subtitle   string  `json:"subtitle"`   // "S02E05 - Episode Title" or "Theatrical Release"
+	TmdbID     int64   `json:"tmdbId"`
+	MediaID    *int64  `json:"mediaId"`    // Library ID if in library, null otherwise
+	PosterPath *string `json:"posterPath"`
+	InLibrary  bool    `json:"inLibrary"`
+	IsWanted   bool    `json:"isWanted"`
+	AirTime    string  `json:"airTime,omitempty"` // Optional time if known
+}
+
+func (s *Server) handleCalendar(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Parse query parameters
+	startStr := r.URL.Query().Get("start")
+	endStr := r.URL.Query().Get("end")
+	filter := r.URL.Query().Get("filter") // all, movies, tv, library, wanted
+
+	if filter == "" {
+		filter = "all"
+	}
+
+	// Parse dates, default to current month if not provided
+	now := time.Now()
+	var startDate, endDate time.Time
+	var err error
+
+	if startStr != "" {
+		startDate, err = time.Parse("2006-01-02", startStr)
+		if err != nil {
+			http.Error(w, "Invalid start date format", http.StatusBadRequest)
+			return
+		}
+	} else {
+		// Default to first day of current month
+		startDate = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.Local)
+	}
+
+	if endStr != "" {
+		endDate, err = time.Parse("2006-01-02", endStr)
+		if err != nil {
+			http.Error(w, "Invalid end date format", http.StatusBadRequest)
+			return
+		}
+	} else {
+		// Default to last day of current month
+		endDate = startDate.AddDate(0, 1, -1)
+	}
+
+	var items []CalendarItem
+
+	// Get TMDB client
+	tmdbClient := s.metadata.GetTMDBClient()
+
+	// Get library shows and their upcoming episodes
+	if filter == "all" || filter == "tv" || filter == "library" {
+		shows, err := s.db.GetShows()
+		if err == nil {
+			for _, show := range shows {
+				if show.TmdbID == nil {
+					continue
+				}
+
+				// Get TV details to find current/upcoming seasons
+				tvDetails, err := tmdbClient.GetTVDetails(*show.TmdbID)
+				if err != nil {
+					continue
+				}
+
+				// Check each season for episodes in date range
+				for _, seasonInfo := range tvDetails.Seasons {
+					if seasonInfo.SeasonNumber == 0 {
+						continue // Skip specials
+					}
+
+					seasonDetails, err := tmdbClient.GetSeasonDetails(*show.TmdbID, seasonInfo.SeasonNumber)
+					if err != nil {
+						continue
+					}
+
+					for _, ep := range seasonDetails.Episodes {
+						if ep.AirDate == "" {
+							continue
+						}
+
+						epDate, err := time.Parse("2006-01-02", ep.AirDate)
+						if err != nil {
+							continue
+						}
+
+						// Check if episode is within date range
+						if epDate.Before(startDate) || epDate.After(endDate) {
+							continue
+						}
+
+						showID := show.ID
+						items = append(items, CalendarItem{
+							Date:       ep.AirDate,
+							Type:       "episode",
+							Title:      show.Title,
+							Subtitle:   fmt.Sprintf("S%02dE%02d - %s", seasonInfo.SeasonNumber, ep.EpisodeNumber, ep.Name),
+							TmdbID:     *show.TmdbID,
+							MediaID:    &showID,
+							PosterPath: show.PosterPath,
+							InLibrary:  true,
+							IsWanted:   false,
+						})
+					}
+				}
+			}
+		}
+	}
+
+	// Get wanted items with release dates
+	if filter == "all" || filter == "movies" || filter == "wanted" {
+		wantedItems, err := s.db.GetWantedItems()
+		if err == nil {
+			for _, item := range wantedItems {
+				if item.Type == "movie" {
+					// Get movie details for release dates
+					movieDetails, err := tmdbClient.GetMovieDetails(item.TmdbID)
+					if err != nil {
+						continue
+					}
+
+					// Get US release dates
+					theatrical, digital := tmdb.GetUSReleaseDates(movieDetails.ReleaseDates)
+
+					// Add theatrical release if in range
+					if theatrical != "" {
+						// Parse the theatrical date (it comes with time)
+						theatricalDate, err := time.Parse("2006-01-02T15:04:05.000Z", theatrical)
+						if err != nil {
+							theatricalDate, err = time.Parse("2006-01-02", theatrical[:10])
+						}
+						if err == nil && !theatricalDate.Before(startDate) && !theatricalDate.After(endDate) {
+							items = append(items, CalendarItem{
+								Date:       theatricalDate.Format("2006-01-02"),
+								Type:       "movie",
+								Title:      item.Title,
+								Subtitle:   "Theatrical Release",
+								TmdbID:     item.TmdbID,
+								MediaID:    nil,
+								PosterPath: item.PosterPath,
+								InLibrary:  false,
+								IsWanted:   true,
+							})
+						}
+					}
+
+					// Add digital release if in range
+					if digital != "" {
+						digitalDate, err := time.Parse("2006-01-02T15:04:05.000Z", digital)
+						if err != nil {
+							digitalDate, err = time.Parse("2006-01-02", digital[:10])
+						}
+						if err == nil && !digitalDate.Before(startDate) && !digitalDate.After(endDate) {
+							items = append(items, CalendarItem{
+								Date:       digitalDate.Format("2006-01-02"),
+								Type:       "movie",
+								Title:      item.Title,
+								Subtitle:   "Digital Release",
+								TmdbID:     item.TmdbID,
+								MediaID:    nil,
+								PosterPath: item.PosterPath,
+								InLibrary:  false,
+								IsWanted:   true,
+							})
+						}
+					}
+
+					// If no US dates, use general release date
+					if theatrical == "" && digital == "" && movieDetails.ReleaseDate != "" {
+						releaseDate, err := time.Parse("2006-01-02", movieDetails.ReleaseDate)
+						if err == nil && !releaseDate.Before(startDate) && !releaseDate.After(endDate) {
+							items = append(items, CalendarItem{
+								Date:       movieDetails.ReleaseDate,
+								Type:       "movie",
+								Title:      item.Title,
+								Subtitle:   "Release",
+								TmdbID:     item.TmdbID,
+								MediaID:    nil,
+								PosterPath: item.PosterPath,
+								InLibrary:  false,
+								IsWanted:   true,
+							})
+						}
+					}
+				} else if item.Type == "show" {
+					// Get upcoming episodes for wanted shows
+					tvDetails, err := tmdbClient.GetTVDetails(item.TmdbID)
+					if err != nil {
+						continue
+					}
+
+					for _, seasonInfo := range tvDetails.Seasons {
+						if seasonInfo.SeasonNumber == 0 {
+							continue
+						}
+
+						seasonDetails, err := tmdbClient.GetSeasonDetails(item.TmdbID, seasonInfo.SeasonNumber)
+						if err != nil {
+							continue
+						}
+
+						for _, ep := range seasonDetails.Episodes {
+							if ep.AirDate == "" {
+								continue
+							}
+
+							epDate, err := time.Parse("2006-01-02", ep.AirDate)
+							if err != nil {
+								continue
+							}
+
+							if epDate.Before(startDate) || epDate.After(endDate) {
+								continue
+							}
+
+							items = append(items, CalendarItem{
+								Date:       ep.AirDate,
+								Type:       "episode",
+								Title:      item.Title,
+								Subtitle:   fmt.Sprintf("S%02dE%02d - %s", seasonInfo.SeasonNumber, ep.EpisodeNumber, ep.Name),
+								TmdbID:     item.TmdbID,
+								MediaID:    nil,
+								PosterPath: item.PosterPath,
+								InLibrary:  false,
+								IsWanted:   true,
+							})
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Sort items by date
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].Date < items[j].Date
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(items)
+}
+
+// Notification handlers
+
+func (s *Server) handleNotifications(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	user := r.Context().Value(userContextKey).(*database.User)
+
+	// Parse query params
+	unreadOnly := r.URL.Query().Get("unread") == "true"
+	limit := 50
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+
+	notifications, err := s.notifications.GetForUser(user.ID, unreadOnly, limit)
+	if err != nil {
+		http.Error(w, "Failed to get notifications", http.StatusInternalServerError)
+		return
+	}
+
+	if notifications == nil {
+		notifications = []database.Notification{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(notifications)
+}
+
+func (s *Server) handleNotificationUnreadCount(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	user := r.Context().Value(userContextKey).(*database.User)
+
+	count, err := s.notifications.GetUnreadCount(user.ID)
+	if err != nil {
+		http.Error(w, "Failed to get unread count", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]int{"count": count})
+}
+
+func (s *Server) handleNotificationReadAll(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	user := r.Context().Value(userContextKey).(*database.User)
+
+	if err := s.notifications.MarkAllRead(user.ID); err != nil {
+		http.Error(w, "Failed to mark all as read", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleNotification(w http.ResponseWriter, r *http.Request) {
+	// Extract notification ID from path: /api/notifications/{id} or /api/notifications/{id}/read
+	path := strings.TrimPrefix(r.URL.Path, "/api/notifications/")
+	parts := strings.Split(path, "/")
+	if len(parts) == 0 || parts[0] == "" {
+		http.Error(w, "Notification ID required", http.StatusBadRequest)
+		return
+	}
+
+	id, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid notification ID", http.StatusBadRequest)
+		return
+	}
+
+	// Check if this is a /read sub-route
+	if len(parts) > 1 && parts[1] == "read" {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		if err := s.notifications.MarkRead(id); err != nil {
+			http.Error(w, "Failed to mark as read", http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	// Handle DELETE
+	if r.Method == http.MethodDelete {
+		if err := s.notifications.Delete(id); err != nil {
+			http.Error(w, "Failed to delete notification", http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+}
+
+// Missing episodes types and handlers
+
+type MissingEpisode struct {
+	SeasonNumber  int    `json:"seasonNumber"`
+	EpisodeNumber int    `json:"episodeNumber"`
+	Title         string `json:"title"`
+	AirDate       string `json:"airDate"`
+	Overview      string `json:"overview"`
+	StillPath     string `json:"stillPath"`
+}
+
+type SeasonMissingSummary struct {
+	Season  int `json:"season"`
+	Missing int `json:"missing"`
+	Total   int `json:"total"`
+}
+
+type MissingEpisodesResult struct {
+	TotalEpisodes   int                    `json:"totalEpisodes"`
+	OwnedEpisodes   int                    `json:"ownedEpisodes"`
+	Missing         []MissingEpisode       `json:"missing"`
+	MissingBySeason []SeasonMissingSummary `json:"missingBySeason"`
+}
+
+func (s *Server) handleMissingEpisodes(w http.ResponseWriter, r *http.Request, show *database.Show) {
+	// Show must have a TMDB ID to check for missing episodes
+	if show.TmdbID == nil {
+		json.NewEncoder(w).Encode(MissingEpisodesResult{
+			Missing:         []MissingEpisode{},
+			MissingBySeason: []SeasonMissingSummary{},
+		})
+		return
+	}
+
+	// Get TMDB API key
+	apiKey, _ := s.db.GetSetting("tmdb_api_key")
+	if apiKey == "" {
+		http.Error(w, "TMDB API key not configured", http.StatusInternalServerError)
+		return
+	}
+
+	tmdbClient := tmdb.NewClient(apiKey, "")
+
+	// Get show details from TMDB including seasons
+	tvDetails, err := tmdbClient.GetTVDetails(*show.TmdbID)
+	if err != nil {
+		http.Error(w, "Failed to fetch show from TMDB: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Get owned episodes from database
+	ownedEpisodes, err := s.db.GetOwnedEpisodesByShow(show.ID)
+	if err != nil {
+		http.Error(w, "Failed to get owned episodes: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Create a set of owned episodes for quick lookup
+	ownedSet := make(map[string]bool)
+	for _, ep := range ownedEpisodes {
+		key := fmt.Sprintf("%d-%d", ep.SeasonNumber, ep.EpisodeNumber)
+		ownedSet[key] = true
+	}
+
+	var missing []MissingEpisode
+	var missingBySeason []SeasonMissingSummary
+	totalEpisodes := 0
+
+	// Iterate through each season (skip season 0 - specials)
+	for _, seasonInfo := range tvDetails.Seasons {
+		if seasonInfo.SeasonNumber == 0 {
+			continue // Skip specials
+		}
+
+		// Fetch detailed episode info for this season
+		seasonDetails, err := tmdbClient.GetSeasonDetails(*show.TmdbID, seasonInfo.SeasonNumber)
+		if err != nil {
+			log.Printf("Failed to fetch season %d details: %v", seasonInfo.SeasonNumber, err)
+			continue
+		}
+
+		seasonMissing := 0
+		seasonTotal := len(seasonDetails.Episodes)
+		totalEpisodes += seasonTotal
+
+		for _, ep := range seasonDetails.Episodes {
+			key := fmt.Sprintf("%d-%d", seasonInfo.SeasonNumber, ep.EpisodeNumber)
+			if !ownedSet[key] {
+				seasonMissing++
+				missing = append(missing, MissingEpisode{
+					SeasonNumber:  seasonInfo.SeasonNumber,
+					EpisodeNumber: ep.EpisodeNumber,
+					Title:         ep.Name,
+					AirDate:       ep.AirDate,
+					Overview:      ep.Overview,
+					StillPath:     ep.StillPath,
+				})
+			}
+		}
+
+		missingBySeason = append(missingBySeason, SeasonMissingSummary{
+			Season:  seasonInfo.SeasonNumber,
+			Missing: seasonMissing,
+			Total:   seasonTotal,
+		})
+	}
+
+	if missing == nil {
+		missing = []MissingEpisode{}
+	}
+	if missingBySeason == nil {
+		missingBySeason = []SeasonMissingSummary{}
+	}
+
+	result := MissingEpisodesResult{
+		TotalEpisodes:   totalEpisodes,
+		OwnedEpisodes:   len(ownedEpisodes),
+		Missing:         missing,
+		MissingBySeason: missingBySeason,
+	}
+
+	json.NewEncoder(w).Encode(result)
+}
+
+func (s *Server) handleRequestMissingEpisodes(w http.ResponseWriter, r *http.Request, show *database.Show) {
+	// Parse request body for optional season filter
+	var req struct {
+		SeasonNumber *int `json:"seasonNumber"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+
+	// Show must have a TMDB ID
+	if show.TmdbID == nil {
+		http.Error(w, "Show has no TMDB ID", http.StatusBadRequest)
+		return
+	}
+
+	// Get TMDB API key
+	apiKey, _ := s.db.GetSetting("tmdb_api_key")
+	if apiKey == "" {
+		http.Error(w, "TMDB API key not configured", http.StatusInternalServerError)
+		return
+	}
+
+	tmdbClient := tmdb.NewClient(apiKey, "")
+
+	// Get show details from TMDB
+	tvDetails, err := tmdbClient.GetTVDetails(*show.TmdbID)
+	if err != nil {
+		http.Error(w, "Failed to fetch show from TMDB: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Get owned episodes
+	ownedEpisodes, err := s.db.GetOwnedEpisodesByShow(show.ID)
+	if err != nil {
+		http.Error(w, "Failed to get owned episodes: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	ownedSet := make(map[string]bool)
+	for _, ep := range ownedEpisodes {
+		key := fmt.Sprintf("%d-%d", ep.SeasonNumber, ep.EpisodeNumber)
+		ownedSet[key] = true
+	}
+
+	// Check if show already has a wanted item
+	existingWanted, _ := s.db.GetWantedByTmdb("show", *show.TmdbID)
+
+	addedCount := 0
+
+	// Find missing episodes and track which seasons have missing episodes
+	missingSeasonsMap := make(map[int]bool)
+	for _, seasonInfo := range tvDetails.Seasons {
+		if seasonInfo.SeasonNumber == 0 {
+			continue
+		}
+
+		// If season filter is specified, skip non-matching seasons
+		if req.SeasonNumber != nil && seasonInfo.SeasonNumber != *req.SeasonNumber {
+			continue
+		}
+
+		seasonDetails, err := tmdbClient.GetSeasonDetails(*show.TmdbID, seasonInfo.SeasonNumber)
+		if err != nil {
+			continue
+		}
+
+		for _, ep := range seasonDetails.Episodes {
+			key := fmt.Sprintf("%d-%d", seasonInfo.SeasonNumber, ep.EpisodeNumber)
+			if !ownedSet[key] {
+				addedCount++
+				missingSeasonsMap[seasonInfo.SeasonNumber] = true
+			}
+		}
+	}
+
+	// Build sorted list of missing seasons
+	missingSeasons := make([]int, 0, len(missingSeasonsMap))
+	for s := range missingSeasonsMap {
+		missingSeasons = append(missingSeasons, s)
+	}
+	sort.Ints(missingSeasons)
+
+	// Convert to JSON array
+	seasonsJSON, _ := json.Marshal(missingSeasons)
+
+	// If there are missing episodes, create or update wanted item
+	if addedCount > 0 {
+		// Get default quality preset
+		var presetID *int64
+		presets, _ := s.db.GetQualityPresets()
+		for _, p := range presets {
+			if p.MediaType == "tv" && p.IsDefault && p.Enabled {
+				presetID = &p.ID
+				break
+			}
+		}
+		if presetID == nil {
+			for _, p := range presets {
+				if p.MediaType == "tv" && p.Enabled {
+					presetID = &p.ID
+					break
+				}
+			}
+		}
+
+		if existingWanted != nil {
+			// Update existing wanted item with new seasons and trigger search
+			existingSeasons := []int{}
+			if existingWanted.Seasons != "" {
+				json.Unmarshal([]byte(existingWanted.Seasons), &existingSeasons)
+			}
+			// Merge missing seasons with existing
+			seasonSet := make(map[int]bool)
+			for _, s := range existingSeasons {
+				seasonSet[s] = true
+			}
+			for _, s := range missingSeasons {
+				seasonSet[s] = true
+			}
+			mergedSeasons := make([]int, 0, len(seasonSet))
+			for s := range seasonSet {
+				mergedSeasons = append(mergedSeasons, s)
+			}
+			sort.Ints(mergedSeasons)
+			mergedJSON, _ := json.Marshal(mergedSeasons)
+
+			existingWanted.Seasons = string(mergedJSON)
+			existingWanted.Monitored = true
+			existingWanted.SearchNow = true
+			if err := s.db.UpdateWantedItem(existingWanted); err != nil {
+				log.Printf("Failed to update wanted item: %v", err)
+			}
+		} else {
+			// Create new wanted item
+			wanted := &database.WantedItem{
+				Type:            "show",
+				TmdbID:          *show.TmdbID,
+				Title:           show.Title,
+				Year:            show.Year,
+				PosterPath:      show.PosterPath,
+				QualityPresetID: presetID,
+				Monitored:       true,
+				Seasons:         string(seasonsJSON),
+				SearchNow:       true,
+			}
+			if err := s.db.CreateWantedItem(wanted); err != nil {
+				log.Printf("Failed to create wanted item: %v", err)
+			}
+		}
+	}
+
+	// Return result
+	json.NewEncoder(w).Encode(map[string]int{"addedCount": addedCount})
+}
+
+// ============================================================================
+// Collection handlers
+// ============================================================================
+
+func (s *Server) handleCollections(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	switch r.Method {
+	case http.MethodGet:
+		// Check for media-specific query parameters
+		tmdbIdStr := r.URL.Query().Get("tmdbId")
+		mediaType := r.URL.Query().Get("mediaType")
+
+		var collections []database.Collection
+		var err error
+
+		if tmdbIdStr != "" && mediaType != "" {
+			tmdbId, parseErr := strconv.ParseInt(tmdbIdStr, 10, 64)
+			if parseErr != nil {
+				http.Error(w, "Invalid tmdbId", http.StatusBadRequest)
+				return
+			}
+			collections, err = s.db.GetCollectionsForMedia(tmdbId, mediaType)
+		} else {
+			collections, err = s.db.GetCollections()
+		}
+
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if collections == nil {
+			collections = []database.Collection{}
+		}
+		json.NewEncoder(w).Encode(collections)
+
+	case http.MethodPost:
+		// Admin only for creation
+		user := s.getCurrentUser(r)
+		if user == nil || user.Role != "admin" {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+
+		var input struct {
+			Name        string  `json:"name"`
+			Description *string `json:"description"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		if input.Name == "" {
+			http.Error(w, "Name is required", http.StatusBadRequest)
+			return
+		}
+
+		coll := &database.Collection{
+			Name:        input.Name,
+			Description: input.Description,
+			IsAuto:      false,
+			SortOrder:   "custom",
+		}
+
+		if err := s.db.CreateCollection(coll); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(coll)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleCollection(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	// Parse the path: /api/collections/{id} or /api/collections/{id}/items or /api/collections/{id}/reorder
+	path := strings.TrimPrefix(r.URL.Path, "/api/collections/")
+	parts := strings.Split(path, "/")
+
+	if len(parts) == 0 || parts[0] == "" {
+		http.Error(w, "Collection ID required", http.StatusBadRequest)
+		return
+	}
+
+	id, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid collection ID", http.StatusBadRequest)
+		return
+	}
+
+	// Handle sub-routes
+	if len(parts) > 1 {
+		switch parts[1] {
+		case "items":
+			s.handleCollectionItems(w, r, id)
+			return
+		case "reorder":
+			s.handleCollectionReorder(w, r, id)
+			return
+		}
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		// Get collection with items
+		coll, err := s.db.GetCollection(id)
+		if err != nil {
+			http.Error(w, "Collection not found", http.StatusNotFound)
+			return
+		}
+
+		items, err := s.db.GetCollectionItems(id)
+		if err != nil {
+			items = []database.CollectionItem{}
+		}
+
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"id":               coll.ID,
+			"name":             coll.Name,
+			"description":      coll.Description,
+			"tmdbCollectionId": coll.TmdbCollectionID,
+			"posterPath":       coll.PosterPath,
+			"backdropPath":     coll.BackdropPath,
+			"isAuto":           coll.IsAuto,
+			"sortOrder":        coll.SortOrder,
+			"itemCount":        coll.ItemCount,
+			"ownedCount":       coll.OwnedCount,
+			"createdAt":        coll.CreatedAt,
+			"updatedAt":        coll.UpdatedAt,
+			"items":            items,
+		})
+
+	case http.MethodPut:
+		// Admin only
+		user := s.getCurrentUser(r)
+		if user == nil || user.Role != "admin" {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+
+		coll, err := s.db.GetCollection(id)
+		if err != nil {
+			http.Error(w, "Collection not found", http.StatusNotFound)
+			return
+		}
+
+		var input struct {
+			Name        *string `json:"name"`
+			Description *string `json:"description"`
+			SortOrder   *string `json:"sortOrder"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		if input.Name != nil {
+			coll.Name = *input.Name
+		}
+		if input.Description != nil {
+			coll.Description = input.Description
+		}
+		if input.SortOrder != nil {
+			coll.SortOrder = *input.SortOrder
+		}
+
+		if err := s.db.UpdateCollection(coll); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		json.NewEncoder(w).Encode(coll)
+
+	case http.MethodDelete:
+		// Admin only
+		user := s.getCurrentUser(r)
+		if user == nil || user.Role != "admin" {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+
+		if err := s.db.DeleteCollection(id); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleCollectionItems(w http.ResponseWriter, r *http.Request, collectionID int64) {
+	// Admin only for modifications
+	user := s.getCurrentUser(r)
+	if user == nil || user.Role != "admin" {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodPost:
+		var input struct {
+			MediaType  string  `json:"mediaType"`
+			TmdbID     int64   `json:"tmdbId"`
+			Title      string  `json:"title"`
+			Year       int     `json:"year"`
+			PosterPath *string `json:"posterPath"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		if input.MediaType == "" || input.TmdbID == 0 {
+			http.Error(w, "mediaType and tmdbId are required", http.StatusBadRequest)
+			return
+		}
+
+		item := &database.CollectionItem{
+			CollectionID: collectionID,
+			MediaType:    input.MediaType,
+			TmdbID:       input.TmdbID,
+			Title:        input.Title,
+			Year:         input.Year,
+			PosterPath:   input.PosterPath,
+		}
+
+		// Check if this item is already in the library
+		if input.MediaType == "movie" {
+			if movie, err := s.db.GetMovieByTmdb(input.TmdbID); err == nil && movie != nil {
+				item.MediaID = &movie.ID
+			}
+		} else if input.MediaType == "show" {
+			if show, err := s.db.GetShowByTmdb(input.TmdbID); err == nil && show != nil {
+				item.MediaID = &show.ID
+			}
+		}
+
+		if err := s.db.AddCollectionItem(item); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(item)
+
+	case http.MethodDelete:
+		// Get tmdbId and mediaType from query params
+		tmdbIDStr := r.URL.Query().Get("tmdbId")
+		mediaType := r.URL.Query().Get("mediaType")
+
+		if tmdbIDStr == "" || mediaType == "" {
+			http.Error(w, "tmdbId and mediaType query params required", http.StatusBadRequest)
+			return
+		}
+
+		tmdbID, err := strconv.ParseInt(tmdbIDStr, 10, 64)
+		if err != nil {
+			http.Error(w, "Invalid tmdbId", http.StatusBadRequest)
+			return
+		}
+
+		if err := s.db.RemoveCollectionItem(collectionID, tmdbID, mediaType); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleCollectionReorder(w http.ResponseWriter, r *http.Request, collectionID int64) {
+	// Admin only
+	user := s.getCurrentUser(r)
+	if user == nil || user.Role != "admin" {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var input struct {
+		ItemIDs []int64 `json:"itemIds"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if err := s.db.UpdateCollectionItemOrder(collectionID, input.ItemIDs); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Also update sort order to custom
+	coll, err := s.db.GetCollection(collectionID)
+	if err == nil && coll != nil {
+		coll.SortOrder = "custom"
+		s.db.UpdateCollection(coll)
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// handleLogs handles GET /api/logs
+func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	query := logging.LogQuery{
+		Level:  r.URL.Query().Get("level"),
+		Source: r.URL.Query().Get("source"),
+		Search: r.URL.Query().Get("search"),
+		Limit:  500, // Default limit
+	}
+
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if limit, err := strconv.Atoi(limitStr); err == nil && limit > 0 {
+			query.Limit = limit
+			if query.Limit > 1000 {
+				query.Limit = 1000 // Max limit
+			}
+		}
+	}
+
+	response := logging.Query(query)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// handleLogsDownload handles GET /api/logs/download
+func (s *Server) handleLogsDownload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	content := logging.ExportAll()
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename=\"outpost-logs.txt\"")
+	w.Write([]byte(content))
+}
+
+// handleHealthFull handles GET /api/health/full
+func (s *Server) handleHealthFull(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Set TMDB key from settings if needed
+	if key, err := s.db.GetSetting("tmdb_api_key"); err == nil && key != "" {
+		s.healthChecker.SetTMDBKey(key)
+	}
+
+	status := s.healthChecker.GetFullStatus()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(status)
+}
+
+// handleHealthCheck handles POST /api/health/check/{name}
+func (s *Server) handleHealthCheck(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract check name from path: /api/health/check/{name}
+	path := strings.TrimPrefix(r.URL.Path, "/api/health/check/")
+	if path == "" {
+		http.Error(w, "Check name required", http.StatusBadRequest)
+		return
+	}
+
+	// Set TMDB key from settings if needed
+	if key, err := s.db.GetSetting("tmdb_api_key"); err == nil && key != "" {
+		s.healthChecker.SetTMDBKey(key)
+	}
+
+	check := s.healthChecker.RunSingleCheck(path)
+	if check == nil {
+		http.Error(w, "Unknown health check", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(check)
+}
+
+// handleBackup handles POST /api/backup - creates and downloads a backup
+func (s *Server) handleBackup(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Create backup
+	appVersion := "0.1.0" // TODO: Get from config or build info
+	backup, err := s.db.CreateBackup(appVersion)
+	if err != nil {
+		log.Printf("Failed to create backup: %v", err)
+		http.Error(w, "Failed to create backup", http.StatusInternalServerError)
+		return
+	}
+
+	// Convert to JSON
+	data, err := json.MarshalIndent(backup, "", "  ")
+	if err != nil {
+		log.Printf("Failed to marshal backup: %v", err)
+		http.Error(w, "Failed to create backup", http.StatusInternalServerError)
+		return
+	}
+
+	// Set headers for file download
+	filename := fmt.Sprintf("outpost-backup-%s.json", time.Now().Format("2006-01-02"))
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	w.Write(data)
+}
+
+// handleRestore handles POST /api/backup/restore - restores from a backup file
+func (s *Server) handleRestore(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Get restore mode from query param (replace or merge)
+	mode := r.URL.Query().Get("mode")
+	if mode != "replace" && mode != "merge" {
+		mode = "merge" // Default to merge for safety
+	}
+
+	// Parse multipart form
+	if err := r.ParseMultipartForm(32 << 20); err != nil { // 32MB max
+		http.Error(w, "Failed to parse form", http.StatusBadRequest)
+		return
+	}
+
+	// Get the uploaded file
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		http.Error(w, "No file uploaded", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	// Read file content
+	var data []byte
+	buf := make([]byte, 1024)
+	for {
+		n, err := file.Read(buf)
+		if n > 0 {
+			data = append(data, buf[:n]...)
+		}
+		if err != nil {
+			break
+		}
+	}
+
+	// Validate backup
+	backup, err := database.ValidateBackup(data)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Perform restore
+	result, err := s.db.RestoreBackup(backup, mode)
+	if err != nil {
+		log.Printf("Failed to restore backup: %v", err)
+		http.Error(w, fmt.Sprintf("Failed to restore backup: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
 }

@@ -60,6 +60,34 @@ type MovieResult struct {
 	Popularity    float64 `json:"popularity"`
 }
 
+// MovieCollection represents the collection a movie belongs to
+type MovieCollection struct {
+	ID           int64  `json:"id"`
+	Name         string `json:"name"`
+	PosterPath   string `json:"poster_path"`
+	BackdropPath string `json:"backdrop_path"`
+}
+
+// CollectionDetails represents full details of a TMDB collection
+type CollectionDetails struct {
+	ID           int64            `json:"id"`
+	Name         string           `json:"name"`
+	Overview     string           `json:"overview"`
+	PosterPath   string           `json:"poster_path"`
+	BackdropPath string           `json:"backdrop_path"`
+	Parts        []CollectionPart `json:"parts"`
+}
+
+// CollectionPart represents a movie in a collection
+type CollectionPart struct {
+	ID          int64   `json:"id"`
+	Title       string  `json:"title"`
+	Overview    string  `json:"overview"`
+	ReleaseDate string  `json:"release_date"`
+	PosterPath  string  `json:"poster_path"`
+	VoteAverage float64 `json:"vote_average"`
+}
+
 type MovieDetails struct {
 	ID                    int64                 `json:"id"`
 	ImdbID                string                `json:"imdb_id"`
@@ -83,6 +111,7 @@ type MovieDetails struct {
 	Videos                Videos                `json:"videos"`
 	ReleaseDates          ReleaseDatesResult    `json:"release_dates"`
 	Recommendations       MovieSearchResult     `json:"recommendations"`
+	BelongsToCollection   *MovieCollection      `json:"belongs_to_collection"`
 }
 
 type ProductionCountry struct {
@@ -1371,4 +1400,19 @@ func (c *Client) GetEnrichedTVRecommendations(tmdbID int64, limit int) (*Enriche
 	}
 
 	return enriched, nil
+}
+
+// GetCollectionDetails fetches full details of a TMDB collection including all parts
+func (c *Client) GetCollectionDetails(collectionID int64) (*CollectionDetails, error) {
+	data, err := c.get(fmt.Sprintf("/collection/%d", collectionID), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var details CollectionDetails
+	if err := json.Unmarshal(data, &details); err != nil {
+		return nil, err
+	}
+
+	return &details, nil
 }

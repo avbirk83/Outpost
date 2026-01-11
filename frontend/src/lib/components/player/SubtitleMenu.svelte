@@ -45,7 +45,7 @@
 	}
 </script>
 
-{#if tracks.length > 0}
+{#if tracks && tracks.length > 0}
 	<div class="relative subtitle-menu">
 		<button
 			class="player-btn {selectedIndex !== null ? 'active' : ''}"

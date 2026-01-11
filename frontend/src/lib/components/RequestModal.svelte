@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { getQualityPresets, getTmdbImageUrl, getDiscoverShowDetail, type QualityPreset } from '$lib/api';
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import TypeBadge from './TypeBadge.svelte';
 	import Select from './ui/Select.svelte';
 
@@ -40,11 +40,21 @@
 	let selectedSeasons: Set<number> = $state(new Set());
 	let allSeasonsSelected = $derived(seasons.length > 0 && selectedSeasons.size === seasons.length);
 
+	// Lock body scroll when modal is open
+	onMount(() => {
+		document.body.style.overflow = 'hidden';
+	});
+
+	onDestroy(() => {
+		document.body.style.overflow = '';
+	});
+
 	onMount(async () => {
 		try {
-			// Load quality presets
+			// Load quality presets filtered by media type
 			const allPresets = await getQualityPresets();
-			presets = allPresets.filter(p => p.enabled);
+			const targetMediaType = item.type === 'movie' ? 'movie' : 'tv';
+			presets = allPresets.filter(p => p.enabled && p.mediaType === targetMediaType);
 			const defaultPreset = presets.find(p => p.isDefault);
 			if (defaultPreset) {
 				selectedPresetId = defaultPreset.id;
@@ -154,7 +164,7 @@
 	aria-modal="true"
 	aria-labelledby="modal-title"
 >
-	<div class="modal-container-lg">
+	<div class="modal-container-xl">
 		<!-- Header with backdrop -->
 		<div class="relative h-40 bg-gradient-to-b from-white/10 to-transparent flex-shrink-0">
 			{#if item.backdropPath}
@@ -207,7 +217,7 @@
 		</div>
 
 		<!-- Content -->
-		<div class="p-5 pt-14 space-y-5 overflow-y-auto flex-1">
+		<div class="p-5 pt-14 space-y-5 overflow-y-auto flex-1 scrollbar-thin">
 			<!-- Quality Preset -->
 			<div>
 				<label for="quality-preset" class="block text-sm font-medium text-text-primary mb-2">
@@ -262,7 +272,7 @@
 					{:else if seasons.length === 0}
 						<p class="text-sm text-text-muted">All seasons will be monitored.</p>
 					{:else}
-						<div class="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-48 overflow-y-auto pr-1">
+						<div class="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-48 overflow-y-auto pr-1 scrollbar-thin">
 							{#each seasons as season}
 								<button
 									onclick={() => toggleSeason(season.seasonNumber)}

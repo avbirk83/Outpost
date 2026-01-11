@@ -124,15 +124,166 @@ type Progress struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
+type Chapter struct {
+	ID           int64   `json:"id"`
+	MediaType    string  `json:"mediaType"` // movie, episode
+	MediaID      int64   `json:"mediaId"`
+	ChapterIndex int     `json:"index"`
+	Title        string  `json:"title"`
+	StartTime    float64 `json:"startTime"` // seconds
+	EndTime      float64 `json:"endTime"`   // seconds
+}
+
+type SkipSegment struct {
+	StartTime float64 `json:"startTime"` // seconds
+	EndTime   float64 `json:"endTime"`   // seconds
+}
+
+type SkipSegments struct {
+	Intro   *SkipSegment `json:"intro,omitempty"`
+	Credits *SkipSegment `json:"credits,omitempty"`
+}
+
 type User struct {
-	ID           int64     `json:"id"`
-	Username     string    `json:"username"`
-	PasswordHash string    `json:"-"` // Never expose in JSON
-	Role         string    `json:"role"` // admin, user, kid
-	CreatedAt    time.Time `json:"createdAt"`
+	ID                 int64     `json:"id"`
+	Username           string    `json:"username"`
+	PasswordHash       string    `json:"-"` // Never expose in JSON
+	Role               string    `json:"role"` // admin, user, kid
+	ContentRatingLimit *string   `json:"contentRatingLimit,omitempty"` // G, PG, PG-13, R, NC-17, or nil (no limit)
+	PinHash            *string   `json:"-"`                            // PIN hash, never expose
+	RequirePin         bool      `json:"requirePin"`                   // Require PIN for elevated content
+	CreatedAt          time.Time `json:"createdAt"`
+}
+
+// ContentRatingLevel returns the numeric level for a content rating (for comparison)
+func ContentRatingLevel(rating string) int {
+	switch rating {
+	case "G":
+		return 1
+	case "PG":
+		return 2
+	case "PG-13":
+		return 3
+	case "R":
+		return 4
+	case "NC-17":
+		return 5
+	default:
+		return 0 // Unknown or unrated
+	}
+}
+
+// NormalizeContentRating converts various content rating formats to US MPAA ratings
+func NormalizeContentRating(rating string, country string) string {
+	if rating == "" {
+		return ""
+	}
+
+	// Already normalized US ratings
+	switch rating {
+	case "G", "PG", "PG-13", "R", "NC-17":
+		return rating
+	}
+
+	// US TV ratings
+	switch rating {
+	case "TV-Y", "TV-Y7", "TV-G":
+		return "G"
+	case "TV-PG":
+		return "PG"
+	case "TV-14":
+		return "PG-13"
+	case "TV-MA":
+		return "R"
+	}
+
+	// UK ratings (BBFC)
+	switch rating {
+	case "U", "Uc":
+		return "G"
+	case "PG": // UK PG
+		return "PG"
+	case "12", "12A":
+		return "PG-13"
+	case "15":
+		return "R"
+	case "18", "R18":
+		return "NC-17"
+	}
+
+	// Australia ratings
+	switch rating {
+	case "G", "E":
+		return "G"
+	case "M", "PG": // Australia
+		return "PG"
+	case "MA", "MA15+", "M15+":
+		return "PG-13"
+	case "R", "R18+":
+		return "R"
+	case "X", "X18+":
+		return "NC-17"
+	}
+
+	// Germany ratings (FSK)
+	switch rating {
+	case "FSK 0":
+		return "G"
+	case "FSK 6":
+		return "PG"
+	case "FSK 12":
+		return "PG-13"
+	case "FSK 16":
+		return "R"
+	case "FSK 18":
+		return "NC-17"
+	}
+
+	// Canada ratings
+	switch rating {
+	case "G", "E":
+		return "G"
+	case "PG":
+		return "PG"
+	case "14A", "14+":
+		return "PG-13"
+	case "18A", "18+", "R":
+		return "R"
+	case "A":
+		return "NC-17"
+	}
+
+	// Default: try to match common patterns
+	ratingUpper := rating
+	if len(rating) > 0 {
+		// Handle numeric ratings
+		switch rating {
+		case "0", "6":
+			return "G"
+		case "7", "10":
+			return "PG"
+		case "12", "13":
+			return "PG-13"
+		case "16", "17":
+			return "R"
+		case "18", "21":
+			return "NC-17"
+		}
+	}
+
+	// If we can't determine, return as-is (will show as "Unrated" in UI)
+	return ratingUpper
 }
 
 type Session struct {
+	ID        int64     `json:"id"`
+	UserID    int64     `json:"userId"`
+	Token     string    `json:"token"`
+	ExpiresAt time.Time `json:"expiresAt"`
+}
+
+// PinElevation represents a temporary elevated access session after PIN verification
+type PinElevation struct {
 	ID        int64     `json:"id"`
 	UserID    int64     `json:"userId"`
 	Token     string    `json:"token"`
@@ -338,13 +489,15 @@ type QualityPreset struct {
 }
 
 type MediaQualityOverride struct {
-	ID               int64     `json:"id"`
-	MediaID          int64     `json:"mediaId"`
-	MediaType        string    `json:"mediaType"`
-	PresetID         *int64    `json:"presetId"`
-	Monitored        bool      `json:"monitored"`
-	MonitoredSeasons string    `json:"monitoredSeasons,omitempty"` // JSON array of season numbers, empty = all
-	CreatedAt        time.Time `json:"createdAt"`
+	ID                    int64     `json:"id"`
+	MediaID               int64     `json:"mediaId"`
+	MediaType             string    `json:"mediaType"`
+	PresetID              *int64    `json:"presetId"`
+	Monitored             bool      `json:"monitored"`
+	MonitoredSeasons      string    `json:"monitoredSeasons,omitempty"`      // JSON array of season numbers, empty = all
+	PreferredAudioLang    string    `json:"preferredAudioLang,omitempty"`    // ISO 639-1 language code (e.g., "en", "ja")
+	PreferredSubtitleLang string    `json:"preferredSubtitleLang,omitempty"` // ISO 639-1 language code or "off"
+	CreatedAt             time.Time `json:"createdAt"`
 }
 
 type MediaQualityStatus struct {
@@ -545,6 +698,50 @@ type TaskHistory struct {
 	Details        *string    `json:"details"`
 }
 
+// Notification represents an in-app notification
+type Notification struct {
+	ID        int64     `json:"id"`
+	UserID    int64     `json:"userId"`
+	Type      string    `json:"type"`    // new_content, request_approved, request_denied, download_complete, download_failed
+	Title     string    `json:"title"`
+	Message   string    `json:"message"`
+	ImageURL  *string   `json:"imageUrl,omitempty"`
+	Link      *string   `json:"link,omitempty"`
+	Read      bool      `json:"read"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+// Collection represents a collection of movies/shows (franchise, custom list)
+type Collection struct {
+	ID               int64     `json:"id"`
+	Name             string    `json:"name"`
+	Description      *string   `json:"description,omitempty"`
+	TmdbCollectionID *int64    `json:"tmdbCollectionId,omitempty"`
+	PosterPath       *string   `json:"posterPath,omitempty"`
+	BackdropPath     *string   `json:"backdropPath,omitempty"`
+	IsAuto           bool      `json:"isAuto"`
+	SortOrder        string    `json:"sortOrder"` // release, added, title, custom
+	ItemCount        int       `json:"itemCount,omitempty"`
+	OwnedCount       int       `json:"ownedCount,omitempty"`
+	CreatedAt        time.Time `json:"createdAt"`
+	UpdatedAt        time.Time `json:"updatedAt"`
+}
+
+// CollectionItem represents a movie or show in a collection
+type CollectionItem struct {
+	ID           int64     `json:"id"`
+	CollectionID int64     `json:"collectionId"`
+	MediaType    string    `json:"mediaType"` // movie, show
+	MediaID      *int64    `json:"mediaId,omitempty"`
+	TmdbID       int64     `json:"tmdbId"`
+	Title        string    `json:"title"`
+	Year         int       `json:"year,omitempty"`
+	PosterPath   *string   `json:"posterPath,omitempty"`
+	SortOrder    int       `json:"sortOrder"`
+	InLibrary    bool      `json:"inLibrary"`
+	AddedAt      time.Time `json:"addedAt"`
+}
+
 func New(dbPath string) (*Database, error) {
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -705,6 +902,17 @@ func (d *Database) migrate() error {
 		expires_at DATETIME NOT NULL,
 		FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 	);
+
+	-- PIN elevation sessions for parental controls
+	CREATE TABLE IF NOT EXISTS pin_elevations (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id INTEGER NOT NULL,
+		token TEXT NOT NULL UNIQUE,
+		expires_at DATETIME NOT NULL,
+		FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+	);
+	CREATE INDEX IF NOT EXISTS idx_pin_elevations_token ON pin_elevations(token);
+	CREATE INDEX IF NOT EXISTS idx_pin_elevations_user ON pin_elevations(user_id);
 
 	CREATE TABLE IF NOT EXISTS user_watchlist (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1198,6 +1406,80 @@ func (d *Database) migrate() error {
 	CREATE INDEX IF NOT EXISTS idx_requests_user_id ON requests(user_id);
 	CREATE INDEX IF NOT EXISTS idx_requests_tmdb_id ON requests(type, tmdb_id);
 	CREATE INDEX IF NOT EXISTS idx_wanted_tmdb_id ON wanted(type, tmdb_id);
+
+	-- Video chapters
+	CREATE TABLE IF NOT EXISTS chapters (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		media_type TEXT NOT NULL,
+		media_id INTEGER NOT NULL,
+		chapter_index INTEGER NOT NULL,
+		title TEXT,
+		start_time REAL NOT NULL,
+		end_time REAL NOT NULL,
+		UNIQUE(media_type, media_id, chapter_index)
+	);
+	CREATE INDEX IF NOT EXISTS idx_chapters_media ON chapters(media_type, media_id);
+
+	-- Skip segments (intro/credits) for shows
+	CREATE TABLE IF NOT EXISTS skip_segments (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		show_id INTEGER NOT NULL,
+		segment_type TEXT NOT NULL,
+		start_time REAL NOT NULL,
+		end_time REAL NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE(show_id, segment_type),
+		FOREIGN KEY (show_id) REFERENCES shows(id) ON DELETE CASCADE
+	);
+	CREATE INDEX IF NOT EXISTS idx_skip_segments_show ON skip_segments(show_id);
+
+	-- In-app notifications
+	CREATE TABLE IF NOT EXISTS notifications (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id INTEGER NOT NULL,
+		type TEXT NOT NULL,
+		title TEXT NOT NULL,
+		message TEXT NOT NULL,
+		image_url TEXT,
+		link TEXT,
+		read INTEGER DEFAULT 0,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+	);
+	CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON notifications(user_id, read);
+	CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications(created_at);
+
+	-- Collections (franchises, custom lists)
+	CREATE TABLE IF NOT EXISTS collections (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL,
+		description TEXT,
+		tmdb_collection_id INTEGER UNIQUE,
+		poster_path TEXT,
+		backdrop_path TEXT,
+		is_auto INTEGER DEFAULT 0,
+		sort_order TEXT DEFAULT 'release',
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+	CREATE INDEX IF NOT EXISTS idx_collections_tmdb ON collections(tmdb_collection_id);
+
+	CREATE TABLE IF NOT EXISTS collection_items (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		collection_id INTEGER NOT NULL,
+		media_type TEXT NOT NULL CHECK (media_type IN ('movie', 'show')),
+		media_id INTEGER,
+		tmdb_id INTEGER NOT NULL,
+		title TEXT NOT NULL,
+		year INTEGER,
+		poster_path TEXT,
+		sort_order INTEGER DEFAULT 0,
+		added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE,
+		UNIQUE(collection_id, tmdb_id, media_type)
+	);
+	CREATE INDEX IF NOT EXISTS idx_collection_items_collection ON collection_items(collection_id);
+	CREATE INDEX IF NOT EXISTS idx_collection_items_tmdb ON collection_items(tmdb_id);
 	`
 	_, err := d.db.Exec(schema)
 	if err != nil {
@@ -1271,6 +1553,13 @@ func (d *Database) migrate() error {
 		"ALTER TABLE quality_presets ADD COLUMN preferred_language TEXT DEFAULT 'any'",
 		// Per-season monitoring
 		"ALTER TABLE media_quality_override ADD COLUMN monitored_seasons TEXT DEFAULT ''",
+		// Audio/subtitle preferences for shows
+		"ALTER TABLE media_quality_override ADD COLUMN preferred_audio_lang TEXT DEFAULT ''",
+		"ALTER TABLE media_quality_override ADD COLUMN preferred_subtitle_lang TEXT DEFAULT ''",
+		// Parental controls
+		"ALTER TABLE users ADD COLUMN content_rating_limit TEXT",
+		"ALTER TABLE users ADD COLUMN pin_hash TEXT",
+		"ALTER TABLE users ADD COLUMN require_pin INTEGER DEFAULT 0",
 	}
 	for _, m := range migrations {
 		// Ignore errors (column may already exist)
@@ -1800,6 +2089,36 @@ func (d *Database) GetEpisodeByPath(path string) (*Episode, error) {
 	return &e, nil
 }
 
+// OwnedEpisode represents an owned episode with season/episode numbers
+type OwnedEpisode struct {
+	SeasonNumber  int
+	EpisodeNumber int
+}
+
+// GetOwnedEpisodesByShow returns all owned episodes for a show as season/episode number pairs
+func (d *Database) GetOwnedEpisodesByShow(showID int64) ([]OwnedEpisode, error) {
+	rows, err := d.db.Query(`
+		SELECT s.season_number, e.episode_number
+		FROM episodes e
+		JOIN seasons s ON e.season_id = s.id
+		WHERE s.show_id = ?
+		ORDER BY s.season_number, e.episode_number`, showID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var episodes []OwnedEpisode
+	for rows.Next() {
+		var ep OwnedEpisode
+		if err := rows.Scan(&ep.SeasonNumber, &ep.EpisodeNumber); err != nil {
+			return nil, err
+		}
+		episodes = append(episodes, ep)
+	}
+	return episodes, nil
+}
+
 func (d *Database) GetEpisode(id int64) (*Episode, error) {
 	var e Episode
 	err := d.db.QueryRow(`
@@ -1810,6 +2129,17 @@ func (d *Database) GetEpisode(id int64) (*Episode, error) {
 		return nil, err
 	}
 	return &e, nil
+}
+
+func (d *Database) GetShowIDForEpisode(episodeID int64) (int64, error) {
+	var showID int64
+	err := d.db.QueryRow(`
+		SELECT s.show_id
+		FROM episodes e
+		JOIN seasons s ON e.season_id = s.id
+		WHERE e.id = ?`, episodeID,
+	).Scan(&showID)
+	return showID, err
 }
 
 func (d *Database) DeleteEpisode(id int64) error {
@@ -1996,8 +2326,7 @@ func (d *Database) GetAllSettings() (map[string]string, error) {
 // FormatSettings controls which file formats are acceptable for download
 type FormatSettings struct {
 	AcceptedContainers []string `json:"acceptedContainers"` // e.g., ["mkv", "mp4", "avi"]
-	RejectDiscs        bool     `json:"rejectDiscs"`        // Reject BDMV, VIDEO_TS, full disc releases
-	RejectArchives     bool     `json:"rejectArchives"`     // Reject RAR, ZIP releases
+	RejectedKeywords   []string `json:"rejectedKeywords"`   // Keywords to reject (e.g., "bdmv", "rar", "cam")
 	AutoBlocklist      bool     `json:"autoBlocklist"`      // Add rejected releases to blocklist
 }
 
@@ -2005,9 +2334,20 @@ type FormatSettings struct {
 func DefaultFormatSettings() *FormatSettings {
 	return &FormatSettings{
 		AcceptedContainers: []string{"mkv", "mp4", "avi", "mov", "webm", "m4v", "ts", "m2ts", "wmv", "flv"},
-		RejectDiscs:        true,
-		RejectArchives:     true,
-		AutoBlocklist:      true,
+		RejectedKeywords: []string{
+			// Disc releases
+			"bdmv", "video_ts", "iso", "full disc", "complete disc", "disc1", "disc2",
+			// Archives
+			"rar", "zip", "7z",
+			// Low quality captures
+			"cam", "camrip", "hdcam", "hdts", "telesync", "telecine", "ts-scr",
+			"dvdscr", "dvdscreener", "screener", "scr", "r5", "workprint",
+			// Samples
+			"sample",
+			// 3D (most people don't want)
+			"3d", "hsbs", "hou",
+		},
+		AutoBlocklist: true,
 	}
 }
 
@@ -2061,12 +2401,109 @@ func (d *Database) SaveProgress(p *Progress) error {
 	return err
 }
 
+// Chapter operations
+
+func (d *Database) GetChapters(mediaType string, mediaID int64) ([]Chapter, error) {
+	rows, err := d.db.Query(
+		"SELECT id, media_type, media_id, chapter_index, title, start_time, end_time FROM chapters WHERE media_type = ? AND media_id = ? ORDER BY chapter_index",
+		mediaType, mediaID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var chapters []Chapter
+	for rows.Next() {
+		var c Chapter
+		var title sql.NullString
+		if err := rows.Scan(&c.ID, &c.MediaType, &c.MediaID, &c.ChapterIndex, &title, &c.StartTime, &c.EndTime); err != nil {
+			return nil, err
+		}
+		if title.Valid {
+			c.Title = title.String
+		}
+		chapters = append(chapters, c)
+	}
+	return chapters, nil
+}
+
+func (d *Database) SaveChapters(mediaType string, mediaID int64, chapters []Chapter) error {
+	// Delete existing chapters first
+	if err := d.DeleteChapters(mediaType, mediaID); err != nil {
+		return err
+	}
+
+	// Insert new chapters
+	for _, c := range chapters {
+		_, err := d.db.Exec(
+			"INSERT INTO chapters (media_type, media_id, chapter_index, title, start_time, end_time) VALUES (?, ?, ?, ?, ?, ?)",
+			mediaType, mediaID, c.ChapterIndex, c.Title, c.StartTime, c.EndTime,
+		)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (d *Database) DeleteChapters(mediaType string, mediaID int64) error {
+	_, err := d.db.Exec("DELETE FROM chapters WHERE media_type = ? AND media_id = ?", mediaType, mediaID)
+	return err
+}
+
+// Skip segment operations
+
+func (d *Database) GetSkipSegments(showID int64) (*SkipSegments, error) {
+	rows, err := d.db.Query(
+		"SELECT segment_type, start_time, end_time FROM skip_segments WHERE show_id = ?",
+		showID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	segments := &SkipSegments{}
+	for rows.Next() {
+		var segmentType string
+		var startTime, endTime float64
+		if err := rows.Scan(&segmentType, &startTime, &endTime); err != nil {
+			return nil, err
+		}
+		segment := &SkipSegment{StartTime: startTime, EndTime: endTime}
+		if segmentType == "intro" {
+			segments.Intro = segment
+		} else if segmentType == "credits" {
+			segments.Credits = segment
+		}
+	}
+	return segments, nil
+}
+
+func (d *Database) SaveSkipSegment(showID int64, segmentType string, startTime, endTime float64) error {
+	_, err := d.db.Exec(
+		`INSERT INTO skip_segments (show_id, segment_type, start_time, end_time)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(show_id, segment_type) DO UPDATE SET
+			start_time = excluded.start_time,
+			end_time = excluded.end_time`,
+		showID, segmentType, startTime, endTime,
+	)
+	return err
+}
+
+func (d *Database) DeleteSkipSegment(showID int64, segmentType string) error {
+	_, err := d.db.Exec("DELETE FROM skip_segments WHERE show_id = ? AND segment_type = ?", showID, segmentType)
+	return err
+}
+
 // User operations
 
 func (d *Database) CreateUser(user *User) error {
 	result, err := d.db.Exec(
-		"INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
-		user.Username, user.PasswordHash, user.Role,
+		"INSERT INTO users (username, password_hash, role, content_rating_limit, pin_hash, require_pin) VALUES (?, ?, ?, ?, ?, ?)",
+		user.Username, user.PasswordHash, user.Role, user.ContentRatingLimit, user.PinHash, user.RequirePin,
 	)
 	if err != nil {
 		return err
@@ -2077,28 +2514,32 @@ func (d *Database) CreateUser(user *User) error {
 
 func (d *Database) GetUserByUsername(username string) (*User, error) {
 	var u User
+	var requirePin int
 	err := d.db.QueryRow(
-		"SELECT id, username, password_hash, role, created_at FROM users WHERE username = ?", username,
-	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.CreatedAt)
+		"SELECT id, username, password_hash, role, content_rating_limit, pin_hash, require_pin, created_at FROM users WHERE username = ?", username,
+	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.ContentRatingLimit, &u.PinHash, &requirePin, &u.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
+	u.RequirePin = requirePin == 1
 	return &u, nil
 }
 
 func (d *Database) GetUserByID(id int64) (*User, error) {
 	var u User
+	var requirePin int
 	err := d.db.QueryRow(
-		"SELECT id, username, password_hash, role, created_at FROM users WHERE id = ?", id,
-	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.CreatedAt)
+		"SELECT id, username, password_hash, role, content_rating_limit, pin_hash, require_pin, created_at FROM users WHERE id = ?", id,
+	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.ContentRatingLimit, &u.PinHash, &requirePin, &u.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
+	u.RequirePin = requirePin == 1
 	return &u, nil
 }
 
 func (d *Database) GetUsers() ([]User, error) {
-	rows, err := d.db.Query("SELECT id, username, password_hash, role, created_at FROM users ORDER BY created_at")
+	rows, err := d.db.Query("SELECT id, username, password_hash, role, content_rating_limit, pin_hash, require_pin, created_at FROM users ORDER BY created_at")
 	if err != nil {
 		return nil, err
 	}
@@ -2107,9 +2548,11 @@ func (d *Database) GetUsers() ([]User, error) {
 	var users []User
 	for rows.Next() {
 		var u User
-		if err := rows.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.CreatedAt); err != nil {
+		var requirePin int
+		if err := rows.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.ContentRatingLimit, &u.PinHash, &requirePin, &u.CreatedAt); err != nil {
 			return nil, err
 		}
+		u.RequirePin = requirePin == 1
 		users = append(users, u)
 	}
 	return users, nil
@@ -2117,9 +2560,14 @@ func (d *Database) GetUsers() ([]User, error) {
 
 func (d *Database) UpdateUser(user *User) error {
 	_, err := d.db.Exec(
-		"UPDATE users SET username = ?, role = ? WHERE id = ?",
-		user.Username, user.Role, user.ID,
+		"UPDATE users SET username = ?, role = ?, content_rating_limit = ?, require_pin = ? WHERE id = ?",
+		user.Username, user.Role, user.ContentRatingLimit, user.RequirePin, user.ID,
 	)
+	return err
+}
+
+func (d *Database) UpdateUserPin(id int64, pinHash *string) error {
+	_, err := d.db.Exec("UPDATE users SET pin_hash = ? WHERE id = ?", pinHash, id)
 	return err
 }
 
@@ -2176,6 +2624,46 @@ func (d *Database) DeleteExpiredSessions() error {
 
 func (d *Database) DeleteUserSessions(userID int64) error {
 	_, err := d.db.Exec("DELETE FROM sessions WHERE user_id = ?", userID)
+	return err
+}
+
+// PIN elevation operations
+
+func (d *Database) CreatePinElevation(elevation *PinElevation) error {
+	result, err := d.db.Exec(
+		"INSERT INTO pin_elevations (user_id, token, expires_at) VALUES (?, ?, ?)",
+		elevation.UserID, elevation.Token, elevation.ExpiresAt,
+	)
+	if err != nil {
+		return err
+	}
+	elevation.ID, _ = result.LastInsertId()
+	return nil
+}
+
+func (d *Database) GetPinElevationByToken(token string) (*PinElevation, error) {
+	var e PinElevation
+	err := d.db.QueryRow(
+		"SELECT id, user_id, token, expires_at FROM pin_elevations WHERE token = ? AND expires_at > CURRENT_TIMESTAMP", token,
+	).Scan(&e.ID, &e.UserID, &e.Token, &e.ExpiresAt)
+	if err != nil {
+		return nil, err
+	}
+	return &e, nil
+}
+
+func (d *Database) DeletePinElevation(token string) error {
+	_, err := d.db.Exec("DELETE FROM pin_elevations WHERE token = ?", token)
+	return err
+}
+
+func (d *Database) DeleteExpiredPinElevations() error {
+	_, err := d.db.Exec("DELETE FROM pin_elevations WHERE expires_at < CURRENT_TIMESTAMP")
+	return err
+}
+
+func (d *Database) DeleteUserPinElevations(userID int64) error {
+	_, err := d.db.Exec("DELETE FROM pin_elevations WHERE user_id = ?", userID)
 	return err
 }
 
@@ -4040,6 +4528,9 @@ func (d *Database) GetMediaQualityStatus(mediaID int64, mediaType string) (*Medi
 		&s.CurrentHDR, &s.CurrentAudio, &s.CurrentEdition, &targetMet,
 		&upgradeAvailable, &s.LastSearch, &s.CreatedAt, &s.UpdatedAt,
 	)
+	if err == sql.ErrNoRows {
+		return nil, nil // No status record exists yet
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -4623,11 +5114,13 @@ func (d *Database) IsIndexerExcludedForLibrary(indexerID, libraryID int64) (bool
 func (d *Database) GetMediaQualityOverride(mediaID int64, mediaType string) (*MediaQualityOverride, error) {
 	var override MediaQualityOverride
 	err := d.db.QueryRow(`
-		SELECT id, media_id, media_type, preset_id, monitored, COALESCE(monitored_seasons, ''), created_at
+		SELECT id, media_id, media_type, preset_id, monitored, COALESCE(monitored_seasons, ''),
+		       COALESCE(preferred_audio_lang, ''), COALESCE(preferred_subtitle_lang, ''), created_at
 		FROM media_quality_override
 		WHERE media_id = ? AND media_type = ?`, mediaID, mediaType).Scan(
 		&override.ID, &override.MediaID, &override.MediaType,
-		&override.PresetID, &override.Monitored, &override.MonitoredSeasons, &override.CreatedAt)
+		&override.PresetID, &override.Monitored, &override.MonitoredSeasons,
+		&override.PreferredAudioLang, &override.PreferredSubtitleLang, &override.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -4639,9 +5132,10 @@ func (d *Database) GetMediaQualityOverride(mediaID int64, mediaType string) (*Me
 
 func (d *Database) SetMediaQualityOverride(override *MediaQualityOverride) error {
 	result, err := d.db.Exec(`
-		INSERT OR REPLACE INTO media_quality_override (media_id, media_type, preset_id, monitored, monitored_seasons)
-		VALUES (?, ?, ?, ?, ?)`,
-		override.MediaID, override.MediaType, override.PresetID, override.Monitored, override.MonitoredSeasons)
+		INSERT OR REPLACE INTO media_quality_override (media_id, media_type, preset_id, monitored, monitored_seasons, preferred_audio_lang, preferred_subtitle_lang)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		override.MediaID, override.MediaType, override.PresetID, override.Monitored, override.MonitoredSeasons,
+		override.PreferredAudioLang, override.PreferredSubtitleLang)
 	if err != nil {
 		return err
 	}
@@ -4887,4 +5381,806 @@ func (d *Database) CleanupTaskHistory(daysToKeep int) error {
 		DELETE FROM task_history
 		WHERE started_at < datetime('now', '-' || ? || ' days')`, daysToKeep)
 	return err
+}
+
+// Notification methods
+
+// CreateNotification creates a new notification for a user
+func (d *Database) CreateNotification(userID int64, notifType, title, message string, imageURL, link *string) error {
+	_, err := d.db.Exec(`
+		INSERT INTO notifications (user_id, type, title, message, image_url, link)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		userID, notifType, title, message, imageURL, link)
+	return err
+}
+
+// GetNotifications returns notifications for a user
+func (d *Database) GetNotifications(userID int64, unreadOnly bool, limit int) ([]Notification, error) {
+	query := `
+		SELECT id, user_id, type, title, message, image_url, link, read, created_at
+		FROM notifications
+		WHERE user_id = ?`
+	if unreadOnly {
+		query += " AND read = 0"
+	}
+	query += " ORDER BY created_at DESC LIMIT ?"
+
+	rows, err := d.db.Query(query, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var notifications []Notification
+	for rows.Next() {
+		var n Notification
+		var readInt int
+		err := rows.Scan(&n.ID, &n.UserID, &n.Type, &n.Title, &n.Message,
+			&n.ImageURL, &n.Link, &readInt, &n.CreatedAt)
+		if err != nil {
+			return nil, err
+		}
+		n.Read = readInt == 1
+		notifications = append(notifications, n)
+	}
+	return notifications, nil
+}
+
+// GetUnreadNotificationCount returns the count of unread notifications for a user
+func (d *Database) GetUnreadNotificationCount(userID int64) (int, error) {
+	var count int
+	err := d.db.QueryRow(`
+		SELECT COUNT(*) FROM notifications
+		WHERE user_id = ? AND read = 0`, userID).Scan(&count)
+	return count, err
+}
+
+// MarkNotificationRead marks a single notification as read
+func (d *Database) MarkNotificationRead(notificationID int64) error {
+	_, err := d.db.Exec(`UPDATE notifications SET read = 1 WHERE id = ?`, notificationID)
+	return err
+}
+
+// MarkAllNotificationsRead marks all notifications as read for a user
+func (d *Database) MarkAllNotificationsRead(userID int64) error {
+	_, err := d.db.Exec(`UPDATE notifications SET read = 1 WHERE user_id = ?`, userID)
+	return err
+}
+
+// DeleteNotification deletes a notification
+func (d *Database) DeleteNotification(notificationID int64) error {
+	_, err := d.db.Exec(`DELETE FROM notifications WHERE id = ?`, notificationID)
+	return err
+}
+
+// CleanupOldNotifications removes read notifications older than specified days
+func (d *Database) CleanupOldNotifications(daysToKeep int) error {
+	_, err := d.db.Exec(`
+		DELETE FROM notifications
+		WHERE read = 1 AND created_at < datetime('now', '-' || ? || ' days')`, daysToKeep)
+	return err
+}
+
+// GetAdminUserIDs returns all admin user IDs for sending admin notifications
+func (d *Database) GetAdminUserIDs() ([]int64, error) {
+	rows, err := d.db.Query(`SELECT id FROM users WHERE role = 'admin'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
+// ============================================================================
+// Collection methods
+// ============================================================================
+
+// GetCollections returns all collections with item and owned counts
+func (d *Database) GetCollections() ([]Collection, error) {
+	rows, err := d.db.Query(`
+		SELECT c.id, c.name, c.description, c.tmdb_collection_id, c.poster_path, c.backdrop_path,
+			   c.is_auto, c.sort_order, c.created_at, c.updated_at,
+			   COUNT(ci.id) as item_count,
+			   SUM(CASE WHEN ci.media_id IS NOT NULL THEN 1 ELSE 0 END) as owned_count
+		FROM collections c
+		LEFT JOIN collection_items ci ON c.id = ci.collection_id
+		GROUP BY c.id
+		ORDER BY c.name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var collections []Collection
+	for rows.Next() {
+		var c Collection
+		var description, posterPath, backdropPath sql.NullString
+		var tmdbID sql.NullInt64
+		var isAuto int
+
+		if err := rows.Scan(&c.ID, &c.Name, &description, &tmdbID, &posterPath, &backdropPath,
+			&isAuto, &c.SortOrder, &c.CreatedAt, &c.UpdatedAt, &c.ItemCount, &c.OwnedCount); err != nil {
+			return nil, err
+		}
+
+		if description.Valid {
+			c.Description = &description.String
+		}
+		if tmdbID.Valid {
+			c.TmdbCollectionID = &tmdbID.Int64
+		}
+		if posterPath.Valid {
+			c.PosterPath = &posterPath.String
+		}
+		if backdropPath.Valid {
+			c.BackdropPath = &backdropPath.String
+		}
+		c.IsAuto = isAuto == 1
+
+		collections = append(collections, c)
+	}
+	return collections, nil
+}
+
+// GetCollection returns a single collection by ID
+func (d *Database) GetCollection(id int64) (*Collection, error) {
+	var c Collection
+	var description, posterPath, backdropPath sql.NullString
+	var tmdbID sql.NullInt64
+	var isAuto int
+
+	err := d.db.QueryRow(`
+		SELECT c.id, c.name, c.description, c.tmdb_collection_id, c.poster_path, c.backdrop_path,
+			   c.is_auto, c.sort_order, c.created_at, c.updated_at,
+			   COUNT(ci.id) as item_count,
+			   SUM(CASE WHEN ci.media_id IS NOT NULL THEN 1 ELSE 0 END) as owned_count
+		FROM collections c
+		LEFT JOIN collection_items ci ON c.id = ci.collection_id
+		WHERE c.id = ?
+		GROUP BY c.id`, id).Scan(&c.ID, &c.Name, &description, &tmdbID, &posterPath, &backdropPath,
+		&isAuto, &c.SortOrder, &c.CreatedAt, &c.UpdatedAt, &c.ItemCount, &c.OwnedCount)
+
+	if err != nil {
+		return nil, err
+	}
+
+	if description.Valid {
+		c.Description = &description.String
+	}
+	if tmdbID.Valid {
+		c.TmdbCollectionID = &tmdbID.Int64
+	}
+	if posterPath.Valid {
+		c.PosterPath = &posterPath.String
+	}
+	if backdropPath.Valid {
+		c.BackdropPath = &backdropPath.String
+	}
+	c.IsAuto = isAuto == 1
+
+	return &c, nil
+}
+
+// GetCollectionByTmdbID returns a collection by its TMDB collection ID
+func (d *Database) GetCollectionByTmdbID(tmdbCollectionID int64) (*Collection, error) {
+	var c Collection
+	var description, posterPath, backdropPath sql.NullString
+	var tmdbID sql.NullInt64
+	var isAuto int
+
+	err := d.db.QueryRow(`
+		SELECT id, name, description, tmdb_collection_id, poster_path, backdrop_path,
+			   is_auto, sort_order, created_at, updated_at
+		FROM collections WHERE tmdb_collection_id = ?`, tmdbCollectionID).Scan(
+		&c.ID, &c.Name, &description, &tmdbID, &posterPath, &backdropPath,
+		&isAuto, &c.SortOrder, &c.CreatedAt, &c.UpdatedAt)
+
+	if err != nil {
+		return nil, err
+	}
+
+	if description.Valid {
+		c.Description = &description.String
+	}
+	if tmdbID.Valid {
+		c.TmdbCollectionID = &tmdbID.Int64
+	}
+	if posterPath.Valid {
+		c.PosterPath = &posterPath.String
+	}
+	if backdropPath.Valid {
+		c.BackdropPath = &backdropPath.String
+	}
+	c.IsAuto = isAuto == 1
+
+	return &c, nil
+}
+
+// CreateCollection creates a new collection
+func (d *Database) CreateCollection(c *Collection) error {
+	isAuto := 0
+	if c.IsAuto {
+		isAuto = 1
+	}
+	if c.SortOrder == "" {
+		c.SortOrder = "release"
+	}
+
+	result, err := d.db.Exec(`
+		INSERT INTO collections (name, description, tmdb_collection_id, poster_path, backdrop_path, is_auto, sort_order)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		c.Name, c.Description, c.TmdbCollectionID, c.PosterPath, c.BackdropPath, isAuto, c.SortOrder)
+	if err != nil {
+		return err
+	}
+
+	c.ID, _ = result.LastInsertId()
+	c.CreatedAt = time.Now()
+	c.UpdatedAt = time.Now()
+	return nil
+}
+
+// UpdateCollection updates an existing collection
+func (d *Database) UpdateCollection(c *Collection) error {
+	isAuto := 0
+	if c.IsAuto {
+		isAuto = 1
+	}
+
+	_, err := d.db.Exec(`
+		UPDATE collections SET
+			name = ?, description = ?, poster_path = ?, backdrop_path = ?,
+			is_auto = ?, sort_order = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?`,
+		c.Name, c.Description, c.PosterPath, c.BackdropPath, isAuto, c.SortOrder, c.ID)
+	return err
+}
+
+// DeleteCollection deletes a collection and all its items (cascade)
+func (d *Database) DeleteCollection(id int64) error {
+	_, err := d.db.Exec(`DELETE FROM collections WHERE id = ?`, id)
+	return err
+}
+
+// GetCollectionItems returns all items in a collection with library status
+func (d *Database) GetCollectionItems(collectionID int64) ([]CollectionItem, error) {
+	rows, err := d.db.Query(`
+		SELECT ci.id, ci.collection_id, ci.media_type, ci.media_id, ci.tmdb_id,
+			   ci.title, ci.year, ci.poster_path, ci.sort_order, ci.added_at,
+			   CASE WHEN ci.media_id IS NOT NULL THEN 1 ELSE 0 END as in_library
+		FROM collection_items ci
+		WHERE ci.collection_id = ?
+		ORDER BY ci.sort_order, ci.year, ci.title`, collectionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []CollectionItem
+	for rows.Next() {
+		var item CollectionItem
+		var mediaID sql.NullInt64
+		var posterPath sql.NullString
+		var year sql.NullInt64
+		var inLibrary int
+
+		if err := rows.Scan(&item.ID, &item.CollectionID, &item.MediaType, &mediaID, &item.TmdbID,
+			&item.Title, &year, &posterPath, &item.SortOrder, &item.AddedAt, &inLibrary); err != nil {
+			return nil, err
+		}
+
+		if mediaID.Valid {
+			item.MediaID = &mediaID.Int64
+		}
+		if posterPath.Valid {
+			item.PosterPath = &posterPath.String
+		}
+		if year.Valid {
+			item.Year = int(year.Int64)
+		}
+		item.InLibrary = inLibrary == 1
+
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+// AddCollectionItem adds an item to a collection
+func (d *Database) AddCollectionItem(item *CollectionItem) error {
+	// Get the max sort_order for this collection
+	var maxOrder sql.NullInt64
+	d.db.QueryRow(`SELECT MAX(sort_order) FROM collection_items WHERE collection_id = ?`, item.CollectionID).Scan(&maxOrder)
+	if maxOrder.Valid {
+		item.SortOrder = int(maxOrder.Int64) + 1
+	}
+
+	result, err := d.db.Exec(`
+		INSERT INTO collection_items (collection_id, media_type, media_id, tmdb_id, title, year, poster_path, sort_order)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(collection_id, tmdb_id, media_type) DO UPDATE SET
+			media_id = COALESCE(excluded.media_id, collection_items.media_id),
+			title = excluded.title,
+			poster_path = COALESCE(excluded.poster_path, collection_items.poster_path)`,
+		item.CollectionID, item.MediaType, item.MediaID, item.TmdbID, item.Title, item.Year, item.PosterPath, item.SortOrder)
+	if err != nil {
+		return err
+	}
+
+	item.ID, _ = result.LastInsertId()
+	item.AddedAt = time.Now()
+	return nil
+}
+
+// RemoveCollectionItem removes an item from a collection
+func (d *Database) RemoveCollectionItem(collectionID, tmdbID int64, mediaType string) error {
+	_, err := d.db.Exec(`DELETE FROM collection_items WHERE collection_id = ? AND tmdb_id = ? AND media_type = ?`,
+		collectionID, tmdbID, mediaType)
+	return err
+}
+
+// UpdateCollectionItemOrder updates the sort order of items in a collection
+func (d *Database) UpdateCollectionItemOrder(collectionID int64, itemIDs []int64) error {
+	tx, err := d.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	for i, itemID := range itemIDs {
+		_, err := tx.Exec(`UPDATE collection_items SET sort_order = ? WHERE id = ? AND collection_id = ?`,
+			i, itemID, collectionID)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+// GetCollectionsForMedia returns all collections that contain a specific media item
+func (d *Database) GetCollectionsForMedia(tmdbID int64, mediaType string) ([]Collection, error) {
+	rows, err := d.db.Query(`
+		SELECT c.id, c.name, c.description, c.tmdb_collection_id, c.poster_path, c.backdrop_path,
+			   c.is_auto, c.sort_order, c.created_at, c.updated_at
+		FROM collections c
+		INNER JOIN collection_items ci ON c.id = ci.collection_id
+		WHERE ci.tmdb_id = ? AND ci.media_type = ?
+		ORDER BY c.name`, tmdbID, mediaType)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var collections []Collection
+	for rows.Next() {
+		var c Collection
+		var description, posterPath, backdropPath sql.NullString
+		var tmdbCollID sql.NullInt64
+		var isAuto int
+
+		if err := rows.Scan(&c.ID, &c.Name, &description, &tmdbCollID, &posterPath, &backdropPath,
+			&isAuto, &c.SortOrder, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			return nil, err
+		}
+
+		if description.Valid {
+			c.Description = &description.String
+		}
+		if tmdbCollID.Valid {
+			c.TmdbCollectionID = &tmdbCollID.Int64
+		}
+		if posterPath.Valid {
+			c.PosterPath = &posterPath.String
+		}
+		if backdropPath.Valid {
+			c.BackdropPath = &backdropPath.String
+		}
+		c.IsAuto = isAuto == 1
+
+		collections = append(collections, c)
+	}
+	return collections, nil
+}
+
+// UpdateCollectionItemMediaID updates the media_id of a collection item when the item is added to the library
+func (d *Database) UpdateCollectionItemMediaID(tmdbID int64, mediaType string, mediaID int64) error {
+	_, err := d.db.Exec(`
+		UPDATE collection_items SET media_id = ? WHERE tmdb_id = ? AND media_type = ?`,
+		mediaID, tmdbID, mediaType)
+	return err
+}
+
+// Storage Analytics Types
+
+// LibrarySize represents storage usage per library
+type LibrarySize struct {
+	ID    int64  `json:"id"`
+	Name  string `json:"name"`
+	Type  string `json:"type"`
+	Size  int64  `json:"size"`
+	Count int    `json:"count"`
+}
+
+// QualitySize represents storage usage per quality level
+type QualitySize struct {
+	Quality string `json:"quality"`
+	Size    int64  `json:"size"`
+	Count   int    `json:"count"`
+}
+
+// YearSize represents storage usage per release year
+type YearSize struct {
+	Year  int   `json:"year"`
+	Size  int64 `json:"size"`
+	Count int   `json:"count"`
+}
+
+// LargestItem represents a large media file
+type LargestItem struct {
+	ID      int64  `json:"id"`
+	Type    string `json:"type"`
+	Title   string `json:"title"`
+	Year    int    `json:"year"`
+	Size    int64  `json:"size"`
+	Quality string `json:"quality"`
+	Path    string `json:"path"`
+}
+
+// DuplicateCopy represents a single copy of a duplicate item
+type DuplicateCopy struct {
+	ID      int64  `json:"id"`
+	Quality string `json:"quality"`
+	Size    int64  `json:"size"`
+	Path    string `json:"path"`
+}
+
+// DuplicateItem represents an item with multiple copies
+type DuplicateItem struct {
+	TmdbID int64           `json:"tmdbId"`
+	Title  string          `json:"title"`
+	Year   int             `json:"year"`
+	Type   string          `json:"type"`
+	Copies []DuplicateCopy `json:"copies"`
+}
+
+// StorageAnalytics contains all storage analytics data
+type StorageAnalytics struct {
+	Total      int64           `json:"total"`
+	Used       int64           `json:"used"`
+	Free       int64           `json:"free"`
+	ByLibrary  []LibrarySize   `json:"byLibrary"`
+	ByQuality  []QualitySize   `json:"byQuality"`
+	ByYear     []YearSize      `json:"byYear"`
+	Largest    []LargestItem   `json:"largest"`
+	Duplicates []DuplicateItem `json:"duplicates"`
+}
+
+// GetStorageByLibrary returns storage usage grouped by library
+func (d *Database) GetStorageByLibrary() ([]LibrarySize, error) {
+	// Get movie storage by library
+	movieQuery := `
+		SELECT l.id, l.name, l.type, COALESCE(SUM(m.size), 0) as size, COUNT(m.id) as count
+		FROM libraries l
+		LEFT JOIN movies m ON m.library_id = l.id
+		WHERE l.type = 'movies'
+		GROUP BY l.id`
+
+	// Get TV/anime storage by library (sum episode sizes)
+	tvQuery := `
+		SELECT l.id, l.name, l.type, COALESCE(SUM(e.size), 0) as size, COUNT(DISTINCT s.id) as count
+		FROM libraries l
+		LEFT JOIN shows s ON s.library_id = l.id
+		LEFT JOIN seasons sea ON sea.show_id = s.id
+		LEFT JOIN episodes e ON e.season_id = sea.id
+		WHERE l.type IN ('tv', 'anime')
+		GROUP BY l.id`
+
+	var results []LibrarySize
+
+	// Execute movie query
+	rows, err := d.db.Query(movieQuery)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var ls LibrarySize
+		if err := rows.Scan(&ls.ID, &ls.Name, &ls.Type, &ls.Size, &ls.Count); err != nil {
+			return nil, err
+		}
+		results = append(results, ls)
+	}
+
+	// Execute TV query
+	rows, err = d.db.Query(tvQuery)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var ls LibrarySize
+		if err := rows.Scan(&ls.ID, &ls.Name, &ls.Type, &ls.Size, &ls.Count); err != nil {
+			return nil, err
+		}
+		results = append(results, ls)
+	}
+
+	return results, nil
+}
+
+// GetStorageByYear returns storage usage grouped by release year
+func (d *Database) GetStorageByYear() ([]YearSize, error) {
+	query := `
+		SELECT year, SUM(size) as total_size, COUNT(*) as count
+		FROM (
+			SELECT year, size FROM movies WHERE size > 0
+			UNION ALL
+			SELECT s.year, e.size
+			FROM episodes e
+			JOIN seasons sea ON e.season_id = sea.id
+			JOIN shows s ON sea.show_id = s.id
+			WHERE e.size > 0
+		)
+		WHERE year > 0
+		GROUP BY year
+		ORDER BY year DESC`
+
+	rows, err := d.db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []YearSize
+	for rows.Next() {
+		var ys YearSize
+		if err := rows.Scan(&ys.Year, &ys.Size, &ys.Count); err != nil {
+			return nil, err
+		}
+		results = append(results, ys)
+	}
+
+	return results, nil
+}
+
+// GetLargestItems returns the largest media files
+func (d *Database) GetLargestItems(limit int) ([]LargestItem, error) {
+	query := `
+		SELECT id, 'movie' as type, title, year, size, path
+		FROM movies
+		WHERE size > 0
+		UNION ALL
+		SELECT e.id, 'episode' as type,
+			s.title || ' S' || printf('%02d', sea.season_number) || 'E' || printf('%02d', e.episode_number) as title,
+			s.year, e.size, e.path
+		FROM episodes e
+		JOIN seasons sea ON e.season_id = sea.id
+		JOIN shows s ON sea.show_id = s.id
+		WHERE e.size > 0
+		ORDER BY size DESC
+		LIMIT ?`
+
+	rows, err := d.db.Query(query, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []LargestItem
+	for rows.Next() {
+		var item LargestItem
+		if err := rows.Scan(&item.ID, &item.Type, &item.Title, &item.Year, &item.Size, &item.Path); err != nil {
+			return nil, err
+		}
+		// Extract quality from path
+		item.Quality = extractQualityFromPath(item.Path)
+		results = append(results, item)
+	}
+
+	return results, nil
+}
+
+// GetMovieDuplicates returns movies with the same TMDB ID (multiple copies)
+func (d *Database) GetMovieDuplicates() ([]DuplicateItem, error) {
+	// Find tmdb_ids with multiple movies
+	query := `
+		SELECT tmdb_id, title, year, id, size, path
+		FROM movies
+		WHERE tmdb_id IN (
+			SELECT tmdb_id FROM movies WHERE tmdb_id IS NOT NULL GROUP BY tmdb_id HAVING COUNT(*) > 1
+		)
+		ORDER BY tmdb_id, size DESC`
+
+	rows, err := d.db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	duplicateMap := make(map[int64]*DuplicateItem)
+	var order []int64
+
+	for rows.Next() {
+		var tmdbID int64
+		var title string
+		var year int
+		var id int64
+		var size int64
+		var path string
+
+		if err := rows.Scan(&tmdbID, &title, &year, &id, &size, &path); err != nil {
+			return nil, err
+		}
+
+		if _, exists := duplicateMap[tmdbID]; !exists {
+			duplicateMap[tmdbID] = &DuplicateItem{
+				TmdbID: tmdbID,
+				Title:  title,
+				Year:   year,
+				Type:   "movie",
+				Copies: []DuplicateCopy{},
+			}
+			order = append(order, tmdbID)
+		}
+
+		duplicateMap[tmdbID].Copies = append(duplicateMap[tmdbID].Copies, DuplicateCopy{
+			ID:      id,
+			Quality: extractQualityFromPath(path),
+			Size:    size,
+			Path:    path,
+		})
+	}
+
+	var results []DuplicateItem
+	for _, tmdbID := range order {
+		results = append(results, *duplicateMap[tmdbID])
+	}
+
+	return results, nil
+}
+
+// GetEpisodeDuplicates returns episodes with multiple files for the same episode
+func (d *Database) GetEpisodeDuplicates() ([]DuplicateItem, error) {
+	// This is complex - episodes are unique by season_id + episode_number
+	// For now, we won't track episode duplicates as they should be unique
+	return []DuplicateItem{}, nil
+}
+
+// extractQualityFromPath extracts quality information from a file path
+func extractQualityFromPath(path string) string {
+	pathLower := strings.ToLower(path)
+
+	// Check for resolution
+	if strings.Contains(pathLower, "2160p") || strings.Contains(pathLower, "4k") || strings.Contains(pathLower, "uhd") {
+		quality := "2160p"
+		if strings.Contains(pathLower, "remux") {
+			quality += " Remux"
+		} else if strings.Contains(pathLower, "bluray") || strings.Contains(pathLower, "blu-ray") {
+			quality += " BluRay"
+		} else if strings.Contains(pathLower, "web") {
+			quality += " WEB"
+		}
+		return quality
+	}
+
+	if strings.Contains(pathLower, "1080p") {
+		quality := "1080p"
+		if strings.Contains(pathLower, "remux") {
+			quality += " Remux"
+		} else if strings.Contains(pathLower, "bluray") || strings.Contains(pathLower, "blu-ray") {
+			quality += " BluRay"
+		} else if strings.Contains(pathLower, "web") {
+			quality += " WEB"
+		}
+		return quality
+	}
+
+	if strings.Contains(pathLower, "720p") {
+		quality := "720p"
+		if strings.Contains(pathLower, "bluray") || strings.Contains(pathLower, "blu-ray") {
+			quality += " BluRay"
+		} else if strings.Contains(pathLower, "web") {
+			quality += " WEB"
+		}
+		return quality
+	}
+
+	if strings.Contains(pathLower, "480p") || strings.Contains(pathLower, "dvd") {
+		return "480p"
+	}
+
+	return "Unknown"
+}
+
+// GetStorageByQuality returns storage usage grouped by quality
+func (d *Database) GetStorageByQuality() ([]QualitySize, error) {
+	// Get all movies with size
+	movieQuery := `SELECT path, size FROM movies WHERE size > 0`
+	episodeQuery := `SELECT path, size FROM episodes WHERE size > 0`
+
+	qualityMap := make(map[string]QualitySize)
+
+	// Process movies
+	rows, err := d.db.Query(movieQuery)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var path string
+		var size int64
+		if err := rows.Scan(&path, &size); err != nil {
+			return nil, err
+		}
+		quality := extractQualityFromPath(path)
+		// Normalize to base quality for grouping
+		baseQuality := normalizeQuality(quality)
+		qs := qualityMap[baseQuality]
+		qs.Quality = baseQuality
+		qs.Size += size
+		qs.Count++
+		qualityMap[baseQuality] = qs
+	}
+
+	// Process episodes
+	rows, err = d.db.Query(episodeQuery)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var path string
+		var size int64
+		if err := rows.Scan(&path, &size); err != nil {
+			return nil, err
+		}
+		quality := extractQualityFromPath(path)
+		baseQuality := normalizeQuality(quality)
+		qs := qualityMap[baseQuality]
+		qs.Quality = baseQuality
+		qs.Size += size
+		qs.Count++
+		qualityMap[baseQuality] = qs
+	}
+
+	// Convert map to sorted slice
+	qualityOrder := []string{"2160p", "1080p", "720p", "480p", "Unknown"}
+	var results []QualitySize
+	for _, q := range qualityOrder {
+		if qs, exists := qualityMap[q]; exists {
+			results = append(results, qs)
+		}
+	}
+
+	return results, nil
+}
+
+// normalizeQuality extracts just the resolution from a quality string
+func normalizeQuality(quality string) string {
+	if strings.HasPrefix(quality, "2160p") {
+		return "2160p"
+	}
+	if strings.HasPrefix(quality, "1080p") {
+		return "1080p"
+	}
+	if strings.HasPrefix(quality, "720p") {
+		return "720p"
+	}
+	if strings.HasPrefix(quality, "480p") {
+		return "480p"
+	}
+	return "Unknown"
 }

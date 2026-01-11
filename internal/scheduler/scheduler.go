@@ -1414,45 +1414,78 @@ func (s *Scheduler) checkRSSFeeds() {
 }
 
 func (s *Scheduler) matchRSSResult(result indexer.SearchResult, items []database.WantedItem) {
-	// Simple title matching for now
 	for _, item := range items {
-		// TODO: Implement more sophisticated matching (IMDB/TMDB ID, release year, etc.)
-		// For now, do basic title matching
-		if !s.titleMatches(result.Title, item.Title, item.Year) {
+		// Try multiple matching strategies in order of reliability
+
+		// 1. IMDB ID match (most reliable if available)
+		if result.ImdbID != "" && item.ImdbID != nil {
+			// Normalize IMDB IDs (some may have "tt" prefix, some may not)
+			resultImdb := strings.TrimPrefix(result.ImdbID, "tt")
+			itemImdb := strings.TrimPrefix(*item.ImdbID, "tt")
+			if resultImdb == itemImdb {
+				// IMDB match - proceed with this item
+				log.Printf("Scheduler: RSS IMDB match for %s (tt%s)", item.Title, itemImdb)
+				s.processRSSMatch(result, item)
+				continue
+			}
+		}
+
+		// 2. TVDB ID match for TV shows
+		if result.TvdbID != "" && (item.Type == "show" || item.Type == "anime") {
+			// Try to get TVDB ID for this show
+			itemTvdbID := s.lookupTvdbID(item.TmdbID)
+			if itemTvdbID != "" && result.TvdbID == itemTvdbID {
+				log.Printf("Scheduler: RSS TVDB match for %s (tvdb:%s)", item.Title, itemTvdbID)
+				s.processRSSMatch(result, item)
+				continue
+			}
+		}
+
+		// 3. Fallback to title + year matching using verifyReleaseMatch
+		matches, reason := s.verifyReleaseMatch(result.Title, &item)
+		if !matches {
+			if reason != "" {
+				log.Printf("DEBUG: RSS title mismatch for %s: %s - %s", item.Title, result.Title, reason)
+			}
 			continue
 		}
 
-		// Score the result
-		scored := s.scoreResults([]indexer.SearchResult{result}, item.QualityProfileID)
-		if len(scored) == 0 || scored[0].Rejected {
-			continue
-		}
-
-		// Check auto-grab
-		autoGrab, _ := s.db.GetSetting("scheduler_auto_grab")
-		if autoGrab != "true" {
-			log.Printf("Scheduler: RSS match for %s: %s (auto-grab disabled)", item.Title, result.Title)
-			continue
-		}
-
-		// Check minimum score threshold
-		minScore := 0
-		if minScoreStr, _ := s.db.GetSetting("scheduler_min_score"); minScoreStr != "" {
-			minScore, _ = strconv.Atoi(minScoreStr)
-		}
-
-		if scored[0].TotalScore < minScore {
-			continue
-		}
-
-		err := s.grabRelease(&scored[0], item.Type, item.TmdbID)
-		if err != nil {
-			log.Printf("Scheduler: RSS grab failed for %s: %v", item.Title, err)
-			continue
-		}
-
-		log.Printf("Scheduler: RSS grabbed %s for %s (score: %d)", result.Title, item.Title, scored[0].TotalScore)
+		s.processRSSMatch(result, item)
 	}
+}
+
+// processRSSMatch handles scoring and grabbing a matched RSS result
+func (s *Scheduler) processRSSMatch(result indexer.SearchResult, item database.WantedItem) {
+	// Score the result
+	scored := s.scoreResults([]indexer.SearchResult{result}, item.QualityProfileID)
+	if len(scored) == 0 || scored[0].Rejected {
+		return
+	}
+
+	// Check auto-grab
+	autoGrab, _ := s.db.GetSetting("scheduler_auto_grab")
+	if autoGrab != "true" {
+		log.Printf("Scheduler: RSS match for %s: %s (auto-grab disabled)", item.Title, result.Title)
+		return
+	}
+
+	// Check minimum score threshold
+	minScore := 0
+	if minScoreStr, _ := s.db.GetSetting("scheduler_min_score"); minScoreStr != "" {
+		minScore, _ = strconv.Atoi(minScoreStr)
+	}
+
+	if scored[0].TotalScore < minScore {
+		return
+	}
+
+	err := s.grabRelease(&scored[0], item.Type, item.TmdbID)
+	if err != nil {
+		log.Printf("Scheduler: RSS grab failed for %s: %v", item.Title, err)
+		return
+	}
+
+	log.Printf("Scheduler: RSS grabbed %s for %s (score: %d)", result.Title, item.Title, scored[0].TotalScore)
 }
 
 func (s *Scheduler) titleMatches(releaseTitle, wantedTitle string, year int) bool {

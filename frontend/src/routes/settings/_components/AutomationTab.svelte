@@ -31,9 +31,16 @@
 	let formatSettings: FormatSettings | null = $state(null);
 	let savingFormats = $state(false);
 	let formatsSaved = $state(false);
+	let newFormat = $state('');
+	let newRejectKeyword = $state('');
 
-	// All available container formats
-	const allContainers = ['mkv', 'mp4', 'avi', 'mov', 'webm', 'm4v', 'ts', 'm2ts', 'wmv', 'flv'];
+	// All containers and keywords (sorted for display)
+	const sortedContainers = $derived(
+		[...(formatSettings?.acceptedContainers ?? [])].sort()
+	);
+	const sortedRejectedKeywords = $derived(
+		[...(formatSettings?.rejectedKeywords ?? [])].sort()
+	);
 
 	onMount(async () => {
 		await loadFormatSettings();
@@ -61,12 +68,73 @@
 		}
 	}
 
-	function toggleContainer(container: string) {
+	function resetToDefaults() {
+		formatSettings = {
+			acceptedContainers: ['mkv', 'mp4', 'avi', 'mov', 'webm', 'm4v', 'ts', 'm2ts', 'wmv', 'flv'],
+			rejectedKeywords: [
+				// Disc releases
+				'bdmv', 'video_ts', 'iso', 'full disc', 'complete disc', 'disc1', 'disc2',
+				// Archives
+				'rar', 'zip', '7z',
+				// Low quality captures
+				'cam', 'camrip', 'hdcam', 'hdts', 'telesync', 'telecine', 'ts-scr',
+				'dvdscr', 'dvdscreener', 'screener', 'scr', 'r5', 'workprint',
+				// Samples
+				'sample',
+				// 3D
+				'3d', 'hsbs', 'hou',
+			],
+			autoBlocklist: true,
+		};
+	}
+
+	function addContainer() {
+		if (!formatSettings || !newFormat.trim()) return;
+		const format = newFormat.trim().toLowerCase().replace(/^\./, ''); // Remove leading dot if present
+		if (!format) return;
+		if (formatSettings.acceptedContainers.includes(format)) {
+			newFormat = '';
+			return;
+		}
+		formatSettings.acceptedContainers = [...formatSettings.acceptedContainers, format];
+		newFormat = '';
+	}
+
+	function removeContainer(format: string) {
 		if (!formatSettings) return;
-		if (formatSettings.acceptedContainers.includes(container)) {
-			formatSettings.acceptedContainers = formatSettings.acceptedContainers.filter(c => c !== container);
-		} else {
-			formatSettings.acceptedContainers = [...formatSettings.acceptedContainers, container];
+		formatSettings.acceptedContainers = formatSettings.acceptedContainers.filter(c => c !== format);
+	}
+
+	function handleFormatKeydown(e: KeyboardEvent) {
+		if (e.key === 'Enter') {
+			e.preventDefault();
+			addContainer();
+		}
+	}
+
+	function addRejectKeyword() {
+		if (!formatSettings || !newRejectKeyword.trim()) return;
+		const keyword = newRejectKeyword.trim().toLowerCase();
+		if (!formatSettings.rejectedKeywords) {
+			formatSettings.rejectedKeywords = [];
+		}
+		if (formatSettings.rejectedKeywords.includes(keyword)) {
+			newRejectKeyword = '';
+			return;
+		}
+		formatSettings.rejectedKeywords = [...formatSettings.rejectedKeywords, keyword];
+		newRejectKeyword = '';
+	}
+
+	function removeRejectKeyword(keyword: string) {
+		if (!formatSettings) return;
+		formatSettings.rejectedKeywords = formatSettings.rejectedKeywords.filter(k => k !== keyword);
+	}
+
+	function handleRejectKeydown(e: KeyboardEvent) {
+		if (e.key === 'Enter') {
+			e.preventDefault();
+			addRejectKeyword();
 		}
 	}
 
@@ -250,40 +318,98 @@
 		<div class="space-y-4">
 			<div>
 				<label class="block text-sm text-text-secondary mb-2">Accepted Container Formats</label>
-				<p class="text-xs text-text-muted mb-3">Only releases with these formats will be downloaded. Others will be rejected.</p>
-				<div class="flex flex-wrap gap-2">
-					{#each allContainers as container}
-						<button
-							type="button"
-							class="px-3 py-1.5 text-sm rounded-lg transition-colors font-medium uppercase {formatSettings.acceptedContainers.includes(container) ? 'bg-green-600 text-white' : 'bg-bg-card text-text-muted hover:bg-bg-elevated'}"
-							onclick={() => toggleContainer(container)}
-						>
-							{container}
-						</button>
-					{/each}
+				<p class="text-xs text-text-muted mb-3">File extensions that will be accepted. Add or remove as needed.</p>
+				<div class="flex items-center gap-2 mb-3">
+					<input
+						type="text"
+						bind:value={newFormat}
+						onkeydown={handleFormatKeydown}
+						placeholder="e.g. mkv, mp4, avi"
+						class="flex-1 max-w-[200px] px-3 py-1.5 text-sm bg-bg-elevated border border-border-subtle rounded-lg text-text-primary placeholder:text-text-muted focus:outline-none focus:border-cream/50"
+					/>
+					<button
+						type="button"
+						onclick={addContainer}
+						disabled={!newFormat.trim()}
+						class="px-3 py-1.5 text-sm rounded-lg bg-green-500/20 text-green-400 hover:bg-green-500/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+					>
+						Add
+					</button>
 				</div>
+				{#if sortedContainers.length > 0}
+					<div class="flex flex-wrap gap-2">
+						{#each sortedContainers as container}
+							<div class="flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg bg-green-600 text-white font-medium uppercase">
+								<span>{container}</span>
+								<button
+									type="button"
+									onclick={() => removeContainer(container)}
+									class="ml-1 hover:text-green-200 transition-colors"
+									aria-label="Remove {container}"
+								>
+									<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+									</svg>
+								</button>
+							</div>
+						{/each}
+					</div>
+				{:else}
+					<p class="text-xs text-text-muted italic">No accepted formats - all containers will be rejected!</p>
+				{/if}
 			</div>
 
-			<div class="grid sm:grid-cols-3 gap-4 pt-4 border-t border-white/5">
-				<label class="flex items-center gap-2 cursor-pointer">
-					<input type="checkbox" bind:checked={formatSettings.rejectDiscs} class="form-checkbox" />
-					<div>
-						<span class="text-sm text-text-secondary">Reject Disc Releases</span>
-						<p class="text-xs text-text-muted">BDMV, VIDEO_TS, ISO files</p>
+			<!-- Rejected Keywords -->
+			<div class="pt-4 border-t border-white/5">
+				<label class="block text-sm text-text-secondary mb-2">Rejected Keywords</label>
+				<p class="text-xs text-text-muted mb-3">Releases containing these keywords will be rejected (case-insensitive).</p>
+				<div class="flex items-center gap-2 mb-3">
+					<input
+						type="text"
+						bind:value={newRejectKeyword}
+						onkeydown={handleRejectKeydown}
+						placeholder="e.g. bdmv, rar, cam, hdts"
+						class="flex-1 max-w-[200px] px-3 py-1.5 text-sm bg-bg-elevated border border-border-subtle rounded-lg text-text-primary placeholder:text-text-muted focus:outline-none focus:border-cream/50"
+					/>
+					<button
+						type="button"
+						onclick={addRejectKeyword}
+						disabled={!newRejectKeyword.trim()}
+						class="px-3 py-1.5 text-sm rounded-lg bg-red-500/20 text-red-400 hover:bg-red-500/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+					>
+						Add
+					</button>
+				</div>
+				{#if sortedRejectedKeywords.length > 0}
+					<div class="flex flex-wrap gap-2">
+						{#each sortedRejectedKeywords as keyword}
+							<div class="flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg bg-red-600 text-white font-medium">
+								<span>{keyword}</span>
+								<button
+									type="button"
+									onclick={() => removeRejectKeyword(keyword)}
+									class="ml-1 hover:text-red-200 transition-colors"
+									aria-label="Remove {keyword}"
+								>
+									<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+									</svg>
+								</button>
+							</div>
+						{/each}
 					</div>
-				</label>
-				<label class="flex items-center gap-2 cursor-pointer">
-					<input type="checkbox" bind:checked={formatSettings.rejectArchives} class="form-checkbox" />
-					<div>
-						<span class="text-sm text-text-secondary">Reject Archives</span>
-						<p class="text-xs text-text-muted">RAR, ZIP, 7z files</p>
-					</div>
-				</label>
+				{:else}
+					<p class="text-xs text-text-muted italic">No rejected keywords - all releases will be accepted</p>
+				{/if}
+			</div>
+
+			<!-- Auto-blocklist toggle -->
+			<div class="pt-4 border-t border-white/5">
 				<label class="flex items-center gap-2 cursor-pointer">
 					<input type="checkbox" bind:checked={formatSettings.autoBlocklist} class="form-checkbox" />
 					<div>
 						<span class="text-sm text-text-secondary">Auto-Blocklist</span>
-						<p class="text-xs text-text-muted">Add rejected to blocklist</p>
+						<p class="text-xs text-text-muted">Automatically add rejected releases to blocklist</p>
 					</div>
 				</label>
 			</div>
@@ -291,6 +417,13 @@
 			<div class="flex items-center gap-3 pt-4">
 				<button class="liquid-btn" onclick={handleSaveFormatSettings} disabled={savingFormats}>
 					{savingFormats ? 'Saving...' : 'Save Format Settings'}
+				</button>
+				<button
+					type="button"
+					onclick={resetToDefaults}
+					class="px-4 py-2 text-sm rounded-lg bg-bg-elevated hover:bg-bg-card border border-border-subtle text-text-secondary transition-colors"
+				>
+					Reset to Defaults
 				</button>
 				{#if formatsSaved}
 					<span class="text-sm text-green-400 flex items-center gap-1">

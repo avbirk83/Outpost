@@ -1,19 +1,30 @@
 <script lang="ts">
 	import { formatTime } from '$lib/utils';
+	import type { Chapter } from '$lib/api';
 
 	interface Props {
 		currentTime: number;
 		duration: number;
 		buffered: number;
+		chapters?: Chapter[];
 		endTime?: string;
+		showRemaining?: boolean;
 		onSeek: (time: number) => void;
+		onToggleTimeDisplay?: () => void;
 	}
 
-	let { currentTime, duration, buffered, endTime, onSeek }: Props = $props();
+	let { currentTime, duration, buffered, chapters = [], endTime, showRemaining = false, onSeek, onToggleTimeDisplay }: Props = $props();
+
+	function handleTimeClick() {
+		if (onToggleTimeDisplay) {
+			onToggleTimeDisplay();
+		}
+	}
 
 	let progressBar: HTMLDivElement;
 	let hoverTime = $state<number | null>(null);
 	let hoverX = $state(0);
+	let hoverChapter = $state<string | null>(null);
 
 	function handleClick(e: MouseEvent) {
 		const rect = progressBar.getBoundingClientRect();
@@ -27,10 +38,19 @@
 		const percent = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
 		hoverTime = percent * duration;
 		hoverX = e.clientX - rect.left;
+
+		// Find chapter at hover time
+		if (chapters && chapters.length > 0 && hoverTime !== null) {
+			const chapter = chapters.find(c => hoverTime! >= c.startTime && hoverTime! < c.endTime);
+			hoverChapter = chapter?.title || null;
+		} else {
+			hoverChapter = null;
+		}
 	}
 
 	function handleLeave() {
 		hoverTime = null;
+		hoverChapter = null;
 	}
 </script>
 
@@ -61,14 +81,31 @@
 			<div class="progress-played" style="width: {duration ? (currentTime / duration) * 100 : 0}%"></div>
 			<div class="progress-handle" style="left: {duration ? (currentTime / duration) * 100 : 0}%"></div>
 
+			{#if chapters && chapters.length > 0}
+				{#each chapters as chapter}
+					{#if chapter.startTime > 0}
+						<div class="chapter-marker" style="left: {(chapter.startTime / duration) * 100}%"></div>
+					{/if}
+				{/each}
+			{/if}
+
 			{#if hoverTime !== null}
 				<div class="timestamp-preview" style="left: {hoverX}px">
-					{formatTime(hoverTime)}
+					<span class="preview-time">{formatTime(hoverTime)}</span>
+					{#if hoverChapter}
+						<span class="preview-chapter">{hoverChapter}</span>
+					{/if}
 				</div>
 			{/if}
 		</div>
 
-		<span class="player-time">{formatTime(duration)}</span>
+		<button class="player-time player-time-clickable" onclick={handleTimeClick} title="Click to toggle remaining time">
+			{#if showRemaining}
+				-{formatTime(duration - currentTime)}
+			{:else}
+				{formatTime(duration)}
+			{/if}
+		</button>
 	</div>
 </div>
 
@@ -106,6 +143,20 @@
 
 	.player-time:last-child {
 		text-align: right;
+	}
+
+	.player-time-clickable {
+		background: none;
+		border: none;
+		cursor: pointer;
+		padding: 4px 8px;
+		margin: -4px -8px;
+		border-radius: 4px;
+		transition: background 0.2s;
+	}
+
+	.player-time-clickable:hover {
+		background: rgba(255, 255, 255, 0.1);
 	}
 
 	.progress-container {
@@ -172,5 +223,36 @@
 		font-weight: 500;
 		white-space: nowrap;
 		pointer-events: none;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 2px;
+	}
+
+	.preview-time {
+		font-variant-numeric: tabular-nums;
+	}
+
+	.preview-chapter {
+		font-size: 11px;
+		color: #E8A849;
+		max-width: 200px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.chapter-marker {
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		width: 3px;
+		background: rgba(245, 230, 200, 0.6);
+		transform: translateX(-50%);
+		pointer-events: none;
+		border-radius: 1px;
+	}
+
+	.progress-container:hover .chapter-marker {
+		background: rgba(245, 230, 200, 0.8);
 	}
 </style>

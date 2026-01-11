@@ -35,8 +35,11 @@
   /* Backgrounds - True dark/black */
   --color-bg-primary: #0a0a0a;
   --color-bg-secondary: #000000;
-  --color-bg-card: #0f0f0f;
+  --color-bg-base: #0f0f0f;
+  --color-bg-card: #111111;
   --color-bg-elevated: #141414;
+  --color-bg-input: #1a1a1a;
+  --color-bg-dropdown: #141416;
 
   /* Text - Updated per UI spec */
   --color-text-primary: #F5E6C8;
@@ -843,7 +846,21 @@ input, input:focus, input:active {
   border-radius: 16px;
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
   overflow: hidden;
-  max-width: 40rem;
+  max-width: 36rem;
+  width: 100%;
+  margin: 1rem;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+}
+
+@utility modal-container-xl {
+  background: var(--color-bg-base);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+  overflow: hidden;
+  max-width: 48rem;
   width: 100%;
   margin: 1rem;
   max-height: 90vh;

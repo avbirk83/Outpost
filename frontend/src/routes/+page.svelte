@@ -16,12 +16,14 @@
 		createRequest,
 		addToWatchlist,
 		isInWatchlist,
+		getCollections,
 		type DiscoverItem,
 		type Movie,
 		type Show,
 		type ContinueWatchingItem,
 		type Request,
-		type WatchlistItem
+		type WatchlistItem,
+		type Collection
 	} from '$lib/api';
 	import { toast } from '$lib/stores/toast';
 	import { getYear, formatTimeLeft } from '$lib/utils';
@@ -49,6 +51,7 @@
 	let continueWatching: ContinueWatchingItem[] = $state([]);
 	let recentRequests: Request[] = $state([]);
 	let watchlistItems: WatchlistItem[] = $state([]);
+	let collections: Collection[] = $state([]);
 
 	// Derived watchlist filters
 	const libraryWatchlist = $derived(watchlistItems.filter(item => item.inLibrary));
@@ -119,14 +122,15 @@
 
 	onMount(async () => {
 		try {
-			const [trendingMoviesRes, trendingShowsRes, movies, shows, cw, requests, watchlist] = await Promise.all([
+			const [trendingMoviesRes, trendingShowsRes, movies, shows, cw, requests, watchlist, colls] = await Promise.all([
 				getTrendingMovies(),
 				getTrendingShows(),
 				getMovies().catch(() => []),
 				getShows().catch(() => []),
 				getContinueWatching().catch(() => []),
 				getRequests().catch(() => []),
-				getWatchlist().catch(() => [])
+				getWatchlist().catch(() => []),
+				getCollections().catch(() => [])
 			]);
 
 			const trendingMovies = (trendingMoviesRes?.results || []).slice(0, 10);
@@ -174,6 +178,7 @@
 			// Get all watchlist items - we'll filter for different sections
 			watchlistItems = watchlist.slice(0, 50);
 			recentRequests = requests.slice(0, 10);
+			collections = colls.slice(0, 20);
 
 			resetAutoplay();
 		} catch (e) {
@@ -567,6 +572,46 @@
 							badgeVariant={isNew(item.addedAt) ? 'new' : 'default'}
 							href={type === 'movie' ? `/movies/${item.id}` : `/tv/${item.id}`}
 						/>
+					{/each}
+				</ScrollSection>
+			{/if}
+
+			<!-- Collections -->
+			{#if collections.length > 0}
+				<ScrollSection title="Collections" linkText="View All" linkHref="/library?tab=collections">
+					{#each collections as collection}
+						<a
+							href="/collections/{collection.id}"
+							class="flex-shrink-0 w-[180px] group scroll-snap-align-start"
+						>
+							<div class="relative aspect-[2/3] rounded-xl overflow-hidden bg-bg-card border border-border-subtle mb-2">
+								{#if collection.posterPath}
+									<img
+										src={getImageUrl(collection.posterPath)}
+										alt={collection.name}
+										class="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+									/>
+								{:else}
+									<div class="w-full h-full flex items-center justify-center bg-gradient-to-br from-[#1a1a2e] to-[#2d2d44]">
+										<span class="text-5xl">📚</span>
+									</div>
+								{/if}
+								<div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent"></div>
+								<div class="absolute bottom-0 left-0 right-0 p-3">
+									<p class="text-xs text-text-muted">
+										{collection.ownedCount}/{collection.itemCount} in library
+									</p>
+								</div>
+								{#if collection.isAuto}
+									<div class="absolute top-2 right-2 px-2 py-0.5 rounded text-[10px] font-medium bg-accent-primary/80 text-white">
+										TMDB
+									</div>
+								{/if}
+							</div>
+							<h3 class="text-sm font-medium text-text-primary truncate group-hover:text-accent-primary transition-colors">
+								{collection.name}
+							</h3>
+						</a>
 					{/each}
 				</ScrollSection>
 			{/if}

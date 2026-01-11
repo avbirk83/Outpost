@@ -161,7 +161,16 @@ func (s *Service) FetchMovieMetadata(movie *database.Movie) error {
 	}
 
 	// Save to database
-	return s.db.UpdateMovieMetadata(movie)
+	if err := s.db.UpdateMovieMetadata(movie); err != nil {
+		return err
+	}
+
+	// Process collection if movie belongs to one
+	if details.BelongsToCollection != nil {
+		s.processMovieCollection(movie, details.BelongsToCollection)
+	}
+
+	return nil
 }
 
 // FetchMovieMetadataByTmdbID fetches metadata for a specific TMDB ID (manual match)
@@ -268,7 +277,16 @@ func (s *Service) FetchMovieMetadataByTmdbID(movie *database.Movie, tmdbID int64
 		movie.BackdropPath = &backdropPath
 	}
 
-	return s.db.UpdateMovieMetadata(movie)
+	if err := s.db.UpdateMovieMetadata(movie); err != nil {
+		return err
+	}
+
+	// Process collection if movie belongs to one
+	if details.BelongsToCollection != nil {
+		s.processMovieCollection(movie, details.BelongsToCollection)
+	}
+
+	return nil
 }
 
 // FetchShowMetadata fetches metadata from TMDB for a TV show
@@ -1042,4 +1060,88 @@ func (s *Service) GetShowDetail(tmdbID int64) (*DiscoverShowDetail, error) {
 		TrailerKey:          trailerKey,
 		Recommendations:     recommendations,
 	}, nil
+}
+
+// processMovieCollection creates or updates a collection when a movie belongs to a TMDB collection
+func (s *Service) processMovieCollection(movie *database.Movie, tmdbColl *tmdb.MovieCollection) {
+	if tmdbColl == nil || movie.TmdbID == nil {
+		return
+	}
+
+	// Check if collection already exists
+	existingColl, err := s.db.GetCollectionByTmdbID(tmdbColl.ID)
+	if err == nil && existingColl != nil {
+		// Collection exists, just update the media_id for this movie
+		s.db.UpdateCollectionItemMediaID(*movie.TmdbID, "movie", movie.ID)
+		return
+	}
+
+	// Collection doesn't exist, fetch full details from TMDB
+	collDetails, err := s.tmdb.GetCollectionDetails(tmdbColl.ID)
+	if err != nil {
+		log.Printf("Failed to fetch collection details for %s: %v", tmdbColl.Name, err)
+		return
+	}
+
+	// Download collection images
+	posterPath, _ := s.tmdb.DownloadImage(collDetails.PosterPath, "w500")
+	backdropPath, _ := s.tmdb.DownloadImage(collDetails.BackdropPath, "w1280")
+
+	// Create the collection
+	tmdbID := collDetails.ID
+	coll := &database.Collection{
+		Name:             collDetails.Name,
+		TmdbCollectionID: &tmdbID,
+		IsAuto:           true,
+		SortOrder:        "release",
+	}
+	if collDetails.Overview != "" {
+		coll.Description = &collDetails.Overview
+	}
+	if posterPath != "" {
+		coll.PosterPath = &posterPath
+	}
+	if backdropPath != "" {
+		coll.BackdropPath = &backdropPath
+	}
+
+	if err := s.db.CreateCollection(coll); err != nil {
+		log.Printf("Failed to create collection %s: %v", collDetails.Name, err)
+		return
+	}
+
+	log.Printf("Created collection: %s with %d movies", collDetails.Name, len(collDetails.Parts))
+
+	// Add all parts as collection items
+	for i, part := range collDetails.Parts {
+		year := 0
+		if len(part.ReleaseDate) >= 4 {
+			year, _ = strconv.Atoi(part.ReleaseDate[:4])
+		}
+
+		// Download poster for the part
+		partPoster, _ := s.tmdb.DownloadImage(part.PosterPath, "w500")
+
+		item := &database.CollectionItem{
+			CollectionID: coll.ID,
+			MediaType:    "movie",
+			TmdbID:       part.ID,
+			Title:        part.Title,
+			Year:         year,
+			SortOrder:    i,
+		}
+		if partPoster != "" {
+			item.PosterPath = &partPoster
+		}
+
+		// Check if this movie is already in the library
+		existingMovie, err := s.db.GetMovieByTmdb(part.ID)
+		if err == nil && existingMovie != nil {
+			item.MediaID = &existingMovie.ID
+		}
+
+		if err := s.db.AddCollectionItem(item); err != nil {
+			log.Printf("Failed to add collection item %s: %v", part.Title, err)
+		}
+	}
 }

@@ -21,6 +21,7 @@
 	} from '$lib/api';
 	import ScrollSection from '$lib/components/containers/ScrollSection.svelte';
 	import MediaCard from '$lib/components/media/MediaCard.svelte';
+	import RequestModal from '$lib/components/RequestModal.svelte';
 	import { toast } from '$lib/stores/toast';
 
 	// Row data
@@ -48,6 +49,15 @@
 	let error: string | null = $state(null);
 	let activeTab = $state<'movies' | 'shows'>('movies');
 	let requestingIds: Set<number> = $state(new Set());
+
+	// Request modal state
+	let showRequestModal = $state(false);
+	let requestModalItem: DiscoverItem | null = $state(null);
+
+	function openRequestModal(item: DiscoverItem) {
+		requestModalItem = item;
+		showRequestModal = true;
+	}
 
 	async function loadTheatricalReleases() {
 		try {
@@ -166,9 +176,18 @@
 		return genres.find(g => g.id === genreId)?.name || 'Unknown';
 	}
 
-	async function handleRequest(e: MouseEvent, item: DiscoverItem) {
+	function handleRequestClick(e: MouseEvent, item: DiscoverItem) {
 		e.preventDefault();
 		e.stopPropagation();
+		openRequestModal(item);
+	}
+
+	async function handleRequestConfirm(qualityPresetId: number, selectedSeasons?: number[]) {
+		if (!requestModalItem) return;
+
+		const item = requestModalItem;
+		showRequestModal = false;
+		requestModalItem = null;
 
 		requestingIds.add(item.id);
 		requestingIds = requestingIds;
@@ -180,7 +199,9 @@
 				title: item.title || item.name || '',
 				year: item.releaseDate ? parseInt(item.releaseDate.substring(0, 4)) : undefined,
 				overview: item.overview,
-				posterPath: item.posterPath
+				posterPath: item.posterPath,
+				qualityPresetId,
+				seasons: selectedSeasons
 			});
 
 			// Update local state
@@ -195,10 +216,23 @@
 			popularShows = updateItems(popularShows);
 			upcomingShows = updateItems(upcomingShows);
 			topRatedShows = updateItems(topRatedShows);
+
+			// Also update genre content
+			movieGenreContent = new Map([...movieGenreContent].map(([k, v]) => [k, updateItems(v)]));
+			tvGenreContent = new Map([...tvGenreContent].map(([k, v]) => [k, updateItems(v)]));
+
+			// Update heroes
+			movieHeroes = updateItems(movieHeroes);
+			showHeroes = updateItems(showHeroes);
+
 			toast.success('Request submitted');
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to create request';
-			toast.error('Failed to create request');
+			const message = err instanceof Error ? err.message : 'Failed to create request';
+			if (message === 'Already requested') {
+				toast.info('Already requested');
+			} else {
+				toast.error(message);
+			}
 		} finally {
 			requestingIds.delete(item.id);
 			requestingIds = requestingIds;
@@ -346,7 +380,7 @@
 								</button>
 							{:else}
 								<button
-									onclick={(e) => handleRequest(e, currentHero)}
+									onclick={(e) => handleRequestClick(e, currentHero)}
 									class="btn-icon-glass-lg"
 									title="Request"
 									disabled={requestingIds.has(currentHero.id)}
@@ -665,3 +699,21 @@
 		</div>
 	{/if}
 </div>
+
+<!-- Request Modal -->
+{#if showRequestModal && requestModalItem}
+	<RequestModal
+		item={{
+			title: requestModalItem.title || requestModalItem.name || '',
+			year: requestModalItem.releaseDate ? parseInt(requestModalItem.releaseDate.substring(0, 4)) : undefined,
+			type: requestModalItem.type === 'movie' ? 'movie' : 'show',
+			posterPath: requestModalItem.posterPath,
+			backdropPath: requestModalItem.backdropPath,
+			overview: requestModalItem.overview,
+			tmdbId: requestModalItem.id
+		}}
+		mode="request"
+		onConfirm={handleRequestConfirm}
+		onCancel={() => { showRequestModal = false; requestModalItem = null; }}
+	/>
+{/if}

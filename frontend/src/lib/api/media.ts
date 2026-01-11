@@ -97,6 +97,10 @@ export interface ShowDetail extends Show {
 	seasons: Season[];
 }
 
+export interface EpisodeDetail extends Episode {
+	showId: number;
+}
+
 // Music types
 
 export interface Artist {
@@ -240,6 +244,12 @@ export async function matchShow(id: number, tmdbId: number): Promise<ShowDetail>
 	return response.json();
 }
 
+export async function getEpisode(episodeId: number): Promise<EpisodeDetail> {
+	const response = await apiFetch(`${API_BASE}/episodes/${episodeId}`);
+	if (!response.ok) throw new Error(`API error: ${response.status}`);
+	return response.json();
+}
+
 export async function deleteEpisode(episodeId: number): Promise<void> {
 	const response = await apiFetch(`${API_BASE}/episodes/${episodeId}`, {
 		method: 'DELETE'
@@ -323,6 +333,8 @@ export interface MediaQualityOverride {
 	presetId?: number | null;
 	monitored: boolean;
 	monitoredSeasons?: string; // JSON array of season numbers, empty = all
+	preferredAudioLang?: string; // ISO 639-1 language code (e.g., "en", "ja")
+	preferredSubtitleLang?: string; // ISO 639-1 language code or "off"
 	createdAt?: string;
 }
 
@@ -365,6 +377,47 @@ export async function setShowQuality(showId: number, override: Partial<MediaQual
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(override)
+	});
+	if (!response.ok) throw new Error(`API error: ${response.status}`);
+	return response.json();
+}
+
+// Missing Episodes types and functions
+
+export interface MissingEpisode {
+	seasonNumber: number;
+	episodeNumber: number;
+	title: string;
+	airDate: string;
+	overview: string;
+	stillPath: string;
+}
+
+export interface SeasonMissingSummary {
+	seasonNumber: number;
+	totalEpisodes: number;
+	missingCount: number;
+}
+
+export interface MissingEpisodesResult {
+	totalEpisodes: number;
+	ownedEpisodes: number;
+	missing: MissingEpisode[];
+	missingBySeason: SeasonMissingSummary[];
+}
+
+export async function getMissingEpisodes(showId: number): Promise<MissingEpisodesResult> {
+	const response = await apiFetch(`${API_BASE}/shows/${showId}/missing`);
+	if (!response.ok) throw new Error(`API error: ${response.status}`);
+	return response.json();
+}
+
+export async function requestMissingEpisodes(showId: number, seasonNumber?: number): Promise<{ addedCount: number }> {
+	const body = seasonNumber !== undefined ? { seasonNumber } : {};
+	const response = await apiFetch(`${API_BASE}/shows/${showId}/request-missing`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(body)
 	});
 	if (!response.ok) throw new Error(`API error: ${response.status}`);
 	return response.json();

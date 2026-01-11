@@ -107,3 +107,150 @@ export async function getTaskHistory(limit = 50): Promise<TaskHistory[]> {
 	if (!response.ok) throw new Error(`API error: ${response.status}`);
 	return response.json();
 }
+
+// Logs
+
+export interface LogEntry {
+	timestamp: string;
+	level: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
+	source: string;
+	message: string;
+}
+
+export interface LogsResponse {
+	entries: LogEntry[];
+	total: number;
+	hasMore: boolean;
+}
+
+export interface LogsQuery {
+	level?: string;
+	source?: string;
+	search?: string;
+	limit?: number;
+}
+
+export async function getLogs(query: LogsQuery = {}): Promise<LogsResponse> {
+	const params = new URLSearchParams();
+	if (query.level) params.set('level', query.level);
+	if (query.source) params.set('source', query.source);
+	if (query.search) params.set('search', query.search);
+	if (query.limit) params.set('limit', String(query.limit));
+
+	const url = `${API_BASE}/logs${params.toString() ? '?' + params.toString() : ''}`;
+	const response = await apiFetch(url);
+	if (!response.ok) throw new Error(`API error: ${response.status}`);
+	return response.json();
+}
+
+export async function downloadLogs(): Promise<void> {
+	const response = await apiFetch(`${API_BASE}/logs/download`);
+	if (!response.ok) throw new Error(`API error: ${response.status}`);
+
+	const blob = await response.blob();
+	const url = URL.createObjectURL(blob);
+	const a = document.createElement('a');
+	a.href = url;
+	a.download = 'outpost-logs.txt';
+	document.body.appendChild(a);
+	a.click();
+	document.body.removeChild(a);
+	URL.revokeObjectURL(url);
+}
+
+// Storage Analytics
+
+export interface LibrarySize {
+	id: number;
+	name: string;
+	type: string;
+	size: number;
+	count: number;
+}
+
+export interface QualitySize {
+	quality: string;
+	size: number;
+	count: number;
+}
+
+export interface YearSize {
+	year: number;
+	size: number;
+	count: number;
+}
+
+export interface LargestItem {
+	id: number;
+	type: 'movie' | 'episode';
+	title: string;
+	year: number;
+	size: number;
+	quality: string;
+	path: string;
+}
+
+export interface DuplicateCopy {
+	id: number;
+	quality: string;
+	size: number;
+	path: string;
+}
+
+export interface DuplicateItem {
+	tmdbId: number;
+	title: string;
+	year: number;
+	type: string;
+	copies: DuplicateCopy[];
+}
+
+export interface StorageAnalytics {
+	total: number;
+	used: number;
+	free: number;
+	byLibrary: LibrarySize[];
+	byQuality: QualitySize[];
+	byYear: YearSize[];
+	largest: LargestItem[];
+	duplicates: DuplicateItem[];
+}
+
+export async function getStorageAnalytics(): Promise<StorageAnalytics> {
+	const response = await apiFetch(`${API_BASE}/storage/analytics`);
+	if (!response.ok) throw new Error(`API error: ${response.status}`);
+	return response.json();
+}
+
+// Health Checks
+
+export type HealthCheckStatus = 'healthy' | 'warning' | 'unhealthy';
+
+export interface HealthCheck {
+	name: string;
+	status: HealthCheckStatus;
+	message: string;
+	latency?: number;
+	lastCheck: string;
+	error?: string;
+}
+
+export interface FullHealthResponse {
+	overall: HealthCheckStatus;
+	checks: HealthCheck[];
+	lastFullCheck: string;
+}
+
+export async function getHealthFull(): Promise<FullHealthResponse> {
+	const response = await apiFetch(`${API_BASE}/health/full`);
+	if (!response.ok) throw new Error(`API error: ${response.status}`);
+	return response.json();
+}
+
+export async function recheckHealth(name: string): Promise<HealthCheck> {
+	const response = await apiFetch(`${API_BASE}/health/check/${encodeURIComponent(name)}`, {
+		method: 'POST'
+	});
+	if (!response.ok) throw new Error(`API error: ${response.status}`);
+	return response.json();
+}

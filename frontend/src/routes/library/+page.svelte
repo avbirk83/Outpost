@@ -5,27 +5,42 @@
 	import {
 		getMovies,
 		getShows,
+		getCollections,
+		createCollection,
 		getImageUrl,
 		type Movie,
-		type Show
+		type Show,
+		type Collection
 	} from '$lib/api';
 	import MediaCard from '$lib/components/media/MediaCard.svelte';
 	import Select from '$lib/components/ui/Select.svelte';
+	import { auth } from '$lib/stores/auth';
 
 	// Tab state from URL
-	type TabType = 'movies' | 'tv';
+	type TabType = 'movies' | 'tv' | 'collections';
 	let activeTab = $state<TabType>('movies');
 
 	// Data states
 	let movies: Movie[] = $state([]);
 	let shows: Show[] = $state([]);
+	let collections: Collection[] = $state([]);
 
 	// Loading states per tab
 	let loadingMovies = $state(false);
 	let loadingShows = $state(false);
+	let loadingCollections = $state(false);
 	let loadedTabs = $state<Set<TabType>>(new Set());
 
+	// Get current user for admin check
+	const user = $derived($auth);
+
 	let error: string | null = $state(null);
+
+	// Collection creation modal state
+	let showCreateModal = $state(false);
+	let newCollectionName = $state('');
+	let newCollectionDescription = $state('');
+	let creatingCollection = $state(false);
 
 	// Hero carousel state
 	let heroIndex = $state(0);
@@ -291,6 +306,10 @@
 					loadingShows = true;
 					shows = await getShows();
 					break;
+				case 'collections':
+					loadingCollections = true;
+					collections = await getCollections();
+					break;
 			}
 			loadedTabs.add(tab);
 		} catch (e) {
@@ -298,6 +317,31 @@
 		} finally {
 			loadingMovies = false;
 			loadingShows = false;
+			loadingCollections = false;
+		}
+	}
+
+	// Handle collection creation
+	async function handleCreateCollection(e: Event) {
+		e.preventDefault();
+		if (!newCollectionName.trim() || creatingCollection) return;
+
+		creatingCollection = true;
+		try {
+			const newColl = await createCollection({
+				name: newCollectionName.trim(),
+				description: newCollectionDescription.trim() || undefined
+			});
+			collections = [newColl, ...collections];
+			showCreateModal = false;
+			newCollectionName = '';
+			newCollectionDescription = '';
+			// Navigate to the new collection
+			goto(`/collections/${newColl.id}`);
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to create collection';
+		} finally {
+			creatingCollection = false;
 		}
 	}
 
@@ -459,6 +503,7 @@
 	const tabs = $derived([
 		{ id: 'movies' as TabType, label: 'Movies', count: movies.length },
 		{ id: 'tv' as TabType, label: 'TV Shows', count: shows.length },
+		{ id: 'collections' as TabType, label: 'Collections', count: collections.length },
 	]);
 </script>
 
@@ -973,5 +1018,148 @@
 		</div>
 	{/if}
 
+	<!-- Collections Tab -->
+	{#if activeTab === 'collections'}
+		<div class="space-y-6">
+			<!-- Header with Create button -->
+			<div class="flex items-center justify-between">
+				<h2 class="text-xl font-semibold text-text-primary">
+					Collections
+					<span class="text-sm text-text-muted font-normal ml-2">({collections.length})</span>
+				</h2>
+				{#if user?.role === 'admin'}
+					<button
+						onclick={() => showCreateModal = true}
+						class="px-4 py-2 rounded-lg bg-accent-primary text-white font-medium hover:bg-accent-primary/90 transition-colors flex items-center gap-2"
+					>
+						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+						</svg>
+						Create Collection
+					</button>
+				{/if}
+			</div>
+
+			{#if loadingCollections}
+				<div class="flex items-center justify-center py-20">
+					<div class="animate-spin w-8 h-8 border-2 border-accent-primary border-t-transparent rounded-full"></div>
+				</div>
+			{:else if collections.length === 0}
+				<div class="text-center py-20">
+					<div class="text-6xl mb-4">📚</div>
+					<h3 class="text-xl font-medium text-text-primary mb-2">No Collections Yet</h3>
+					<p class="text-text-muted mb-6">Collections are automatically created when you add movies from franchises,<br/>or you can create custom collections to organize your library.</p>
+					{#if user?.role === 'admin'}
+						<button
+							onclick={() => showCreateModal = true}
+							class="px-6 py-3 rounded-lg bg-accent-primary text-white font-medium hover:bg-accent-primary/90 transition-colors"
+						>
+							Create Your First Collection
+						</button>
+					{/if}
+				</div>
+			{:else}
+				<div class="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4">
+					{#each collections as collection}
+						<a
+							href="/collections/{collection.id}"
+							class="group bg-bg-card border border-border-subtle rounded-xl overflow-hidden hover:border-border-hover transition-all hover:shadow-lg"
+						>
+							<!-- Collection Poster/Backdrop -->
+							<div class="relative aspect-video bg-bg-tertiary overflow-hidden">
+								{#if collection.backdropPath || collection.posterPath}
+									<img
+										src={getImageUrl(collection.backdropPath || collection.posterPath)}
+										alt={collection.name}
+										class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+									/>
+								{:else}
+									<div class="w-full h-full flex items-center justify-center text-4xl text-text-muted">📚</div>
+								{/if}
+								<!-- Gradient overlay -->
+								<div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>
+								<!-- Auto badge -->
+								{#if collection.isAuto}
+									<div class="absolute top-3 left-3 px-2 py-1 rounded bg-accent-primary/90 text-white text-xs font-medium">
+										TMDB Collection
+									</div>
+								{/if}
+								<!-- Count badge -->
+								<div class="absolute bottom-3 right-3 px-2 py-1 rounded bg-black/60 text-white text-sm font-medium">
+									{collection.ownedCount}/{collection.itemCount}
+								</div>
+							</div>
+							<!-- Info -->
+							<div class="p-4">
+								<h3 class="font-semibold text-text-primary group-hover:text-accent-primary transition-colors truncate">
+									{collection.name}
+								</h3>
+								{#if collection.description}
+									<p class="text-sm text-text-muted mt-1 line-clamp-2">{collection.description}</p>
+								{/if}
+							</div>
+						</a>
+					{/each}
+				</div>
+			{/if}
+		</div>
+	{/if}
+
 	</div>
 </div>
+
+<!-- Create Collection Modal -->
+{#if showCreateModal}
+	<div
+		class="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4"
+		onclick={(e) => { if (e.target === e.currentTarget) showCreateModal = false; }}
+		onkeydown={(e) => { if (e.key === 'Escape') showCreateModal = false; }}
+		role="dialog"
+		tabindex="-1"
+	>
+		<div class="bg-bg-primary border border-border-subtle rounded-xl w-full max-w-md">
+			<div class="p-6 border-b border-border-subtle">
+				<h2 class="text-xl font-semibold text-text-primary">Create Collection</h2>
+			</div>
+			<form onsubmit={handleCreateCollection} class="p-6 space-y-4">
+				<div>
+					<label for="collName" class="block text-sm font-medium text-text-secondary mb-2">Name</label>
+					<input
+						id="collName"
+						type="text"
+						bind:value={newCollectionName}
+						placeholder="My Collection"
+						required
+						class="w-full px-4 py-2.5 rounded-lg bg-bg-secondary border border-border-subtle text-text-primary placeholder-text-muted focus:outline-none focus:border-accent-primary"
+					/>
+				</div>
+				<div>
+					<label for="collDesc" class="block text-sm font-medium text-text-secondary mb-2">Description (optional)</label>
+					<textarea
+						id="collDesc"
+						bind:value={newCollectionDescription}
+						placeholder="Add a description..."
+						rows="3"
+						class="w-full px-4 py-2.5 rounded-lg bg-bg-secondary border border-border-subtle text-text-primary placeholder-text-muted focus:outline-none focus:border-accent-primary resize-none"
+					></textarea>
+				</div>
+				<div class="flex gap-3 pt-2">
+					<button
+						type="button"
+						onclick={() => showCreateModal = false}
+						class="flex-1 px-4 py-2.5 rounded-lg border border-border-subtle text-text-secondary hover:bg-bg-secondary transition-colors"
+					>
+						Cancel
+					</button>
+					<button
+						type="submit"
+						disabled={!newCollectionName.trim() || creatingCollection}
+						class="flex-1 px-4 py-2.5 rounded-lg bg-accent-primary text-white font-medium hover:bg-accent-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+					>
+						{creatingCollection ? 'Creating...' : 'Create'}
+					</button>
+				</div>
+			</form>
+		</div>
+	</div>
+{/if}

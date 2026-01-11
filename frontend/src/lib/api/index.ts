@@ -25,6 +25,8 @@ export {
 	getShow,
 	refreshShowMetadata,
 	matchShow,
+	// Episodes
+	getEpisode,
 	deleteEpisode,
 	// Music
 	getArtists,
@@ -40,13 +42,17 @@ export {
 	setMovieQuality,
 	deleteMovieQuality,
 	getShowQuality,
-	setShowQuality
+	setShowQuality,
+	// Missing Episodes
+	getMissingEpisodes,
+	requestMissingEpisodes
 } from './media';
 export type {
 	Movie,
 	Show,
 	Season,
 	Episode,
+	EpisodeDetail,
 	ShowDetail,
 	Artist,
 	Album,
@@ -56,7 +62,10 @@ export type {
 	Book,
 	MediaQualityStatus,
 	MediaQualityOverride,
-	QualityInfo
+	QualityInfo,
+	MissingEpisode,
+	SeasonMissingSummary,
+	MissingEpisodesResult
 } from './media';
 
 // Streaming
@@ -64,13 +73,20 @@ export {
 	getStreamUrl,
 	getMediaInfo,
 	getSubtitleTracks,
-	getSubtitleTrackUrl
+	getSubtitleTrackUrl,
+	getChapters,
+	getSkipSegments,
+	saveSkipSegment,
+	deleteSkipSegment
 } from './streaming';
 export type {
 	VideoStream,
 	AudioStream,
 	SubtitleTrack,
-	MediaInfo
+	MediaInfo,
+	Chapter,
+	SkipSegment,
+	SkipSegments
 } from './streaming';
 
 // Progress and Watch State
@@ -99,12 +115,21 @@ export {
 	getUsers,
 	createUser,
 	updateUser,
-	deleteUser
+	deleteUser,
+	getSetupWizardStatus,
+	completeSetupWizard,
+	verifyPin
 } from './auth';
 export type {
 	User,
 	LoginResponse,
-	SetupStatus
+	SetupStatus,
+	SetupWizardStatus,
+	SetupWizardSteps,
+	ContentRating,
+	PinVerifyResponse,
+	CreateUserData,
+	UpdateUserData
 } from './auth';
 
 // Settings
@@ -116,9 +141,11 @@ export {
 	getNamingTemplates,
 	updateNamingTemplate,
 	getFormatSettings,
-	saveFormatSettings
+	saveFormatSettings,
+	downloadBackup,
+	restoreBackup
 } from './settings';
-export type { NamingTemplate, FormatSettings } from './settings';
+export type { NamingTemplate, FormatSettings, RestoreResult } from './settings';
 
 // Downloads
 export {
@@ -281,7 +308,7 @@ export type {
 	WatchlistItem
 } from './discover';
 
-// System (Storage, Status, Tasks)
+// System (Storage, Status, Tasks, Logs, Analytics, Health)
 export {
 	getStorageStatus,
 	getSystemStatus,
@@ -289,12 +316,58 @@ export {
 	getTask,
 	updateTask,
 	triggerTask,
-	getTaskHistory
+	getTaskHistory,
+	getLogs,
+	downloadLogs,
+	getStorageAnalytics,
+	getHealthFull,
+	recheckHealth
 } from './system';
 export type {
 	DiskUsage,
 	StorageStatus,
 	SystemStatus,
 	ScheduledTask,
-	TaskHistory
+	TaskHistory,
+	LogEntry,
+	LogsResponse,
+	LogsQuery,
+	StorageAnalytics,
+	LibrarySize,
+	QualitySize,
+	YearSize,
+	LargestItem,
+	DuplicateCopy,
+	DuplicateItem,
+	HealthCheckStatus,
+	HealthCheck,
+	FullHealthResponse
 } from './system';
+
+// Calendar
+export { getCalendarItems } from './calendar';
+export type { CalendarItem, CalendarFilter } from './calendar';
+
+// Notifications
+export {
+	getNotifications,
+	getUnreadCount,
+	markRead,
+	markAllRead,
+	deleteNotification
+} from './notifications';
+export type { Notification } from './notifications';
+
+// Collections
+export {
+	getCollections,
+	getCollection,
+	createCollection,
+	updateCollection,
+	deleteCollection,
+	addCollectionItem,
+	removeCollectionItem,
+	reorderCollectionItems,
+	getMediaCollections
+} from './collections';
+export type { Collection, CollectionItem, CollectionDetail } from './collections';

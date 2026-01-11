@@ -16,7 +16,7 @@
 	let { options, value = $bindable(), onchange, id, disabled = false, class: className = '' }: Props = $props();
 
 	let open = $state(false);
-	let buttonRef: HTMLButtonElement;
+	let containerRef: HTMLDivElement;
 
 	const selectedOption = $derived(options.find(o => o.value === value));
 
@@ -26,52 +26,46 @@
 		open = false;
 	}
 
-	function toggle() {
+	function toggle(e: MouseEvent) {
 		if (!disabled) {
+			// Don't stop propagation - let other dropdowns close
 			open = !open;
 		}
 	}
 
-	function close() {
-		open = false;
+	function handleWindowClick(e: MouseEvent) {
+		if (open && containerRef && !containerRef.contains(e.target as Node)) {
+			open = false;
+		}
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
-		if (e.key === 'Escape') {
-			close();
-		} else if (e.key === 'ArrowDown' && !open) {
+		if (e.key === 'Escape' && open) {
+			open = false;
+		} else if (e.key === 'ArrowDown' && !open && !disabled) {
 			open = true;
 			e.preventDefault();
 		}
 	}
 </script>
 
-<svelte:window on:keydown={handleKeydown} />
+<svelte:window onclick={handleWindowClick} onkeydown={handleKeydown} />
 
-{#if open}
+<div bind:this={containerRef} class="relative {className}">
 	<button
-		type="button"
-		class="fixed inset-0 z-[500] cursor-default"
-		onclick={close}
-		aria-label="Close dropdown"
-	></button>
-{/if}
-
-<div class="relative {className}">
-	<button
-		bind:this={buttonRef}
 		type="button"
 		{id}
 		onclick={toggle}
 		{disabled}
-		class="w-full flex items-center justify-between gap-2 px-3 py-1.5 text-sm text-left
-			bg-transparent text-text-primary transition-all rounded-lg
-			hover:bg-glass
-			disabled:opacity-50 disabled:cursor-not-allowed"
+		class="w-full flex items-center justify-between gap-2 px-3 py-2 text-sm text-left
+			bg-bg-elevated hover:bg-bg-elevated/80 border border-border-subtle rounded-lg
+			text-text-primary transition-all
+			disabled:opacity-50 disabled:cursor-not-allowed
+			{open ? 'rounded-b-none border-b-transparent' : ''}"
 	>
 		<span class="truncate">{selectedOption?.label || 'Select...'}</span>
 		<svg
-			class="w-4 h-4 text-text-muted flex-shrink-0 transition-transform {open ? 'rotate-180' : ''}"
+			class="w-4 h-4 text-text-muted flex-shrink-0 transition-transform duration-200 {open ? 'rotate-180' : ''}"
 			fill="none"
 			stroke="currentColor"
 			viewBox="0 0 24 24"
@@ -82,15 +76,17 @@
 
 	{#if open}
 		<div
-			class="absolute left-0 right-0 top-full mt-1 max-h-64 overflow-y-auto scrollbar-thin z-[100]
-				bg-bg-card rounded-xl border border-border-subtle shadow-2xl"
+			class="absolute left-0 right-0 top-full z-[1000] max-h-64 overflow-y-auto scrollbar-thin
+				bg-bg-elevated border border-border-subtle border-t-0 rounded-b-lg shadow-xl"
 		>
 			{#each options as opt}
 				<button
 					type="button"
 					onclick={() => select(opt)}
-					class="w-full text-left flex items-center gap-3 px-4 py-2.5 text-sm transition-colors
-						{value === opt.value ? 'bg-cream/10 text-text-primary' : 'text-text-secondary hover:bg-cream/10 hover:text-text-primary'}"
+					class="w-full text-left flex items-center gap-3 px-3 py-2.5 text-sm transition-colors
+						{value === opt.value
+							? 'bg-cream/15 text-text-primary'
+							: 'text-text-secondary hover:bg-bg-card hover:text-text-primary'}"
 				>
 					{#if value === opt.value}
 						<svg class="w-4 h-4 text-cream flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
