@@ -99,13 +99,13 @@
 
 	// Calculate total library size for percentage bars
 	const totalLibrarySize = $derived.by(() => {
-		if (!analytics) return 0;
+		if (!analytics?.byLibrary) return 0;
 		return analytics.byLibrary.reduce((sum: number, lib: LibrarySize) => sum + lib.size, 0);
 	});
 
 	// Calculate total quality size for percentage bars
 	const totalQualitySize = $derived.by(() => {
-		if (!analytics) return 0;
+		if (!analytics?.byQuality) return 0;
 		return analytics.byQuality.reduce((sum: number, q: QualitySize) => sum + q.size, 0);
 	});
 </script>
@@ -193,7 +193,7 @@
 					Storage by Library
 				</h3>
 
-				{#if analytics.byLibrary.length === 0}
+				{#if !analytics.byLibrary?.length}
 					<p class="text-text-muted text-sm">No libraries found</p>
 				{:else}
 					<div class="space-y-4">
@@ -229,7 +229,7 @@
 					Storage by Quality
 				</h3>
 
-				{#if analytics.byQuality.length === 0}
+				{#if !analytics.byQuality?.length}
 					<p class="text-text-muted text-sm">No quality data available</p>
 				{:else}
 					<div class="space-y-4">
@@ -258,7 +258,7 @@
 		</div>
 
 		<!-- Duplicates Alert -->
-		{#if analytics.duplicates.length > 0}
+		{#if analytics.duplicates?.length}
 			<div class="glass-card p-6 border-l-4 border-amber-500">
 				<div class="flex items-start gap-3">
 					<div class="w-10 h-10 rounded-xl bg-amber-600/20 flex items-center justify-center flex-shrink-0">
@@ -331,7 +331,7 @@
 				<span class="text-xs text-text-muted">Top 20</span>
 			</div>
 
-			{#if analytics.largest.length === 0}
+			{#if !analytics.largest?.length}
 				<p class="text-text-muted text-sm">No files found</p>
 			{:else}
 				<div class="overflow-x-auto">
@@ -374,7 +374,7 @@
 		</div>
 
 		<!-- By Year (Collapsed by default) -->
-		{#if analytics.byYear.length > 0}
+		{#if analytics.byYear?.length}
 			<details class="glass-card">
 				<summary class="p-6 cursor-pointer flex items-center justify-between hover:bg-white/5 transition-colors">
 					<h3 class="text-lg font-semibold text-text-primary flex items-center gap-2">
