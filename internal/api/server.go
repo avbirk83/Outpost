@@ -386,6 +386,7 @@ func (s *Server) setupRoutes() {
 	// System status route (authenticated)
 	s.mux.HandleFunc("/api/system/status", s.requireAuth(s.handleSystemStatus))
 	s.mux.HandleFunc("/api/system/rescan-quality", s.requireAdmin(s.handleRescanQuality))
+	s.mux.HandleFunc("/api/system/redetect-quality", s.requireAdmin(s.handleRedetectQuality))
 
 	// Logs routes (admin only)
 	s.mux.HandleFunc("/api/logs", s.requireAdmin(s.handleLogs))
@@ -5929,6 +5930,21 @@ func (s *Server) handleRescanQuality(w http.ResponseWriter, r *http.Request) {
 		"message":         "Quality rescan completed",
 		"moviesUpdated":   movies,
 		"episodesUpdated": episodes,
+	})
+}
+
+func (s *Server) handleRedetectQuality(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	go s.scanner.RedetectAllQuality()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Quality re-detection started in background using ffprobe",
 	})
 }
 

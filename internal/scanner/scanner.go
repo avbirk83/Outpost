@@ -161,14 +161,14 @@ func (s *Scanner) FixMissingSizes() {
 	}
 }
 
-// detectResolutionFromFile uses ffprobe to detect actual video resolution from file
-func (s *Scanner) detectResolutionFromFile(filePath string) string {
+// detectQualityFromFile uses ffprobe to detect video resolution and estimates source from file size
+func (s *Scanner) detectQualityFromFile(filePath string) (resolution string, source string) {
 	cmd := exec.Command("ffprobe", "-v", "error", "-select_streams", "v:0",
 		"-show_entries", "stream=width,height", "-of", "json", filePath)
 
 	output, err := cmd.Output()
 	if err != nil {
-		return ""
+		return "", ""
 	}
 
 	var result struct {
@@ -179,22 +179,48 @@ func (s *Scanner) detectResolutionFromFile(filePath string) string {
 	}
 
 	if err := json.Unmarshal(output, &result); err != nil || len(result.Streams) == 0 {
-		return ""
+		return "", ""
 	}
 
 	height := result.Streams[0].Height
 	switch {
-	case height >= 2160:
-		return "2160p"
-	case height >= 1080:
-		return "1080p"
-	case height >= 720:
-		return "720p"
-	case height >= 480:
-		return "480p"
+	case height >= 2000:
+		resolution = "2160p"
+	case height >= 1000:
+		resolution = "1080p"
+	case height >= 700:
+		resolution = "720p"
+	case height >= 400:
+		resolution = "480p"
 	default:
-		return ""
+		return "", ""
 	}
+
+	// Estimate source from file size
+	if info, err := os.Stat(filePath); err == nil {
+		sizeGB := float64(info.Size()) / (1024 * 1024 * 1024)
+		if resolution == "2160p" {
+			if sizeGB > 40 {
+				source = "remux"
+			} else if sizeGB > 15 {
+				source = "bluray"
+			} else {
+				source = "webdl"
+			}
+		} else if resolution == "1080p" {
+			if sizeGB > 20 {
+				source = "remux"
+			} else if sizeGB > 8 {
+				source = "bluray"
+			} else {
+				source = "webdl"
+			}
+		} else {
+			source = "webdl"
+		}
+	}
+
+	return resolution, source
 }
 
 // detectAndStoreQuality parses a filename to detect quality and stores it in media_quality_status
@@ -212,14 +238,21 @@ func (s *Scanner) detectAndStoreQuality(mediaID int64, mediaType string, filenam
 		baseScore = 1000 // Unknown quality
 	}
 
-	// If filename parsing returned Unknown, try to detect from actual file
-	if qualityTier == "Unknown" && filePath != "" {
-		if resolution := s.detectResolutionFromFile(filePath); resolution != "" {
-			parsed.Resolution = resolution
+	// If filename parsing returned Unknown or missing resolution/source, try ffprobe
+	if filePath != "" && (qualityTier == "Unknown" || parsed.Resolution == "" || parsed.Source == "") {
+		if detectedRes, detectedSource := s.detectQualityFromFile(filePath); detectedRes != "" {
+			if parsed.Resolution == "" {
+				parsed.Resolution = detectedRes
+			}
+			if parsed.Source == "" && detectedSource != "" {
+				parsed.Source = detectedSource
+			}
+			// Recompute quality tier with detected values
 			qualityTier = quality.ComputeQualityTier(parsed)
-			if newScore, ok := quality.BaseQualityScores[qualityTier]; ok {
+			if newScore, ok := quality.BaseQualityScores[qualityTier]; ok && newScore > 0 {
 				baseScore = newScore
 			}
+			log.Printf("Detected quality from file %s: %s %s (score: %d)", filename, parsed.Resolution, parsed.Source, baseScore)
 		}
 	}
 
@@ -405,6 +438,39 @@ func (s *Scanner) DetectQualityForExistingMedia() {
 	}
 
 	log.Println("Quality detection for existing media complete")
+}
+
+// RedetectAllQuality forces re-detection of quality for ALL media using ffprobe
+func (s *Scanner) RedetectAllQuality() {
+	log.Println("Starting full quality re-detection using ffprobe...")
+
+	// Process all movies
+	movies, err := s.db.GetMovies()
+	if err != nil {
+		log.Printf("Failed to get movies for quality re-detection: %v", err)
+	} else {
+		for _, movie := range movies {
+			if movie.Path != "" {
+				s.detectAndStoreQuality(movie.ID, "movie", filepath.Base(movie.Path), movie.Path)
+			}
+		}
+		log.Printf("Re-detected quality for %d movies", len(movies))
+	}
+
+	// Process all episodes
+	episodes, err := s.db.GetAllEpisodes()
+	if err != nil {
+		log.Printf("Failed to get episodes for quality re-detection: %v", err)
+	} else {
+		for _, ep := range episodes {
+			if ep.Path != "" {
+				s.detectAndStoreQuality(ep.ID, "episode", filepath.Base(ep.Path), ep.Path)
+			}
+		}
+		log.Printf("Re-detected quality for %d episodes", len(episodes))
+	}
+
+	log.Println("Quality re-detection complete")
 }
 
 // missingGracePeriod is how long a file can be missing before being deleted
