@@ -3669,29 +3669,46 @@ func (s *Server) handleRequests(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Check if already requested
+		// Check if already requested (excludes denied)
 		existing, _ := s.db.GetRequestByTmdb(user.ID, req.Type, req.TmdbID)
 		if existing != nil {
 			http.Error(w, "Already requested", http.StatusConflict)
 			return
 		}
 
-		request := &database.Request{
-			UserID:           user.ID,
-			Type:             req.Type,
-			TmdbID:           req.TmdbID,
-			Title:            req.Title,
-			Year:             req.Year,
-			Overview:         req.Overview,
-			PosterPath:       req.PosterPath,
-			BackdropPath:     req.BackdropPath,
-			QualityProfileID: req.QualityProfileID,
-			QualityPresetID:  req.QualityPresetID,
-		}
+		// Check if there's a denied request we can reactivate
+		deniedRequest, _ := s.db.GetDeniedRequestByTmdb(user.ID, req.Type, req.TmdbID)
+		var request *database.Request
 
-		if err := s.db.CreateRequest(request); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+		if deniedRequest != nil {
+			// Reactivate the denied request
+			if err := s.db.UpdateRequestStatus(deniedRequest.ID, "requested", nil); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			request = deniedRequest
+			request.Status = "requested"
+			log.Printf("Request reactivated: id=%d type=%s tmdbId=%d title=%s", request.ID, request.Type, request.TmdbID, request.Title)
+		} else {
+			// Create new request
+			request = &database.Request{
+				UserID:           user.ID,
+				Type:             req.Type,
+				TmdbID:           req.TmdbID,
+				Title:            req.Title,
+				Year:             req.Year,
+				Overview:         req.Overview,
+				PosterPath:       req.PosterPath,
+				BackdropPath:     req.BackdropPath,
+				QualityProfileID: req.QualityProfileID,
+				QualityPresetID:  req.QualityPresetID,
+			}
+
+			if err := s.db.CreateRequest(request); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			log.Printf("Request created: id=%d type=%s tmdbId=%d title=%s", request.ID, request.Type, request.TmdbID, request.Title)
 		}
 
 		w.Header().Set("Content-Type", "application/json")

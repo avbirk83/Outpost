@@ -2680,6 +2680,23 @@ func (d *Database) GetRequestByTmdb(userID int64, mediaType string, tmdbID int64
 	return &req, nil
 }
 
+func (d *Database) GetDeniedRequestByTmdb(userID int64, mediaType string, tmdbID int64) (*Request, error) {
+	var req Request
+	err := d.db.QueryRow(`
+		SELECT r.id, r.user_id, u.username, r.type, r.tmdb_id, r.title, r.year, r.overview,
+		       r.poster_path, r.backdrop_path, r.quality_profile_id, r.quality_preset_id, r.status, r.status_reason, r.requested_at, r.updated_at
+		FROM requests r
+		LEFT JOIN users u ON r.user_id = u.id
+		WHERE r.user_id = ? AND r.type = ? AND r.tmdb_id = ? AND r.status = 'denied'`,
+		userID, mediaType, tmdbID).Scan(&req.ID, &req.UserID, &req.Username, &req.Type, &req.TmdbID,
+		&req.Title, &req.Year, &req.Overview, &req.PosterPath, &req.BackdropPath, &req.QualityProfileID, &req.QualityPresetID,
+		&req.Status, &req.StatusReason, &req.RequestedAt, &req.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &req, nil
+}
+
 func (d *Database) UpdateRequestStatus(id int64, status string, reason *string) error {
 	_, err := d.db.Exec(`
 		UPDATE requests
