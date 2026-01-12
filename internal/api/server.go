@@ -384,6 +384,7 @@ func (s *Server) setupRoutes() {
 
 	// System status route (authenticated)
 	s.mux.HandleFunc("/api/system/status", s.requireAuth(s.handleSystemStatus))
+	s.mux.HandleFunc("/api/system/rescan-quality", s.requireAdmin(s.handleRescanQuality))
 
 	// Logs routes (admin only)
 	s.mux.HandleFunc("/api/logs", s.requireAdmin(s.handleLogs))
@@ -5906,6 +5907,28 @@ func (s *Server) handleSystemStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(response)
+}
+
+// handleRescanQuality rescans all media to update quality detection
+func (s *Server) handleRescanQuality(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	movies, episodes, err := s.scanner.RescanQualityStatus()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message":         "Quality rescan completed",
+		"moviesUpdated":   movies,
+		"episodesUpdated": episodes,
+	})
 }
 
 // handleFilesystemBrowse returns directory contents for the file browser

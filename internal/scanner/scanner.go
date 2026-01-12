@@ -161,12 +161,48 @@ func (s *Scanner) FixMissingSizes() {
 	}
 }
 
+// detectResolutionFromFile uses ffprobe to detect actual video resolution from file
+func (s *Scanner) detectResolutionFromFile(filePath string) string {
+	cmd := exec.Command("ffprobe", "-v", "error", "-select_streams", "v:0",
+		"-show_entries", "stream=width,height", "-of", "json", filePath)
+
+	output, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+
+	var result struct {
+		Streams []struct {
+			Width  int `json:"width"`
+			Height int `json:"height"`
+		} `json:"streams"`
+	}
+
+	if err := json.Unmarshal(output, &result); err != nil || len(result.Streams) == 0 {
+		return ""
+	}
+
+	height := result.Streams[0].Height
+	switch {
+	case height >= 2160:
+		return "2160p"
+	case height >= 1080:
+		return "1080p"
+	case height >= 720:
+		return "720p"
+	case height >= 480:
+		return "480p"
+	default:
+		return ""
+	}
+}
+
 // detectAndStoreQuality parses a filename to detect quality and stores it in media_quality_status
-func (s *Scanner) detectAndStoreQuality(mediaID int64, mediaType string, filename string) {
+func (s *Scanner) detectAndStoreQuality(mediaID int64, mediaType string, filename string, filePath string) {
 	// Parse the filename to extract quality information
 	parsed := parser.Parse(filename)
 	if parsed == nil {
-		return
+		parsed = &parser.ParsedRelease{}
 	}
 
 	// Compute quality tier and base score
@@ -176,8 +212,19 @@ func (s *Scanner) detectAndStoreQuality(mediaID int64, mediaType string, filenam
 		baseScore = 1000 // Unknown quality
 	}
 
-	// Default cutoff to WEBDL-1080p score
-	cutoffScore := 40000
+	// If filename parsing returned Unknown, try to detect from actual file
+	if qualityTier == "Unknown" && filePath != "" {
+		if resolution := s.detectResolutionFromFile(filePath); resolution != "" {
+			parsed.Resolution = resolution
+			qualityTier = quality.ComputeQualityTier(parsed)
+			if newScore, ok := quality.BaseQualityScores[qualityTier]; ok {
+				baseScore = newScore
+			}
+		}
+	}
+
+	// Default cutoff to current quality (no upgrades needed if no preset configured)
+	cutoffScore := baseScore
 
 	// Try to get the default preset's cutoff
 	preset, err := s.db.GetDefaultQualityPreset()
@@ -235,6 +282,41 @@ func (s *Scanner) detectAndStoreQuality(mediaID int64, mediaType string, filenam
 	}
 }
 
+// RescanQualityStatus re-scans all media to update quality status
+// This is useful after changing quality presets or fixing detection logic
+func (s *Scanner) RescanQualityStatus() (int, int, error) {
+	var moviesUpdated, episodesUpdated int
+
+	// Get all movies
+	movies, err := s.db.GetMovies()
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to get movies: %w", err)
+	}
+
+	for _, movie := range movies {
+		if movie.Path != "" {
+			s.detectAndStoreQuality(movie.ID, "movie", filepath.Base(movie.Path), movie.Path)
+			moviesUpdated++
+		}
+	}
+
+	// Get all episodes
+	episodes, err := s.db.GetAllEpisodes()
+	if err != nil {
+		return moviesUpdated, 0, fmt.Errorf("failed to get episodes: %w", err)
+	}
+
+	for _, ep := range episodes {
+		if ep.Path != "" {
+			s.detectAndStoreQuality(ep.ID, "episode", filepath.Base(ep.Path), ep.Path)
+			episodesUpdated++
+		}
+	}
+
+	log.Printf("Rescanned quality status: %d movies, %d episodes", moviesUpdated, episodesUpdated)
+	return moviesUpdated, episodesUpdated, nil
+}
+
 // mapPresetResolution maps preset resolution format ("4k") to parser format ("2160p")
 func mapPresetResolution(presetRes string) string {
 	switch strings.ToLower(presetRes) {
@@ -290,7 +372,7 @@ func (s *Scanner) DetectQualityForExistingMedia() {
 			}
 
 			if movie.Path != "" {
-				s.detectAndStoreQuality(movie.ID, "movie", filepath.Base(movie.Path))
+				s.detectAndStoreQuality(movie.ID, "movie", filepath.Base(movie.Path), movie.Path)
 				detected++
 			}
 		}
@@ -313,7 +395,7 @@ func (s *Scanner) DetectQualityForExistingMedia() {
 			}
 
 			if ep.Path != "" {
-				s.detectAndStoreQuality(ep.ID, "episode", filepath.Base(ep.Path))
+				s.detectAndStoreQuality(ep.ID, "episode", filepath.Base(ep.Path), ep.Path)
 				detected++
 			}
 		}
@@ -550,7 +632,7 @@ func (s *Scanner) scanMovies(lib *database.Library) error {
 			added++
 			log.Printf("Added movie: %s (%d)", title, year)
 			// Detect and store quality from filename
-			s.detectAndStoreQuality(movie.ID, "movie", filepath.Base(path))
+			s.detectAndStoreQuality(movie.ID, "movie", filepath.Base(path), path)
 			// Fetch metadata from TMDB
 			if s.meta != nil {
 				if err := s.meta.FetchMovieMetadata(movie); err != nil {
@@ -743,7 +825,7 @@ func (s *Scanner) scanTV(lib *database.Library) error {
 					log.Printf("Added episode: %s S%02dE%02d", folderInfo.Title, parseResult.Season, parseResult.Episode)
 				}
 				// Detect and store quality from filename
-				s.detectAndStoreQuality(episode.ID, "episode", filepath.Base(path))
+				s.detectAndStoreQuality(episode.ID, "episode", filepath.Base(path), path)
 				// Extract subtitles, chapters, and auto-download subtitles in background
 				go func(ep *database.Episode, p string, showName string, sNum, eNum int) {
 					s.ExtractSubtitles(p)

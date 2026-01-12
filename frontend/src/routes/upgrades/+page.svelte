@@ -5,7 +5,7 @@
 		searchUpgrade,
 		searchAllUpgrades,
 		resetUpgradeSearch,
-		getTmdbImageUrl,
+		getImageUrl,
 		type UpgradeableItem,
 		type UpgradesSummary
 	} from '$lib/api';
@@ -128,7 +128,7 @@
 			<h1 class="text-2xl font-bold text-text-primary">Quality Upgrades</h1>
 			{#if summary}
 				<p class="text-sm text-text-muted mt-1">
-					{counts.total} items below quality cutoff · {formatBytes(summary.totalSize)} potential savings
+					{counts.total} items below quality cutoff · {formatBytes(summary.totalSize)} current storage
 				</p>
 				{#if summary.searching > 0 || summary.pendingRetry > 0}
 					<div class="flex items-center gap-3 mt-1.5">
@@ -212,7 +212,7 @@
 							<!-- Poster -->
 							{#if item.posterPath}
 								<img
-									src={getTmdbImageUrl(item.posterPath, 'w92')}
+									src={getImageUrl(item.posterPath)}
 									alt=""
 									class="w-12 h-18 rounded-lg object-cover flex-shrink-0"
 								/>
@@ -305,9 +305,6 @@
 											{item.cutoffQuality || 'Better'}
 										</span>
 									</div>
-									<span class="text-xs text-text-muted">
-										Score: {item.currentScore} → {item.cutoffScore}
-									</span>
 								</div>
 
 								<!-- Meta info -->
