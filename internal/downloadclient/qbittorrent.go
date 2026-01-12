@@ -366,7 +366,10 @@ func (q *QBittorrent) ResumeDownload(id string) error {
 }
 
 func (q *QBittorrent) DeleteDownload(id string, deleteFiles bool) error {
+	log.Printf("DEBUG qBit DeleteDownload: hash=%s, deleteFiles=%v", id, deleteFiles)
+
 	if err := q.login(); err != nil {
+		log.Printf("DEBUG qBit DeleteDownload: login failed: %v", err)
 		return err
 	}
 
@@ -382,10 +385,17 @@ func (q *QBittorrent) DeleteDownload(id string, deleteFiles bool) error {
 
 	resp, err := q.client.PostForm(q.baseURL+"/api/v2/torrents/delete", data)
 	if err != nil {
+		log.Printf("DEBUG qBit DeleteDownload: request failed: %v", err)
 		return fmt.Errorf("failed to delete torrent: %w", err)
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("DEBUG qBit DeleteDownload: unexpected status %d", resp.StatusCode)
+		return fmt.Errorf("delete returned status %d", resp.StatusCode)
+	}
+
+	log.Printf("DEBUG qBit DeleteDownload: success for hash=%s", id)
 	return nil
 }
 

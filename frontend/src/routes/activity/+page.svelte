@@ -262,7 +262,7 @@
 		processingIds.add(key);
 		processingIds = processingIds;
 		try {
-			await deleteDownloadItem(item.downloadId);
+			await deleteDownloadItem(item.downloadId, { deleteFiles: true });
 			await loadAll();
 			toast.success('Download cancelled');
 		} catch (e) {
@@ -280,7 +280,7 @@
 			processingIds.add(key);
 			processingIds = processingIds;
 			try {
-				await deleteDownloadItem(item.downloadId);
+				await deleteDownloadItem(item.downloadId, { deleteFiles: true });
 				await loadAll();
 				toast.success('Removed');
 			} catch (e) {
