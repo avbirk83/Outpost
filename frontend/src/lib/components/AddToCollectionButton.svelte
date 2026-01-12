@@ -16,9 +16,12 @@
 		title: string;
 		year?: number;
 		posterPath?: string;
+		asMenuItem?: boolean;
+		onSelect?: () => void;
+		compact?: boolean;
 	}
 
-	let { tmdbId, mediaType, title, year, posterPath }: Props = $props();
+	let { tmdbId, mediaType, title, year, posterPath, asMenuItem = false, onSelect, compact = false }: Props = $props();
 
 	let showMenu = $state(false);
 	let allCollections: Collection[] = $state([]);
@@ -116,31 +119,48 @@
 		showMenu = false;
 		showCreateForm = false;
 		newCollectionName = '';
+		if (onSelect) onSelect();
 	}
 </script>
 
-<div class="relative">
-	<IconButton
-		onclick={handleOpenMenu}
-		title="Add to Collection"
-		active={inCollections.size > 0}
-	>
-		<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-			<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-		</svg>
-	</IconButton>
+<div class="relative {asMenuItem ? 'w-full' : ''}">
+	{#if asMenuItem}
+		<button
+			onclick={handleOpenMenu}
+			class="w-full text-left px-4 py-2.5 text-sm text-text-secondary hover:bg-white/10 hover:text-text-primary transition-colors flex items-center gap-2"
+		>
+			<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+			</svg>
+			Add to Collection
+			{#if inCollections.size > 0}
+				<span class="ml-auto text-xs text-accent-primary">{inCollections.size}</span>
+			{/if}
+		</button>
+	{:else}
+		<IconButton
+			onclick={handleOpenMenu}
+			title="Add to Collection"
+			active={inCollections.size > 0}
+			{compact}
+		>
+			<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+			</svg>
+		</IconButton>
+	{/if}
 
 	{#if showMenu}
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<!-- svelte-ignore a11y_click_events_have_key_events -->
 		<div
-			class="fixed inset-0 z-[55]"
+			class="fixed inset-0 z-[65]"
 			onclick={closeMenu}
 		></div>
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<!-- svelte-ignore a11y_click_events_have_key_events -->
 		<div
-			class="absolute left-1/2 -translate-x-1/2 mt-2 w-64 z-[60] bg-bg-dropdown border border-white/10 rounded-2xl shadow-xl overflow-hidden"
+			class="absolute {asMenuItem ? 'left-full top-0 ml-1' : 'left-1/2 -translate-x-1/2 mt-2'} w-64 z-[70] bg-bg-dropdown border border-white/10 rounded-2xl shadow-xl overflow-hidden"
 			onclick={(e: MouseEvent) => e.stopPropagation()}
 		>
 			<div class="px-4 py-3 border-b border-border-subtle">

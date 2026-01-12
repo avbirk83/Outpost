@@ -681,22 +681,24 @@
 		trailersJson={show.trailers}
 	>
 		{#snippet actionButtons()}
-			<!-- Add to Collection -->
-			{#if show?.tmdbId}
-				<AddToCollectionButton
-					tmdbId={show.tmdbId}
-					mediaType="show"
-					title={show.title}
-					year={show.year}
-					posterPath={show.posterPath}
-				/>
-			{/if}
+			<!-- Play (primary action) -->
+			<IconButton
+				onclick={handlePlayNext}
+				variant="yellow"
+				compact
+				title="Play {nextEpisode() ? `S${nextEpisode()?.season} E${nextEpisode()?.episode}` : 'S1 E1'}"
+			>
+				<svg class="w-5 h-5 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+					<path d="M8 5v14l11-7z" />
+				</svg>
+			</IconButton>
 
 			<!-- Watchlist -->
 			<IconButton
 				onclick={handleToggleWatchlist}
 				disabled={watchlistLoading}
 				active={inWatchlist}
+				compact
 				title="{inWatchlist ? 'Remove from' : 'Add to'} Watchlist"
 			>
 				{#if inWatchlist}
@@ -710,19 +712,10 @@
 				{/if}
 			</IconButton>
 
-			<IconButton
-				onclick={handlePlayNext}
-				variant="yellow"
-				title="Play {nextEpisode() ? `S${nextEpisode()?.season} E${nextEpisode()?.episode}` : 'S1 E1'}"
-			>
-				<svg class="w-5 h-5 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
-					<path d="M8 5v14l11-7z" />
-				</svg>
-			</IconButton>
-
 			{#if getOfficialTrailer(show?.trailers)}
 				<IconButton
 					onclick={() => showTrailerModal = true}
+					compact
 					title="Watch Trailer"
 				>
 					<svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
@@ -731,10 +724,11 @@
 				</IconButton>
 			{/if}
 
-			<!-- Manage dropdown -->
+			<!-- More menu -->
 			<div class="relative">
 				<IconButton
 					onclick={(e: MouseEvent) => { e.stopPropagation(); showManageMenu = !showManageMenu; }}
+					compact
 					title="More options"
 				>
 					<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -754,6 +748,17 @@
 						class="absolute left-1/2 -translate-x-1/2 mt-2 w-48 py-1 z-[60] bg-bg-dropdown border border-white/10 rounded-2xl shadow-xl overflow-hidden"
 						onclick={(e: MouseEvent) => e.stopPropagation()}
 					>
+						{#if show?.tmdbId}
+							<AddToCollectionButton
+								tmdbId={show.tmdbId}
+								mediaType="show"
+								title={show.title}
+								year={show.year}
+								posterPath={show.posterPath}
+								asMenuItem
+								onSelect={() => showManageMenu = false}
+							/>
+						{/if}
 						<button
 							onclick={() => { handleRefresh(); showManageMenu = false; }}
 							class="w-full text-left px-4 py-2.5 text-sm text-text-secondary hover:bg-white/10 hover:text-text-primary transition-colors"

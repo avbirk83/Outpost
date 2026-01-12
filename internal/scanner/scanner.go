@@ -47,6 +47,43 @@ var tvPattern = regexp.MustCompile(`(?i)^(.+?)[\.\s\-_]*S(\d{1,2})E(\d{1,2})`)
 // Alternative TV pattern: "Show Name - 1x02" or "Show Name 1x02"
 var tvAltPattern = regexp.MustCompile(`(?i)^(.+?)[\.\s\-_]*(\d{1,2})x(\d{1,2})`)
 
+// Multi-episode patterns
+// Examples: "Show.S01E01E02.mkv", "Show.S01E01-E02.mkv", "Show.S01E01-02.mkv"
+var multiEpisodePattern = regexp.MustCompile(`(?i)S(\d{1,2})E(\d{1,3})[-E]?E?(\d{1,3})`)
+var multiEpisodeAltPattern = regexp.MustCompile(`(?i)S(\d{1,2})E(\d{1,3})-(\d{1,3})`)
+
+// Anime absolute episode patterns
+// Examples: "[SubGroup] Show Name - 01 [1080p].mkv", "Show Name - 01v2.mkv"
+var animeAbsolutePattern = regexp.MustCompile(`(?i)^(?:\[.+?\]\s*)?(.+?)\s*-\s*(\d{2,4})(?:\s*v\d+)?`)
+var animeAbsoluteAltPattern = regexp.MustCompile(`(?i)^(.+?)\s+(\d{2,4})(?:\s*v\d+)?(?:\s*[\[\(])`)
+
+// Folder structure patterns
+// Examples: "Show Name (2020)", "Show Name"
+var showFolderPattern = regexp.MustCompile(`(?i)^(.+?)\s*\((\d{4})\)$`)
+var seasonFolderPattern = regexp.MustCompile(`(?i)^season\s*(\d+)$`)
+
+// ParseResult contains parsed information from filename/path
+type ParseResult struct {
+	Title       string
+	Year        int
+	Season      int
+	Episode     int
+	EpisodeEnd  int     // For multi-episode files (S01E01-E03)
+	Absolute    int     // For anime absolute numbering
+	Confidence  float64 // 0.0 - 1.0
+	Source      string  // "folder", "filename", "guess"
+}
+
+// ShowParseResult contains parsed show info from folder name
+type ShowParseResult struct {
+	Title      string
+	Year       int
+	Confidence float64
+}
+
+// Low confidence threshold - below this requires manual review
+const lowConfidenceThreshold = 0.6
+
 type Scanner struct {
 	db       *database.Database
 	meta     *metadata.Service
@@ -288,7 +325,10 @@ func (s *Scanner) DetectQualityForExistingMedia() {
 	log.Println("Quality detection for existing media complete")
 }
 
-// cleanupOrphanedMovies removes movies from database whose files no longer exist
+// missingGracePeriod is how long a file can be missing before being deleted
+const missingGracePeriod = 24 * time.Hour
+
+// cleanupOrphanedMovies marks movies as missing and deletes after grace period
 func (s *Scanner) cleanupOrphanedMovies(libraryID int64) {
 	movies, err := s.db.GetMoviesByLibrary(libraryID)
 	if err != nil {
@@ -296,24 +336,41 @@ func (s *Scanner) cleanupOrphanedMovies(libraryID int64) {
 		return
 	}
 
-	removed := 0
+	marked, cleared := 0, 0
 	for _, movie := range movies {
 		if movie.Path == "" {
 			continue
 		}
-		if _, err := os.Stat(movie.Path); os.IsNotExist(err) {
-			if err := s.db.DeleteMovie(movie.ID); err == nil {
-				removed++
-				log.Printf("Removed orphaned movie: %s (file no longer exists)", movie.Title)
+		_, statErr := os.Stat(movie.Path)
+		fileExists := statErr == nil
+
+		if !fileExists && os.IsNotExist(statErr) {
+			// File is missing - mark it (if not already marked)
+			if err := s.db.MarkMovieMissing(movie.ID); err == nil {
+				marked++
+				log.Printf("Marked movie as missing: %s", movie.Title)
+			}
+		} else if fileExists && movie.MissingSince != nil {
+			// File reappeared - clear missing status
+			if err := s.db.ClearMovieMissing(movie.ID); err == nil {
+				cleared++
+				log.Printf("Movie file reappeared: %s", movie.Title)
 			}
 		}
 	}
-	if removed > 0 {
-		log.Printf("Cleaned up %d orphaned movies", removed)
+
+	// Delete movies that have been missing for longer than grace period
+	deleted, err := s.db.DeleteMissingMovies(missingGracePeriod)
+	if err != nil {
+		log.Printf("Failed to delete missing movies: %v", err)
+	}
+
+	if marked > 0 || cleared > 0 || deleted > 0 {
+		log.Printf("Movie cleanup: %d marked missing, %d reappeared, %d deleted", marked, cleared, deleted)
 	}
 }
 
-// cleanupOrphanedEpisodes removes episodes from database whose files no longer exist
+// cleanupOrphanedEpisodes marks episodes as missing and deletes after grace period
 func (s *Scanner) cleanupOrphanedEpisodes(libraryID int64) {
 	episodes, err := s.db.GetEpisodesByLibrary(libraryID)
 	if err != nil {
@@ -321,20 +378,37 @@ func (s *Scanner) cleanupOrphanedEpisodes(libraryID int64) {
 		return
 	}
 
-	removed := 0
+	marked, cleared := 0, 0
 	for _, ep := range episodes {
 		if ep.Path == "" {
 			continue
 		}
-		if _, err := os.Stat(ep.Path); os.IsNotExist(err) {
-			if err := s.db.DeleteEpisode(ep.ID); err == nil {
-				removed++
-				log.Printf("Removed orphaned episode: E%02d (file no longer exists)", ep.EpisodeNumber)
+		_, statErr := os.Stat(ep.Path)
+		fileExists := statErr == nil
+
+		if !fileExists && os.IsNotExist(statErr) {
+			// File is missing - mark it
+			if err := s.db.MarkEpisodeMissing(ep.ID); err == nil {
+				marked++
+				log.Printf("Marked episode as missing: E%02d", ep.EpisodeNumber)
+			}
+		} else if fileExists && ep.MissingSince != nil {
+			// File reappeared - clear missing status
+			if err := s.db.ClearEpisodeMissing(ep.ID); err == nil {
+				cleared++
+				log.Printf("Episode file reappeared: E%02d", ep.EpisodeNumber)
 			}
 		}
 	}
-	if removed > 0 {
-		log.Printf("Cleaned up %d orphaned episodes", removed)
+
+	// Delete episodes that have been missing for longer than grace period
+	deleted, err := s.db.DeleteMissingEpisodes(missingGracePeriod)
+	if err != nil {
+		log.Printf("Failed to delete missing episodes: %v", err)
+	}
+
+	if marked > 0 || cleared > 0 || deleted > 0 {
+		log.Printf("Episode cleanup: %d marked missing, %d reappeared, %d deleted", marked, cleared, deleted)
 	}
 }
 
@@ -504,125 +578,185 @@ func (s *Scanner) scanTV(lib *database.Library) error {
 	// Phase 0: Clean up orphaned entries (files that no longer exist)
 	s.cleanupOrphanedEpisodes(lib.ID)
 
-	// Phase 1: Count video files
+	// Phase 1: Group files by show folder
 	s.setProgress(lib.Name, "counting", 0, 0)
-	var videoFiles []string
+	showFiles := make(map[string][]string) // showFolder -> list of video files
+
 	filepath.Walk(lib.Path, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			return nil
 		}
 		ext := strings.ToLower(filepath.Ext(path))
-		if videoExtensions[ext] {
-			videoFiles = append(videoFiles, path)
+		if !videoExtensions[ext] {
+			return nil
+		}
+
+		showFolder, _, _ := s.findShowFolder(path, lib.Path)
+		if showFolder != "" {
+			showFiles[showFolder] = append(showFiles[showFolder], path)
 		}
 		return nil
 	})
 
-	total := len(videoFiles)
-	log.Printf("Found %d video files in %s", total, lib.Name)
+	// Count total files
+	total := 0
+	for _, files := range showFiles {
+		total += len(files)
+	}
+	log.Printf("Found %d video files in %d shows in %s", total, len(showFiles), lib.Name)
 
-	// Phase 2: Process each file
-	for i, path := range videoFiles {
-		s.setProgress(lib.Name, "scanning", i+1, total)
-
-		info, err := os.Stat(path)
-		if err != nil {
-			errors++
-			continue
-		}
-
-		// Check if already in database
-		if _, err := s.db.GetEpisodeByPath(path); err == nil {
-			skipped++
-			continue
-		}
-
-		// Parse filename
-		ext := filepath.Ext(path)
-		filename := strings.TrimSuffix(filepath.Base(path), ext)
-		showTitle, seasonNum, episodeNum := parseTVFilename(filename)
-
-		if showTitle == "" || seasonNum == 0 {
-			log.Printf("Could not parse TV filename: %s", filename)
-			errors++
-			continue
-		}
+	// Phase 2: Process each show folder
+	current := 0
+	for showFolder, files := range showFiles {
+		folderName := filepath.Base(showFolder)
+		folderInfo := parseShowFolder(folderName)
 
 		// Get or create show
-		showPath := filepath.Dir(path)
-		// Try to go up one more level if we're in a season folder
-		if strings.Contains(strings.ToLower(filepath.Base(showPath)), "season") {
-			showPath = filepath.Dir(showPath)
-		}
-
-		show, err := s.db.GetShowByPath(showPath)
+		show, err := s.db.GetShowByPath(showFolder)
 		isNewShow := false
 		if err == sql.ErrNoRows {
-			showYear := extractYearFromPath(showPath)
+			// Use folder info for show title/year, with confidence scoring
+			showYear, yearConfidence := extractYearFromPathEnhanced(showFolder, lib.Path)
+			confidence := folderInfo.Confidence
+			if yearConfidence > 0 {
+				confidence = (confidence + yearConfidence) / 2
+			}
+			needsReview := confidence < lowConfidenceThreshold
+
 			show = &database.Show{
-				LibraryID: lib.ID,
-				Title:     showTitle,
-				Year:      showYear,
-				Path:      showPath,
+				LibraryID:        lib.ID,
+				Title:            folderInfo.Title,
+				Year:             showYear,
+				Path:             showFolder,
+				MatchConfidence:  confidence,
+				NeedsMatchReview: needsReview,
 			}
 			if err := s.db.CreateShow(show); err != nil {
-				log.Printf("Failed to create show %s: %v", showTitle, err)
+				log.Printf("Failed to create show %s: %v", folderInfo.Title, err)
 				errors++
 				continue
 			}
-			log.Printf("Added show: %s", showTitle)
+			if needsReview {
+				log.Printf("Added show (needs review): %s (confidence: %.2f)", folderInfo.Title, confidence)
+			} else {
+				log.Printf("Added show: %s", folderInfo.Title)
+			}
 			isNewShow = true
 		} else if err != nil {
 			errors++
 			continue
 		}
 
-		// Get or create season
-		season, err := s.db.GetSeason(show.ID, seasonNum)
-		if err == sql.ErrNoRows {
-			season = &database.Season{
-				ShowID:       show.ID,
-				SeasonNumber: seasonNum,
-			}
-			if err := s.db.CreateSeason(season); err != nil {
-				log.Printf("Failed to create season %d: %v", seasonNum, err)
+		// Process each episode file in this show
+		for _, path := range files {
+			current++
+			s.setProgress(lib.Name, "scanning", current, total)
+
+			info, err := os.Stat(path)
+			if err != nil {
 				errors++
 				continue
 			}
-		} else if err != nil {
-			errors++
-			continue
-		}
 
-		// Create episode
-		episode := &database.Episode{
-			SeasonID:      season.ID,
-			EpisodeNumber: episodeNum,
-			Title:         "", // Will be fetched from metadata later
-			Path:          path,
-			Size:          info.Size(),
-		}
+			// Check if already in database
+			if _, err := s.db.GetEpisodeByPath(path); err == nil {
+				skipped++
+				continue
+			}
 
-		if err := s.db.CreateEpisode(episode); err != nil {
-			log.Printf("Failed to add episode: %v", err)
-			errors++
-		} else {
-			added++
-			log.Printf("Added episode: %s S%02dE%02d", showTitle, seasonNum, episodeNum)
-			// Detect and store quality from filename
-			s.detectAndStoreQuality(episode.ID, "episode", filepath.Base(path))
-			// Extract subtitles, chapters, and auto-download subtitles in background
-			go func(ep *database.Episode, p string, showName string, sNum, eNum int) {
-				s.ExtractSubtitles(p)
-				s.ExtractChapters("episode", ep.ID, p)
-				s.AutoDownloadSubtitles("episode", p, showName, 0, sNum, eNum)
-			}(episode, path, showTitle, seasonNum, episodeNum)
+			// Parse filename with enhanced parser
+			ext := filepath.Ext(path)
+			filename := strings.TrimSuffix(filepath.Base(path), ext)
+			parseResult := parseTVFilenameEnhanced(filename)
+
+			// Fall back to original parser if enhanced parser fails
+			if parseResult.Season == 0 && parseResult.Episode == 0 {
+				title, sNum, eNum := parseTVFilename(filename)
+				if sNum > 0 || eNum > 0 {
+					parseResult.Title = title
+					parseResult.Season = sNum
+					parseResult.Episode = eNum
+					parseResult.Confidence = 0.8
+				}
+			}
+
+			// Also try to get season from folder structure
+			_, folderSeason, _ := s.findShowFolder(path, lib.Path)
+			if parseResult.Season == 0 && folderSeason > 0 {
+				parseResult.Season = folderSeason
+			}
+
+			if parseResult.Season == 0 {
+				log.Printf("Could not parse TV filename: %s", filename)
+				errors++
+				continue
+			}
+
+			// Get or create season
+			season, err := s.db.GetSeason(show.ID, parseResult.Season)
+			if err == sql.ErrNoRows {
+				season = &database.Season{
+					ShowID:       show.ID,
+					SeasonNumber: parseResult.Season,
+				}
+				if err := s.db.CreateSeason(season); err != nil {
+					log.Printf("Failed to create season %d: %v", parseResult.Season, err)
+					errors++
+					continue
+				}
+			} else if err != nil {
+				errors++
+				continue
+			}
+
+			// Create episode with multi-episode support
+			episode := &database.Episode{
+				SeasonID:        season.ID,
+				EpisodeNumber:   parseResult.Episode,
+				Title:           "",
+				Path:            path,
+				Size:            info.Size(),
+				MatchConfidence: parseResult.Confidence,
+			}
+
+			// Set multi-episode end if applicable
+			if parseResult.EpisodeEnd > parseResult.Episode {
+				episode.EpisodeEnd = &parseResult.EpisodeEnd
+			}
+
+			// Set absolute number for anime
+			if parseResult.Absolute > 0 {
+				episode.AbsoluteNumber = &parseResult.Absolute
+			}
+
+			// Use enhanced create that includes new fields
+			if err := s.db.CreateEpisodeWithExtras(episode); err != nil {
+				log.Printf("Failed to add episode: %v", err)
+				errors++
+			} else {
+				added++
+				if parseResult.EpisodeEnd > 0 {
+					log.Printf("Added multi-episode: %s S%02dE%02d-E%02d", folderInfo.Title, parseResult.Season, parseResult.Episode, parseResult.EpisodeEnd)
+				} else if parseResult.Absolute > 0 {
+					log.Printf("Added anime episode: %s - %d (S%02dE%02d)", folderInfo.Title, parseResult.Absolute, parseResult.Season, parseResult.Episode)
+				} else {
+					log.Printf("Added episode: %s S%02dE%02d", folderInfo.Title, parseResult.Season, parseResult.Episode)
+				}
+				// Detect and store quality from filename
+				s.detectAndStoreQuality(episode.ID, "episode", filepath.Base(path))
+				// Extract subtitles, chapters, and auto-download subtitles in background
+				go func(ep *database.Episode, p string, showName string, sNum, eNum int) {
+					s.ExtractSubtitles(p)
+					s.ExtractChapters("episode", ep.ID, p)
+					s.AutoDownloadSubtitles("episode", p, showName, 0, sNum, eNum)
+				}(episode, path, folderInfo.Title, parseResult.Season, parseResult.Episode)
+			}
 		}
 
 		// Fetch show metadata if this is a new show
 		if isNewShow && s.meta != nil {
 			if err := s.meta.FetchShowMetadata(show); err != nil {
-				log.Printf("Failed to fetch metadata for %s: %v", showTitle, err)
+				log.Printf("Failed to fetch metadata for %s: %v", folderInfo.Title, err)
 			}
 		}
 	}
@@ -889,6 +1023,181 @@ func extractYearFromPath(path string) int {
 		return year
 	}
 	return 0
+}
+
+// findShowFolder finds the show folder for a given episode path
+// Returns: show folder path, detected season number (0 if not from folder), error
+func (s *Scanner) findShowFolder(filePath, libraryPath string) (string, int, error) {
+	relPath := strings.TrimPrefix(filePath, libraryPath)
+	relPath = strings.TrimPrefix(relPath, string(os.PathSeparator))
+	parts := strings.Split(relPath, string(os.PathSeparator))
+
+	// Expected structures:
+	// /Library/Show Name (2020)/Season 01/S01E01.mkv -> show=parts[0], season=1
+	// /Library/Show Name (2020)/S01E01.mkv -> show=parts[0], season from filename
+	// /Library/Show Name/Season 1/S01E01.mkv -> show=parts[0], season=1
+
+	if len(parts) >= 2 {
+		showFolder := parts[0]
+
+		// Check if second part is a season folder
+		if len(parts) >= 3 {
+			if match := seasonFolderPattern.FindStringSubmatch(parts[1]); match != nil {
+				season, _ := strconv.Atoi(match[1])
+				return filepath.Join(libraryPath, showFolder), season, nil
+			}
+		}
+
+		return filepath.Join(libraryPath, showFolder), 0, nil
+	}
+
+	return "", 0, fmt.Errorf("cannot determine show folder")
+}
+
+// parseShowFolder extracts show name and year from folder name
+func parseShowFolder(folderName string) ShowParseResult {
+	result := ShowParseResult{Confidence: 0.5}
+
+	// Try "Show Name (2020)" format
+	if match := showFolderPattern.FindStringSubmatch(folderName); match != nil {
+		result.Title = strings.TrimSpace(match[1])
+		result.Year, _ = strconv.Atoi(match[2])
+		result.Confidence = 1.0
+		return result
+	}
+
+	// Fall back to cleaning folder name
+	result.Title = cleanTitle(folderName)
+	result.Confidence = 0.5
+	return result
+}
+
+// extractYearFromPathEnhanced tries to extract year with confidence scoring
+func extractYearFromPathEnhanced(path, libraryPath string) (int, float64) {
+	relPath := strings.TrimPrefix(path, libraryPath)
+	relPath = strings.TrimPrefix(relPath, string(os.PathSeparator))
+	parts := strings.Split(filepath.ToSlash(relPath), "/")
+
+	// Check each folder level from root down
+	for _, part := range parts {
+		if match := showFolderPattern.FindStringSubmatch(part); match != nil {
+			if year, err := strconv.Atoi(match[2]); err == nil && year >= 1900 && year <= 2100 {
+				return year, 1.0 // High confidence from folder
+			}
+		}
+	}
+
+	// Fallback: check filename for year
+	base := filepath.Base(path)
+	if match := movieYearPattern.FindStringSubmatch(base); match != nil {
+		if year, err := strconv.Atoi(match[2]); err == nil && year >= 1900 && year <= 2100 {
+			return year, 0.7 // Medium confidence from filename
+		}
+	}
+
+	return 0, 0.0
+}
+
+// parseTVFilenameEnhanced parses TV filename with multi-episode and anime support
+func parseTVFilenameEnhanced(filename string) ParseResult {
+	result := ParseResult{Confidence: 0.0, Source: "filename"}
+	cleaned := cleanFilename(filename)
+
+	// Try multi-episode pattern first: S01E01E02 or S01E01-E02
+	if match := multiEpisodePattern.FindStringSubmatch(cleaned); match != nil {
+		result.Season, _ = strconv.Atoi(match[1])
+		result.Episode, _ = strconv.Atoi(match[2])
+		result.EpisodeEnd, _ = strconv.Atoi(match[3])
+		result.Title = extractTitleBeforePattern(cleaned, match[0])
+		result.Confidence = 0.9
+		return result
+	}
+
+	// Standard S01E01 pattern
+	if match := tvPattern.FindStringSubmatch(cleaned); match != nil {
+		result.Season, _ = strconv.Atoi(match[2])
+		result.Episode, _ = strconv.Atoi(match[3])
+		result.Title = strings.TrimSpace(match[1])
+		result.Confidence = 0.9
+		return result
+	}
+
+	// Alternative 1x01 pattern
+	if match := tvAltPattern.FindStringSubmatch(cleaned); match != nil {
+		result.Season, _ = strconv.Atoi(match[2])
+		result.Episode, _ = strconv.Atoi(match[3])
+		result.Title = strings.TrimSpace(match[1])
+		result.Confidence = 0.8
+		return result
+	}
+
+	// Anime absolute pattern: [Group] Show - 01
+	if match := animeAbsolutePattern.FindStringSubmatch(cleaned); match != nil {
+		result.Title = strings.TrimSpace(match[1])
+		result.Absolute, _ = strconv.Atoi(match[2])
+		result.Season = 1 // Default to season 1 for absolute numbering
+		result.Episode = result.Absolute
+		result.Confidence = 0.7
+		result.Source = "anime"
+		return result
+	}
+
+	// Alternative anime pattern
+	if match := animeAbsoluteAltPattern.FindStringSubmatch(cleaned); match != nil {
+		result.Title = strings.TrimSpace(match[1])
+		result.Absolute, _ = strconv.Atoi(match[2])
+		result.Season = 1
+		result.Episode = result.Absolute
+		result.Confidence = 0.6
+		result.Source = "anime"
+		return result
+	}
+
+	return result
+}
+
+// extractTitleBeforePattern extracts title before a matched pattern
+func extractTitleBeforePattern(text, pattern string) string {
+	idx := strings.Index(strings.ToLower(text), strings.ToLower(pattern))
+	if idx <= 0 {
+		return ""
+	}
+	return cleanTitle(text[:idx])
+}
+
+// calculateMatchConfidence calculates confidence based on folder and filename info
+func calculateMatchConfidence(folderInfo ShowParseResult, filenameInfo ParseResult) float64 {
+	score := 0.5 // Base score
+
+	// Folder structure provides title/year?
+	if folderInfo.Confidence > 0.8 {
+		score += 0.3
+	}
+
+	// Filename parsing succeeded?
+	if filenameInfo.Confidence > 0.7 {
+		score += 0.2
+	}
+
+	// Folder and filename titles match?
+	if strings.EqualFold(
+		strings.TrimSpace(folderInfo.Title),
+		strings.TrimSpace(filenameInfo.Title),
+	) {
+		score += 0.2
+	}
+
+	// Year matches between folder and filename?
+	if folderInfo.Year > 0 && filenameInfo.Year > 0 && folderInfo.Year == filenameInfo.Year {
+		score += 0.1
+	}
+
+	// Cap at 1.0
+	if score > 1.0 {
+		score = 1.0
+	}
+
+	return score
 }
 
 // OrganizeAndExtractSubtitles renames folder to proper format and extracts subtitles

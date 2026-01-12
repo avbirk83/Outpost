@@ -447,10 +447,10 @@ func (s *Scheduler) runUpgradeSearchTask() (processed, found int) {
 		}
 	}
 
-	log.Printf("Scheduler: searching for %d upgradeable items", limit)
+	log.Printf("Scheduler: searching for %d upgradeable items (excluding items in backoff)", limit)
 
-	// Get upgradeable movies
-	movies, err := s.db.GetUpgradeableMovies(limit / 2)
+	// Get upgradeable movies (excluding those in backoff)
+	movies, err := s.db.GetUpgradeableMoviesWithOptions(limit/2, true)
 	if err != nil {
 		log.Printf("Scheduler: failed to get upgradeable movies: %v", err)
 	} else {
@@ -480,20 +480,33 @@ func (s *Scheduler) runUpgradeSearchTask() (processed, found int) {
 				}
 			}
 
-			if movie.TmdbID != nil && qualityPresetID > 0 {
+			if movie.TmdbID == nil || qualityPresetID == 0 {
+				continue
+			}
+
+			// Check if wanted item already exists for this movie
+			existing, _ := s.db.GetUpgradeWantedItem(item.ID, "movie")
+			if existing != nil {
+				// Existing item - update backoff and search
+				s.db.UpdateWantedSearchBackoff(existing.ID)
+				processed++
+				log.Printf("Scheduler: searching upgrade for movie %s (attempt %d)", movie.Title, existing.SearchAttempts+1)
+				s.SearchWantedItem(*movie.TmdbID, "movie")
+			} else {
+				// Create new wanted item
 				err := s.db.CreateUpgradeWantedItem("movie", *movie.TmdbID, imdbID, movie.Title, movie.Year, "", qualityPresetID, item.ID, item.CurrentScore)
 				if err == nil {
 					processed++
 					s.db.UpdateUpgradeSearched(item.ID, "movie", false)
-					// Search for the item
+					log.Printf("Scheduler: searching upgrade for movie %s (first attempt)", movie.Title)
 					s.SearchWantedItem(*movie.TmdbID, "movie")
 				}
 			}
 		}
 	}
 
-	// Get upgradeable episodes
-	episodes, err := s.db.GetUpgradeableEpisodes(limit / 2)
+	// Get upgradeable episodes (excluding those in backoff)
+	episodes, err := s.db.GetUpgradeableEpisodesWithOptions(limit/2, true)
 	if err != nil {
 		log.Printf("Scheduler: failed to get upgradeable episodes: %v", err)
 	} else {
@@ -531,13 +544,27 @@ func (s *Scheduler) runUpgradeSearchTask() (processed, found int) {
 				}
 			}
 
-			if show.TmdbID != nil && qualityPresetID > 0 {
-				title := fmt.Sprintf("%s S%02dE%02d", show.Title, season.SeasonNumber, episode.EpisodeNumber)
+			if show.TmdbID == nil || qualityPresetID == 0 {
+				continue
+			}
+
+			title := fmt.Sprintf("%s S%02dE%02d", show.Title, season.SeasonNumber, episode.EpisodeNumber)
+
+			// Check if wanted item already exists for this episode
+			existing, _ := s.db.GetUpgradeWantedItem(item.ID, "episode")
+			if existing != nil {
+				// Existing item - update backoff and search
+				s.db.UpdateWantedSearchBackoff(existing.ID)
+				processed++
+				log.Printf("Scheduler: searching upgrade for %s (attempt %d)", title, existing.SearchAttempts+1)
+				s.SearchWantedItem(*show.TmdbID, "show")
+			} else {
+				// Create new wanted item
 				err := s.db.CreateUpgradeWantedItem("episode", *show.TmdbID, imdbID, title, show.Year, "", qualityPresetID, item.ID, item.CurrentScore)
 				if err == nil {
 					processed++
 					s.db.UpdateUpgradeSearched(item.ID, "episode", false)
-					// Search for the item
+					log.Printf("Scheduler: searching upgrade for %s (first attempt)", title)
 					s.SearchWantedItem(*show.TmdbID, "show")
 				}
 			}

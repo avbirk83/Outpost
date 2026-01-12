@@ -24,6 +24,7 @@
 	import { toast } from '$lib/stores/toast';
 	import { auth } from '$lib/stores/auth';
 	import QueueCard, { type QueueState } from '$lib/components/QueueCard.svelte';
+	import { LoadingSpinner, EmptyState } from '$lib/components/ui';
 
 	type Filter = 'queue' | 'history' | 'blocklist';
 	let activeFilter: Filter = $state('queue');
@@ -406,15 +407,15 @@
 	</div>
 
 	{#if loading}
-		<div class="flex items-center justify-center py-16"><div class="spinner-lg text-amber-400"></div></div>
+		<LoadingSpinner size="lg" fullPage />
 	{:else if activeFilter === 'queue'}
 		{#if activeQueueItems.length === 0}
-			<div class="glass-card p-12 text-center">
-				<div class="w-14 h-14 rounded-full bg-bg-elevated flex items-center justify-center mx-auto mb-3">
-					<svg class="w-7 h-7 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M5 13l4 4L19 7" /></svg>
-				</div>
-				<p class="text-text-secondary">Queue is empty</p>
-			</div>
+			<EmptyState
+				icon="M5 13l4 4L19 7"
+				title="Queue is empty"
+				description="No pending downloads or requests"
+				compact
+			/>
 		{:else}
 			<div class="space-y-2">
 				{#each activeQueueItems as item (item.id)}
@@ -449,12 +450,12 @@
 		{/if}
 	{:else if activeFilter === 'history'}
 		{#if grabHistory.length === 0 && deniedRequests.length === 0}
-			<div class="glass-card p-12 text-center">
-				<div class="w-14 h-14 rounded-full bg-bg-elevated flex items-center justify-center mx-auto mb-3">
-					<svg class="w-7 h-7 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-				</div>
-				<p class="text-text-secondary">No history yet</p>
-			</div>
+			<EmptyState
+				icon="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+				title="No history yet"
+				description="Downloads and requests will appear here"
+				compact
+			/>
 		{:else}
 			<div class="space-y-4">
 				<!-- Denied Requests -->
@@ -526,12 +527,12 @@
 		{/if}
 	{:else if activeFilter === 'blocklist'}
 		{#if blocklist.length === 0}
-			<div class="glass-card p-12 text-center">
-				<div class="w-14 h-14 rounded-full bg-bg-elevated flex items-center justify-center mx-auto mb-3">
-					<svg class="w-7 h-7 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" /></svg>
-				</div>
-				<p class="text-text-secondary">Blocklist is empty</p>
-			</div>
+			<EmptyState
+				icon="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"
+				title="Blocklist is empty"
+				description="No blocked releases"
+				compact
+			/>
 		{:else}
 			<div class="space-y-2">
 				{#each blocklist as b}

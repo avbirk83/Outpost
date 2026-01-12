@@ -8,12 +8,13 @@
 		title?: string;
 		variant?: 'default' | 'green' | 'yellow' | 'pink';
 		active?: boolean;
+		compact?: boolean;
 		children: Snippet;
 	}
 
-	let { onclick, href, disabled = false, title = '', variant = 'default', active = false, children }: Props = $props();
+	let { onclick, href, disabled = false, title = '', variant = 'default', active = false, compact = false, children }: Props = $props();
 
-	const baseClasses = 'btn-icon-circle-lg disabled:opacity-50';
+	const baseClasses = $derived(compact ? 'btn-icon-circle-sm disabled:opacity-50' : 'btn-icon-circle-lg disabled:opacity-50');
 
 	let classes = $derived.by(() => {
 		if (variant === 'default') {

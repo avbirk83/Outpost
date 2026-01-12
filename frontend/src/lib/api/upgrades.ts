@@ -15,6 +15,9 @@ export interface UpgradeableItem {
 	posterPath?: string;
 	size: number;
 	lastSearched?: string;
+	searchStatus?: 'searching' | 'pending_retry' | 'not_searched';
+	searchAttempts?: number;
+	nextSearchAt?: string;
 }
 
 export interface UpgradesSummary {
@@ -22,6 +25,9 @@ export interface UpgradesSummary {
 	episodes: UpgradeableItem[];
 	totalCount: number;
 	totalSize: number;
+	searching: number;
+	pendingRetry: number;
+	lastFound?: string;
 }
 
 export async function getUpgrades(): Promise<UpgradesSummary> {
@@ -51,6 +57,19 @@ export async function searchAllUpgrades(
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ limit: limit || 10, mediaType: mediaType || '' })
+	});
+	if (!response.ok) throw new Error(`API error: ${response.status}`);
+	return response.json();
+}
+
+export async function resetUpgradeSearch(
+	mediaType: 'movie' | 'episode',
+	mediaId: number
+): Promise<{ success: boolean; message: string }> {
+	const response = await apiFetch(`${API_BASE}/upgrades/reset-search`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ mediaType, mediaId })
 	});
 	if (!response.ok) throw new Error(`API error: ${response.status}`);
 	return response.json();

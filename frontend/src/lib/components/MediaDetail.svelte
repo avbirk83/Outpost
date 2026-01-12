@@ -259,7 +259,7 @@
 		<!-- Hero Content: 3 columns -->
 		<div class="relative z-10 px-[60px] pt-32 pb-8 flex gap-10">
 			<!-- LEFT: Poster Card with Action Buttons -->
-			<div class="flex-shrink-0 w-72">
+			<div class="flex-shrink-0 w-80">
 				<div class="liquid-card">
 					<!-- svelte-ignore a11y_no_static_element_interactions -->
 					<div
@@ -294,7 +294,7 @@
 						{/if}
 					</div>
 					<!-- Action Buttons Row -->
-					<div class="p-3 flex flex-wrap justify-center gap-2 border-t border-border-subtle">
+					<div class="p-3 flex justify-center gap-1.5 border-t border-border-subtle">
 						{#if actionButtons}
 							{@render actionButtons()}
 						{/if}
@@ -366,7 +366,7 @@
 			</div>
 
 			<!-- RIGHT: Info Panel Card -->
-			<div class="flex-shrink-0 w-72">
+			<div class="flex-shrink-0 w-80">
 				<div class="liquid-card p-4 space-y-2.5 text-sm">
 					<!-- Ratings Row -->
 					{#if tmdbId}

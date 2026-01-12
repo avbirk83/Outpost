@@ -103,6 +103,95 @@
 	}
 </script>
 
+<!-- Quality Upgrades -->
+<section class="glass-card p-6 space-y-4">
+	<div class="flex items-center gap-3">
+		<div class="w-10 h-10 rounded-xl bg-green-600/20 flex items-center justify-center">
+			<svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18" />
+			</svg>
+		</div>
+		<div>
+			<h2 class="text-lg font-semibold text-text-primary">Quality Upgrades</h2>
+			<p class="text-sm text-text-secondary">Automatically search for better quality versions</p>
+		</div>
+	</div>
+
+	<div class="space-y-4">
+		<label class="flex items-center gap-3 cursor-pointer">
+			<button
+				type="button"
+				class="relative w-12 h-6 rounded-full transition-colors {upgradeEnabled ? 'bg-green-600' : 'bg-gray-600'}"
+				onclick={() => upgradeEnabled = !upgradeEnabled}
+			>
+				<span class="absolute left-1 top-1 w-4 h-4 bg-white rounded-full transition-transform duration-200 {upgradeEnabled ? 'translate-x-6' : ''}"></span>
+			</button>
+			<div>
+				<span class="text-text-primary font-medium">Enable Upgrade Search</span>
+				<p class="text-xs text-text-muted">Periodically search for higher quality versions of owned media</p>
+			</div>
+		</label>
+
+		{#if upgradeEnabled}
+			<div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+				<div>
+					<label class="block text-sm text-text-secondary mb-1">Items per Search</label>
+					<p class="text-xs text-text-muted mb-2">How many items to search at a time</p>
+					<input
+						type="number"
+						min="1"
+						max="50"
+						bind:value={upgradeLimit}
+						class="w-full px-3 py-2 text-sm bg-bg-elevated border border-border-subtle rounded-lg text-text-primary focus:outline-none focus:border-cream/50"
+					/>
+				</div>
+				<div>
+					<label class="block text-sm text-text-secondary mb-1">Search Interval (minutes)</label>
+					<p class="text-xs text-text-muted mb-2">How often to run upgrade searches</p>
+					<input
+						type="number"
+						min="60"
+						max="10080"
+						bind:value={upgradeInterval}
+						class="w-full px-3 py-2 text-sm bg-bg-elevated border border-border-subtle rounded-lg text-text-primary focus:outline-none focus:border-cream/50"
+					/>
+				</div>
+			</div>
+
+			<label class="flex items-center gap-2 cursor-pointer pt-2">
+				<input type="checkbox" bind:checked={upgradeDeleteOld} class="form-checkbox" />
+				<div>
+					<span class="text-sm text-text-secondary">Delete old file after upgrade</span>
+					<p class="text-xs text-text-muted">Automatically remove lower quality file when upgrade is imported</p>
+				</div>
+			</label>
+		{/if}
+
+		<div class="flex items-center gap-3 pt-2">
+			<button class="liquid-btn" onclick={handleSaveUpgradeSettings} disabled={savingUpgrade}>
+				{savingUpgrade ? 'Saving...' : 'Save Upgrade Settings'}
+			</button>
+			<a
+				href="/upgrades"
+				class="px-4 py-2 text-sm rounded-lg bg-bg-elevated hover:bg-bg-card border border-border-subtle text-text-secondary hover:text-text-primary transition-colors flex items-center gap-2"
+			>
+				<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+				</svg>
+				View Upgrades
+			</a>
+			{#if upgradeSaved}
+				<span class="text-sm text-green-400 flex items-center gap-1">
+					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+					</svg>
+					Saved!
+				</span>
+			{/if}
+		</div>
+	</div>
+</section>
+
 <!-- Scheduled Tasks -->
 <section class="glass-card p-6 space-y-4">
 	<div class="flex items-center gap-3">
@@ -212,93 +301,4 @@
 			<span class="text-text-secondary">Loading tasks...</span>
 		</div>
 	{/if}
-</section>
-
-<!-- Quality Upgrades -->
-<section class="glass-card p-6 space-y-4">
-	<div class="flex items-center gap-3">
-		<div class="w-10 h-10 rounded-xl bg-green-600/20 flex items-center justify-center">
-			<svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18" />
-			</svg>
-		</div>
-		<div>
-			<h2 class="text-lg font-semibold text-text-primary">Quality Upgrades</h2>
-			<p class="text-sm text-text-secondary">Automatically search for better quality versions</p>
-		</div>
-	</div>
-
-	<div class="space-y-4">
-		<label class="flex items-center gap-3 cursor-pointer">
-			<button
-				type="button"
-				class="relative w-12 h-6 rounded-full transition-colors {upgradeEnabled ? 'bg-green-600' : 'bg-gray-600'}"
-				onclick={() => upgradeEnabled = !upgradeEnabled}
-			>
-				<span class="absolute left-1 top-1 w-4 h-4 bg-white rounded-full transition-transform duration-200 {upgradeEnabled ? 'translate-x-6' : ''}"></span>
-			</button>
-			<div>
-				<span class="text-text-primary font-medium">Enable Upgrade Search</span>
-				<p class="text-xs text-text-muted">Periodically search for higher quality versions of owned media</p>
-			</div>
-		</label>
-
-		{#if upgradeEnabled}
-			<div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
-				<div>
-					<label class="block text-sm text-text-secondary mb-1">Items per Search</label>
-					<p class="text-xs text-text-muted mb-2">How many items to search at a time</p>
-					<input
-						type="number"
-						min="1"
-						max="50"
-						bind:value={upgradeLimit}
-						class="w-full px-3 py-2 text-sm bg-bg-elevated border border-border-subtle rounded-lg text-text-primary focus:outline-none focus:border-cream/50"
-					/>
-				</div>
-				<div>
-					<label class="block text-sm text-text-secondary mb-1">Search Interval (minutes)</label>
-					<p class="text-xs text-text-muted mb-2">How often to run upgrade searches</p>
-					<input
-						type="number"
-						min="60"
-						max="10080"
-						bind:value={upgradeInterval}
-						class="w-full px-3 py-2 text-sm bg-bg-elevated border border-border-subtle rounded-lg text-text-primary focus:outline-none focus:border-cream/50"
-					/>
-				</div>
-			</div>
-
-			<label class="flex items-center gap-2 cursor-pointer pt-2">
-				<input type="checkbox" bind:checked={upgradeDeleteOld} class="form-checkbox" />
-				<div>
-					<span class="text-sm text-text-secondary">Delete old file after upgrade</span>
-					<p class="text-xs text-text-muted">Automatically remove lower quality file when upgrade is imported</p>
-				</div>
-			</label>
-		{/if}
-
-		<div class="flex items-center gap-3 pt-2">
-			<button class="liquid-btn" onclick={handleSaveUpgradeSettings} disabled={savingUpgrade}>
-				{savingUpgrade ? 'Saving...' : 'Save Upgrade Settings'}
-			</button>
-			<a
-				href="/upgrades"
-				class="px-4 py-2 text-sm rounded-lg bg-bg-elevated hover:bg-bg-card border border-border-subtle text-text-secondary hover:text-text-primary transition-colors flex items-center gap-2"
-			>
-				<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-				</svg>
-				View Upgrades
-			</a>
-			{#if upgradeSaved}
-				<span class="text-sm text-green-400 flex items-center gap-1">
-					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-					</svg>
-					Saved!
-				</span>
-			{/if}
-		</div>
-	</div>
 </section>

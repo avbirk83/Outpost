@@ -30,68 +30,73 @@ type Library struct {
 }
 
 type Movie struct {
-	ID                 int64     `json:"id"`
-	LibraryID          int64     `json:"libraryId"`
-	TmdbID             *int64    `json:"tmdbId,omitempty"`
-	ImdbID             *string   `json:"imdbId,omitempty"`
-	Title              string    `json:"title"`
-	OriginalTitle      *string   `json:"originalTitle,omitempty"`
-	Year               int       `json:"year"`
-	Overview           *string   `json:"overview,omitempty"`
-	Tagline            *string   `json:"tagline,omitempty"`
-	Runtime            *int      `json:"runtime,omitempty"`
-	Rating             *float64  `json:"rating,omitempty"`
-	ContentRating      *string   `json:"contentRating,omitempty"`
-	Genres             *string   `json:"genres,omitempty"`
-	Cast               *string   `json:"cast,omitempty"`
-	Crew               *string   `json:"crew,omitempty"`
-	Director           *string   `json:"director,omitempty"`
-	Writer             *string   `json:"writer,omitempty"`
-	Editor             *string   `json:"editor,omitempty"`
-	Producers          *string   `json:"producers,omitempty"`
-	Status             *string   `json:"status,omitempty"`
-	Budget             *int64    `json:"budget,omitempty"`
-	Revenue            *int64    `json:"revenue,omitempty"`
-	Country            *string   `json:"country,omitempty"`
-	OriginalLanguage   *string   `json:"originalLanguage,omitempty"`
-	TheatricalRelease  *string   `json:"theatricalRelease,omitempty"`
-	DigitalRelease     *string   `json:"digitalRelease,omitempty"`
-	Studios            *string   `json:"studios,omitempty"`
-	Trailers           *string   `json:"trailers,omitempty"`
-	PosterPath         *string   `json:"posterPath,omitempty"`
-	BackdropPath       *string   `json:"backdropPath,omitempty"`
-	FocalX             *float64  `json:"focalX,omitempty"`
-	FocalY             *float64  `json:"focalY,omitempty"`
-	Path               string    `json:"path"`
-	Size               int64     `json:"size"`
-	AddedAt            time.Time `json:"addedAt"`
-	LastWatchedAt      *string   `json:"lastWatchedAt,omitempty"`
-	PlayCount          int       `json:"playCount"`
+	ID                 int64      `json:"id"`
+	LibraryID          int64      `json:"libraryId"`
+	TmdbID             *int64     `json:"tmdbId,omitempty"`
+	ImdbID             *string    `json:"imdbId,omitempty"`
+	Title              string     `json:"title"`
+	OriginalTitle      *string    `json:"originalTitle,omitempty"`
+	Year               int        `json:"year"`
+	Overview           *string    `json:"overview,omitempty"`
+	Tagline            *string    `json:"tagline,omitempty"`
+	Runtime            *int       `json:"runtime,omitempty"`
+	Rating             *float64   `json:"rating,omitempty"`
+	ContentRating      *string    `json:"contentRating,omitempty"`
+	Genres             *string    `json:"genres,omitempty"`
+	Cast               *string    `json:"cast,omitempty"`
+	Crew               *string    `json:"crew,omitempty"`
+	Director           *string    `json:"director,omitempty"`
+	Writer             *string    `json:"writer,omitempty"`
+	Editor             *string    `json:"editor,omitempty"`
+	Producers          *string    `json:"producers,omitempty"`
+	Status             *string    `json:"status,omitempty"`
+	Budget             *int64     `json:"budget,omitempty"`
+	Revenue            *int64     `json:"revenue,omitempty"`
+	Country            *string    `json:"country,omitempty"`
+	OriginalLanguage   *string    `json:"originalLanguage,omitempty"`
+	TheatricalRelease  *string    `json:"theatricalRelease,omitempty"`
+	DigitalRelease     *string    `json:"digitalRelease,omitempty"`
+	Studios            *string    `json:"studios,omitempty"`
+	Trailers           *string    `json:"trailers,omitempty"`
+	PosterPath         *string    `json:"posterPath,omitempty"`
+	BackdropPath       *string    `json:"backdropPath,omitempty"`
+	FocalX             *float64   `json:"focalX,omitempty"`
+	FocalY             *float64   `json:"focalY,omitempty"`
+	Path               string     `json:"path"`
+	Size               int64      `json:"size"`
+	AddedAt            time.Time  `json:"addedAt"`
+	LastWatchedAt      *string    `json:"lastWatchedAt,omitempty"`
+	PlayCount          int        `json:"playCount"`
+	MissingSince       *time.Time `json:"missingSince,omitempty"`
+	MatchConfidence    float64    `json:"matchConfidence"`
+	NeedsMatchReview   bool       `json:"needsMatchReview"`
 }
 
 type Show struct {
-	ID            int64    `json:"id"`
-	LibraryID     int64    `json:"libraryId"`
-	TmdbID        *int64   `json:"tmdbId,omitempty"`
-	TvdbID        *int64   `json:"tvdbId,omitempty"`
-	ImdbID        *string  `json:"imdbId,omitempty"`
-	Title         string   `json:"title"`
-	OriginalTitle *string  `json:"originalTitle,omitempty"`
-	Year          int      `json:"year"`
-	Overview      *string  `json:"overview,omitempty"`
-	Status        *string  `json:"status,omitempty"`
-	Rating        *float64 `json:"rating,omitempty"`
-	ContentRating *string  `json:"contentRating,omitempty"`
-	Genres        *string  `json:"genres,omitempty"`
-	Cast          *string  `json:"cast,omitempty"`
-	Crew          *string  `json:"crew,omitempty"`
-	Network       *string  `json:"network,omitempty"`
-	PosterPath    *string  `json:"posterPath,omitempty"`
-	BackdropPath  *string     `json:"backdropPath,omitempty"`
-	FocalX        *float64   `json:"focalX,omitempty"`
-	FocalY        *float64   `json:"focalY,omitempty"`
-	Path          string     `json:"path"`
-	AddedAt       *time.Time `json:"addedAt,omitempty"`
+	ID               int64      `json:"id"`
+	LibraryID        int64      `json:"libraryId"`
+	TmdbID           *int64     `json:"tmdbId,omitempty"`
+	TvdbID           *int64     `json:"tvdbId,omitempty"`
+	ImdbID           *string    `json:"imdbId,omitempty"`
+	Title            string     `json:"title"`
+	OriginalTitle    *string    `json:"originalTitle,omitempty"`
+	Year             int        `json:"year"`
+	Overview         *string    `json:"overview,omitempty"`
+	Status           *string    `json:"status,omitempty"`
+	Rating           *float64   `json:"rating,omitempty"`
+	ContentRating    *string    `json:"contentRating,omitempty"`
+	Genres           *string    `json:"genres,omitempty"`
+	Cast             *string    `json:"cast,omitempty"`
+	Crew             *string    `json:"crew,omitempty"`
+	Network          *string    `json:"network,omitempty"`
+	PosterPath       *string    `json:"posterPath,omitempty"`
+	BackdropPath     *string    `json:"backdropPath,omitempty"`
+	FocalX           *float64   `json:"focalX,omitempty"`
+	FocalY           *float64   `json:"focalY,omitempty"`
+	Path             string     `json:"path"`
+	AddedAt          *time.Time `json:"addedAt,omitempty"`
+	MatchConfidence  float64    `json:"matchConfidence"`
+	NeedsMatchReview bool       `json:"needsMatchReview"`
 }
 
 type Season struct {
@@ -105,16 +110,20 @@ type Season struct {
 }
 
 type Episode struct {
-	ID            int64   `json:"id"`
-	SeasonID      int64   `json:"seasonId"`
-	EpisodeNumber int     `json:"episodeNumber"`
-	Title         string  `json:"title"`
-	Overview      *string `json:"overview,omitempty"`
-	AirDate       *string `json:"airDate,omitempty"`
-	Runtime       *int    `json:"runtime,omitempty"`
-	StillPath     *string `json:"stillPath,omitempty"`
-	Path          string  `json:"path"`
-	Size          int64   `json:"size"`
+	ID              int64      `json:"id"`
+	SeasonID        int64      `json:"seasonId"`
+	EpisodeNumber   int        `json:"episodeNumber"`
+	EpisodeEnd      *int       `json:"episodeEnd,omitempty"`
+	AbsoluteNumber  *int       `json:"absoluteNumber,omitempty"`
+	Title           string     `json:"title"`
+	Overview        *string    `json:"overview,omitempty"`
+	AirDate         *string    `json:"airDate,omitempty"`
+	Runtime         *int       `json:"runtime,omitempty"`
+	StillPath       *string    `json:"stillPath,omitempty"`
+	Path            string     `json:"path"`
+	Size            int64      `json:"size"`
+	MissingSince    *time.Time `json:"missingSince,omitempty"`
+	MatchConfidence float64    `json:"matchConfidence"`
 }
 
 type Progress struct {
@@ -236,6 +245,8 @@ type WantedItem struct {
 	IsUpgrade        bool       `json:"isUpgrade"`               // True if this is an upgrade search
 	ExistingMediaID  *int64     `json:"existingMediaId,omitempty"` // ID of existing media being upgraded
 	CurrentScore     int        `json:"currentScore"`            // Quality score of existing media (for upgrade comparison)
+	SearchAttempts   int        `json:"searchAttempts"`          // Number of search attempts for upgrade backoff
+	NextSearchAt     *time.Time `json:"nextSearchAt,omitempty"`  // When upgrade can be searched again
 }
 
 type Request struct {
@@ -398,14 +409,21 @@ type UpgradeableItem struct {
 	PosterPath     *string `json:"posterPath,omitempty"`
 	Size           int64   `json:"size"`
 	LastSearched   *string `json:"lastSearched,omitempty"`
+	// Search status fields
+	SearchStatus   string  `json:"searchStatus,omitempty"`   // "searching", "pending_retry", "not_searched"
+	SearchAttempts int     `json:"searchAttempts,omitempty"`
+	NextSearchAt   *string `json:"nextSearchAt,omitempty"`
 }
 
 // UpgradesSummary contains the list of upgradeable items
 type UpgradesSummary struct {
-	Movies     []UpgradeableItem `json:"movies"`
-	Episodes   []UpgradeableItem `json:"episodes"`
-	TotalCount int               `json:"totalCount"`
-	TotalSize  int64             `json:"totalSize"`
+	Movies       []UpgradeableItem `json:"movies"`
+	Episodes     []UpgradeableItem `json:"episodes"`
+	TotalCount   int               `json:"totalCount"`
+	TotalSize    int64             `json:"totalSize"`
+	Searching    int               `json:"searching"`    // Active wanted items
+	PendingRetry int               `json:"pendingRetry"` // In backoff
+	LastFound    *string           `json:"lastFound"`    // Last successful upgrade
 }
 
 // Download tracking types
@@ -1627,10 +1645,24 @@ func (d *Database) migrate() error {
 		"ALTER TABLE wanted ADD COLUMN is_upgrade INTEGER DEFAULT 0",
 		"ALTER TABLE wanted ADD COLUMN existing_media_id INTEGER",
 		"ALTER TABLE wanted ADD COLUMN current_score INTEGER DEFAULT 0",
+		// Enhanced upgrade tracking with backoff
+		"ALTER TABLE wanted ADD COLUMN upgrade_for_type TEXT",
+		"ALTER TABLE wanted ADD COLUMN search_attempts INTEGER DEFAULT 0",
+		"ALTER TABLE wanted ADD COLUMN next_search_at DATETIME",
 		// Upgrade search tracking for quality status
 		"ALTER TABLE media_quality_status ADD COLUMN upgrade_searched_at DATETIME",
 		"ALTER TABLE media_quality_status ADD COLUMN current_score INTEGER DEFAULT 0",
 		"ALTER TABLE media_quality_status ADD COLUMN cutoff_score INTEGER DEFAULT 0",
+		// Scanner improvements: missing tracking, confidence scoring, multi-episode support
+		"ALTER TABLE movies ADD COLUMN missing_since DATETIME",
+		"ALTER TABLE movies ADD COLUMN match_confidence REAL DEFAULT 1.0",
+		"ALTER TABLE movies ADD COLUMN needs_match_review INTEGER DEFAULT 0",
+		"ALTER TABLE shows ADD COLUMN match_confidence REAL DEFAULT 1.0",
+		"ALTER TABLE shows ADD COLUMN needs_match_review INTEGER DEFAULT 0",
+		"ALTER TABLE episodes ADD COLUMN missing_since DATETIME",
+		"ALTER TABLE episodes ADD COLUMN absolute_number INTEGER",
+		"ALTER TABLE episodes ADD COLUMN episode_end INTEGER",
+		"ALTER TABLE episodes ADD COLUMN match_confidence REAL DEFAULT 1.0",
 	}
 	for _, m := range migrations {
 		// Ignore errors (column may already exist)
@@ -1640,6 +1672,9 @@ func (d *Database) migrate() error {
 	// Drop old unique index and create new one with media_type
 	d.db.Exec(`DROP INDEX IF EXISTS idx_quality_presets_name`)
 	d.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_quality_presets_name_type ON quality_presets(name, media_type)`)
+
+	// Index for efficient upgrade search queries
+	d.db.Exec(`CREATE INDEX IF NOT EXISTS idx_wanted_upgrade ON wanted(is_upgrade, next_search_at)`)
 
 	// Delete old presets without media_type to re-seed properly
 	d.db.Exec(`DELETE FROM quality_presets WHERE media_type IS NULL OR media_type = ''`)
@@ -3975,21 +4010,38 @@ func (d *Database) UpsertMediaQualityStatus(s *MediaQualityStatus) error {
 }
 
 // GetUpgradeableMovies returns movies that are below their quality cutoff
+// If excludeInBackoff is true, excludes items with active wanted entries in backoff
 func (d *Database) GetUpgradeableMovies(limit int) ([]UpgradeableItem, error) {
+	return d.GetUpgradeableMoviesWithOptions(limit, false)
+}
+
+// GetUpgradeableMoviesWithOptions returns movies with option to exclude items in backoff
+func (d *Database) GetUpgradeableMoviesWithOptions(limit int, excludeInBackoff bool) ([]UpgradeableItem, error) {
 	query := `
 		SELECT m.id, m.title, m.year, m.poster_path, m.size,
 		       COALESCE(mqs.current_resolution, 'Unknown') || ' ' || COALESCE(mqs.current_source, '') as current_quality,
 		       COALESCE(mqs.current_score, 0),
 		       COALESCE(qp.cutoff_resolution, '1080p') || ' ' || COALESCE(qp.cutoff_source, 'bluray') as cutoff_quality,
 		       COALESCE(mqs.cutoff_score, 100),
-		       mqs.upgrade_searched_at
+		       mqs.upgrade_searched_at,
+		       w.search_attempts,
+		       w.next_search_at,
+		       CASE
+		           WHEN w.id IS NOT NULL AND w.next_search_at > datetime('now') THEN 'pending_retry'
+		           WHEN w.id IS NOT NULL THEN 'searching'
+		           ELSE 'not_searched'
+		       END as search_status
 		FROM movies m
 		LEFT JOIN media_quality_status mqs ON mqs.media_id = m.id AND mqs.media_type = 'movie'
 		LEFT JOIN media_quality_override mqo ON mqo.media_id = m.id AND mqo.media_type = 'movie'
 		LEFT JOIN quality_presets qp ON qp.id = COALESCE(mqo.preset_id, (SELECT id FROM quality_presets WHERE is_default = 1 AND media_type = 'movie' LIMIT 1))
+		LEFT JOIN wanted w ON w.existing_media_id = m.id AND w.upgrade_for_type = 'movie' AND w.is_upgrade = 1
 		WHERE COALESCE(mqs.target_met, 0) = 0
-		ORDER BY mqs.upgrade_searched_at ASC NULLS FIRST, m.added_at DESC
 	`
+	if excludeInBackoff {
+		query += ` AND (w.id IS NULL OR w.next_search_at IS NULL OR w.next_search_at <= datetime('now'))`
+	}
+	query += ` ORDER BY (COALESCE(mqs.cutoff_score, 100) - COALESCE(mqs.current_score, 0)) DESC, mqs.upgrade_searched_at ASC NULLS FIRST`
 	if limit > 0 {
 		query += fmt.Sprintf(" LIMIT %d", limit)
 	}
@@ -4003,16 +4055,24 @@ func (d *Database) GetUpgradeableMovies(limit int) ([]UpgradeableItem, error) {
 	var items []UpgradeableItem
 	for rows.Next() {
 		var item UpgradeableItem
-		var lastSearched *time.Time
+		var lastSearched, nextSearchAt *time.Time
+		var searchAttempts *int
 		if err := rows.Scan(&item.ID, &item.Title, &item.Year, &item.PosterPath, &item.Size,
 			&item.CurrentQuality, &item.CurrentScore, &item.CutoffQuality, &item.CutoffScore,
-			&lastSearched); err != nil {
+			&lastSearched, &searchAttempts, &nextSearchAt, &item.SearchStatus); err != nil {
 			return nil, err
 		}
 		item.Type = "movie"
 		if lastSearched != nil {
 			ls := lastSearched.Format(time.RFC3339)
 			item.LastSearched = &ls
+		}
+		if nextSearchAt != nil {
+			ns := nextSearchAt.Format(time.RFC3339)
+			item.NextSearchAt = &ns
+		}
+		if searchAttempts != nil {
+			item.SearchAttempts = *searchAttempts
 		}
 		items = append(items, item)
 	}
@@ -4021,6 +4081,11 @@ func (d *Database) GetUpgradeableMovies(limit int) ([]UpgradeableItem, error) {
 
 // GetUpgradeableEpisodes returns episodes that are below their quality cutoff
 func (d *Database) GetUpgradeableEpisodes(limit int) ([]UpgradeableItem, error) {
+	return d.GetUpgradeableEpisodesWithOptions(limit, false)
+}
+
+// GetUpgradeableEpisodesWithOptions returns episodes with option to exclude items in backoff
+func (d *Database) GetUpgradeableEpisodesWithOptions(limit int, excludeInBackoff bool) ([]UpgradeableItem, error) {
 	query := `
 		SELECT e.id, e.title, s.title as show_title, se.season_number, e.episode_number,
 		       sh.poster_path, e.size,
@@ -4028,7 +4093,14 @@ func (d *Database) GetUpgradeableEpisodes(limit int) ([]UpgradeableItem, error) 
 		       COALESCE(mqs.current_score, 0),
 		       COALESCE(qp.cutoff_resolution, '1080p') || ' ' || COALESCE(qp.cutoff_source, 'web') as cutoff_quality,
 		       COALESCE(mqs.cutoff_score, 100),
-		       mqs.upgrade_searched_at
+		       mqs.upgrade_searched_at,
+		       w.search_attempts,
+		       w.next_search_at,
+		       CASE
+		           WHEN w.id IS NOT NULL AND w.next_search_at > datetime('now') THEN 'pending_retry'
+		           WHEN w.id IS NOT NULL THEN 'searching'
+		           ELSE 'not_searched'
+		       END as search_status
 		FROM episodes e
 		JOIN seasons se ON se.id = e.season_id
 		JOIN shows s ON s.id = se.show_id
@@ -4036,9 +4108,13 @@ func (d *Database) GetUpgradeableEpisodes(limit int) ([]UpgradeableItem, error) 
 		LEFT JOIN media_quality_status mqs ON mqs.media_id = e.id AND mqs.media_type = 'episode'
 		LEFT JOIN media_quality_override mqo ON mqo.media_id = s.id AND mqo.media_type = 'show'
 		LEFT JOIN quality_presets qp ON qp.id = COALESCE(mqo.preset_id, (SELECT id FROM quality_presets WHERE is_default = 1 AND media_type = 'tv' LIMIT 1))
+		LEFT JOIN wanted w ON w.existing_media_id = e.id AND w.upgrade_for_type = 'episode' AND w.is_upgrade = 1
 		WHERE COALESCE(mqs.target_met, 0) = 0
-		ORDER BY mqs.upgrade_searched_at ASC NULLS FIRST
 	`
+	if excludeInBackoff {
+		query += ` AND (w.id IS NULL OR w.next_search_at IS NULL OR w.next_search_at <= datetime('now'))`
+	}
+	query += ` ORDER BY (COALESCE(mqs.cutoff_score, 100) - COALESCE(mqs.current_score, 0)) DESC, mqs.upgrade_searched_at ASC NULLS FIRST`
 	if limit > 0 {
 		query += fmt.Sprintf(" LIMIT %d", limit)
 	}
@@ -4052,16 +4128,24 @@ func (d *Database) GetUpgradeableEpisodes(limit int) ([]UpgradeableItem, error) 
 	var items []UpgradeableItem
 	for rows.Next() {
 		var item UpgradeableItem
-		var lastSearched *time.Time
+		var lastSearched, nextSearchAt *time.Time
+		var searchAttempts *int
 		if err := rows.Scan(&item.ID, &item.Title, &item.ShowTitle, &item.SeasonNumber, &item.EpisodeNumber,
 			&item.PosterPath, &item.Size, &item.CurrentQuality, &item.CurrentScore,
-			&item.CutoffQuality, &item.CutoffScore, &lastSearched); err != nil {
+			&item.CutoffQuality, &item.CutoffScore, &lastSearched, &searchAttempts, &nextSearchAt, &item.SearchStatus); err != nil {
 			return nil, err
 		}
 		item.Type = "episode"
 		if lastSearched != nil {
 			ls := lastSearched.Format(time.RFC3339)
 			item.LastSearched = &ls
+		}
+		if nextSearchAt != nil {
+			ns := nextSearchAt.Format(time.RFC3339)
+			item.NextSearchAt = &ns
+		}
+		if searchAttempts != nil {
+			item.SearchAttempts = *searchAttempts
 		}
 		items = append(items, item)
 	}
@@ -4081,18 +4165,44 @@ func (d *Database) GetUpgradesSummary() (*UpgradesSummary, error) {
 	}
 
 	var totalSize int64
+	var searching, pendingRetry int
 	for _, m := range movies {
 		totalSize += m.Size
+		if m.SearchStatus == "searching" {
+			searching++
+		} else if m.SearchStatus == "pending_retry" {
+			pendingRetry++
+		}
 	}
 	for _, e := range episodes {
 		totalSize += e.Size
+		if e.SearchStatus == "searching" {
+			searching++
+		} else if e.SearchStatus == "pending_retry" {
+			pendingRetry++
+		}
+	}
+
+	// Get last successful upgrade
+	var lastFound *string
+	var lastFoundTime *time.Time
+	d.db.QueryRow(`
+		SELECT MAX(updated_at) FROM media_quality_status
+		WHERE upgrade_available = 1 AND target_met = 1
+	`).Scan(&lastFoundTime)
+	if lastFoundTime != nil {
+		lf := lastFoundTime.Format(time.RFC3339)
+		lastFound = &lf
 	}
 
 	return &UpgradesSummary{
-		Movies:     movies,
-		Episodes:   episodes,
-		TotalCount: len(movies) + len(episodes),
-		TotalSize:  totalSize,
+		Movies:       movies,
+		Episodes:     episodes,
+		TotalCount:   len(movies) + len(episodes),
+		TotalSize:    totalSize,
+		Searching:    searching,
+		PendingRetry: pendingRetry,
+		LastFound:    lastFound,
 	}, nil
 }
 
@@ -4123,15 +4233,76 @@ func (d *Database) UpdateQualityScores(mediaID int64, mediaType string, currentS
 
 // CreateUpgradeWantedItem creates a wanted item for an upgrade
 func (d *Database) CreateUpgradeWantedItem(mediaType string, tmdbID int64, imdbID, title string, year int, posterPath string, qualityProfileID, existingMediaID int64, currentScore int) error {
+	// Check for existing upgrade wanted item first
+	existing, _ := d.GetUpgradeWantedItem(existingMediaID, mediaType)
+	if existing != nil {
+		// Already exists - don't duplicate, but reset next_search_at if it's in the past
+		return nil
+	}
+
 	_, err := d.db.Exec(`
-		INSERT INTO wanted (type, tmdb_id, imdb_id, title, year, poster_path, quality_profile_id, is_upgrade, existing_media_id, current_score, monitored)
-		VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 1)
+		INSERT INTO wanted (type, tmdb_id, imdb_id, title, year, poster_path, quality_profile_id, is_upgrade, existing_media_id, upgrade_for_type, current_score, search_attempts, next_search_at, monitored)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, 0, datetime('now'), 1)
 		ON CONFLICT(type, tmdb_id) DO UPDATE SET
 		    is_upgrade = 1,
 		    existing_media_id = excluded.existing_media_id,
+		    upgrade_for_type = excluded.upgrade_for_type,
 		    quality_profile_id = excluded.quality_profile_id,
 		    current_score = excluded.current_score
-	`, mediaType, tmdbID, imdbID, title, year, posterPath, qualityProfileID, existingMediaID, currentScore)
+	`, mediaType, tmdbID, imdbID, title, year, posterPath, qualityProfileID, existingMediaID, mediaType, currentScore)
+	return err
+}
+
+// GetUpgradeWantedItem retrieves a wanted item by its upgrade target
+func (d *Database) GetUpgradeWantedItem(existingMediaID int64, mediaType string) (*WantedItem, error) {
+	var item WantedItem
+	var seasons string
+	err := d.db.QueryRow(`
+		SELECT id, type, tmdb_id, imdb_id, title, year, poster_path, quality_profile_id, quality_preset_id,
+		       monitored, seasons, last_searched, added_at, is_upgrade, existing_media_id, current_score,
+		       search_attempts, next_search_at
+		FROM wanted
+		WHERE is_upgrade = 1 AND existing_media_id = ? AND upgrade_for_type = ?
+	`, existingMediaID, mediaType).Scan(&item.ID, &item.Type, &item.TmdbID, &item.ImdbID, &item.Title,
+		&item.Year, &item.PosterPath, &item.QualityProfileID, &item.QualityPresetID,
+		&item.Monitored, &seasons, &item.LastSearched, &item.AddedAt,
+		&item.IsUpgrade, &item.ExistingMediaID, &item.CurrentScore,
+		&item.SearchAttempts, &item.NextSearchAt)
+	if err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
+// UpdateWantedSearchBackoff updates the search attempts and next search time with exponential backoff
+func (d *Database) UpdateWantedSearchBackoff(id int64) error {
+	_, err := d.db.Exec(`
+		UPDATE wanted
+		SET search_attempts = search_attempts + 1,
+		    last_searched = datetime('now'),
+		    next_search_at = datetime('now', '+' || MIN(24, (1 << MIN(search_attempts, 5))) || ' hours')
+		WHERE id = ?
+	`, id)
+	return err
+}
+
+// ResetWantedSearchBackoff resets the backoff for a wanted item (for immediate retry)
+func (d *Database) ResetWantedSearchBackoff(existingMediaID int64, mediaType string) error {
+	_, err := d.db.Exec(`
+		UPDATE wanted
+		SET search_attempts = 0,
+		    next_search_at = datetime('now')
+		WHERE is_upgrade = 1 AND existing_media_id = ? AND upgrade_for_type = ?
+	`, existingMediaID, mediaType)
+	return err
+}
+
+// DeleteUpgradeWantedItem removes an upgrade wanted item when no longer needed
+func (d *Database) DeleteUpgradeWantedItem(existingMediaID int64, mediaType string) error {
+	_, err := d.db.Exec(`
+		DELETE FROM wanted
+		WHERE is_upgrade = 1 AND existing_media_id = ? AND upgrade_for_type = ?
+	`, existingMediaID, mediaType)
 	return err
 }
 

@@ -287,22 +287,24 @@
 		trailersJson={movie.trailers}
 	>
 		{#snippet actionButtons()}
-			<!-- Add to Collection -->
-			{#if movie?.tmdbId}
-				<AddToCollectionButton
-					tmdbId={movie.tmdbId}
-					mediaType="movie"
-					title={movie.title}
-					year={movie.year}
-					posterPath={movie.posterPath}
-				/>
-			{/if}
+			<!-- Play (primary action) -->
+			<IconButton
+				onclick={handlePlay}
+				variant="yellow"
+				compact
+				title="Play"
+			>
+				<svg class="w-5 h-5 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+					<path d="M8 5v14l11-7z" />
+				</svg>
+			</IconButton>
 
 			<!-- Watchlist -->
 			<IconButton
 				onclick={handleToggleWatchlist}
 				disabled={watchlistLoading}
 				active={inWatchlist}
+				compact
 				title="{inWatchlist ? 'Remove from' : 'Add to'} Watchlist"
 			>
 				{#if inWatchlist}
@@ -321,6 +323,7 @@
 				onclick={handleToggleWatched}
 				disabled={togglingWatched}
 				active={isWatched}
+				compact
 				title="{isWatched ? 'Mark as unwatched' : 'Mark as watched'}"
 			>
 				<svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
@@ -328,19 +331,10 @@
 				</svg>
 			</IconButton>
 
-			<IconButton
-				onclick={handlePlay}
-				variant="yellow"
-				title="Play"
-			>
-				<svg class="w-5 h-5 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
-					<path d="M8 5v14l11-7z" />
-				</svg>
-			</IconButton>
-
 			{#if getOfficialTrailer(movie?.trailers)}
 				<IconButton
 					onclick={() => showTrailerModal = true}
+					compact
 					title="Watch Trailer"
 				>
 					<svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
@@ -349,10 +343,11 @@
 				</IconButton>
 			{/if}
 
-			<!-- Manage dropdown -->
+			<!-- More menu -->
 			<div class="relative">
 				<IconButton
 					onclick={(e: MouseEvent) => { e.stopPropagation(); showManageMenu = !showManageMenu; }}
+					compact
 					title="More options"
 				>
 					<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -372,6 +367,17 @@
 						class="absolute left-1/2 -translate-x-1/2 mt-2 w-48 py-1 z-[60] bg-bg-dropdown border border-white/10 rounded-2xl shadow-xl overflow-hidden"
 						onclick={(e: MouseEvent) => e.stopPropagation()}
 					>
+						{#if movie?.tmdbId}
+							<AddToCollectionButton
+								tmdbId={movie.tmdbId}
+								mediaType="movie"
+								title={movie.title}
+								year={movie.year}
+								posterPath={movie.posterPath}
+								asMenuItem
+								onSelect={() => showManageMenu = false}
+							/>
+						{/if}
 						<button
 							onclick={() => { handleRefresh(); showManageMenu = false; }}
 							class="w-full text-left px-4 py-2.5 text-sm text-text-secondary hover:bg-white/10 hover:text-text-primary transition-colors"

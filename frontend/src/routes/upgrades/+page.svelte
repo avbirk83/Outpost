@@ -4,11 +4,13 @@
 		getUpgrades,
 		searchUpgrade,
 		searchAllUpgrades,
+		resetUpgradeSearch,
 		getTmdbImageUrl,
 		type UpgradeableItem,
 		type UpgradesSummary
 	} from '$lib/api';
 	import { toast } from '$lib/stores/toast';
+	import { LoadingSpinner, EmptyState, Button } from '$lib/components/ui';
 
 	type Tab = 'movies' | 'episodes';
 	let activeTab: Tab = $state('movies');
@@ -17,6 +19,7 @@
 	let loading = $state(true);
 	let searchingIds: Set<number> = $state(new Set());
 	let searchingAll = $state(false);
+	let resettingIds: Set<number> = $state(new Set());
 
 	onMount(async () => {
 		await loadUpgrades();
@@ -63,6 +66,21 @@
 		}
 	}
 
+	async function handleResetSearch(item: UpgradeableItem) {
+		resettingIds.add(item.id);
+		resettingIds = resettingIds;
+		try {
+			await resetUpgradeSearch(item.type, item.id);
+			toast.success(`Reset search for: ${item.title}`);
+			await loadUpgrades();
+		} catch (e) {
+			toast.error('Reset failed');
+		} finally {
+			resettingIds.delete(item.id);
+			resettingIds = resettingIds;
+		}
+	}
+
 	function formatBytes(bytes: number): string {
 		if (bytes === 0) return '0 B';
 		const k = 1024;
@@ -81,12 +99,22 @@
 		return `${Math.floor(hours / 24)}d ago`;
 	}
 
-	let movies = $derived(summary?.movies || []);
-	let episodes = $derived(summary?.episodes || []);
+	function formatRelativeTimeFuture(dateStr: string): string {
+		const diff = new Date(dateStr).getTime() - Date.now();
+		if (diff <= 0) return 'now';
+		const mins = Math.floor(diff / 60000);
+		if (mins < 60) return `in ${mins}m`;
+		const hours = Math.floor(mins / 60);
+		if (hours < 24) return `in ${hours}h`;
+		return `in ${Math.floor(hours / 24)}d`;
+	}
+
+	let movies = $derived((summary as UpgradesSummary | null)?.movies || []);
+	let episodes = $derived((summary as UpgradesSummary | null)?.episodes || []);
 	let counts = $derived({
 		movies: movies.length,
 		episodes: episodes.length,
-		total: summary?.totalCount || 0
+		total: (summary as UpgradesSummary | null)?.totalCount || 0
 	});
 </script>
 
@@ -102,6 +130,24 @@
 				<p class="text-sm text-text-muted mt-1">
 					{counts.total} items below quality cutoff · {formatBytes(summary.totalSize)} potential savings
 				</p>
+				{#if summary.searching > 0 || summary.pendingRetry > 0}
+					<div class="flex items-center gap-3 mt-1.5">
+						{#if summary.searching > 0}
+							<span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 text-xs">
+								<div class="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse"></div>
+								{summary.searching} searching
+							</span>
+						{/if}
+						{#if summary.pendingRetry > 0}
+							<span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400 text-xs">
+								<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+								</svg>
+								{summary.pendingRetry} waiting
+							</span>
+						{/if}
+					</div>
+				{/if}
 			{/if}
 		</div>
 		<div class="flex items-center gap-2">
@@ -148,26 +194,16 @@
 	</div>
 
 	{#if loading}
-		<div class="flex items-center justify-center py-16">
-			<div class="spinner-lg text-amber-400"></div>
-		</div>
+		<LoadingSpinner size="lg" fullPage />
 	{:else}
 		{@const items = activeTab === 'movies' ? movies : episodes}
 		{#if items.length === 0}
-			<div class="glass-card p-12 text-center">
-				<div class="w-14 h-14 rounded-full bg-bg-elevated flex items-center justify-center mx-auto mb-3">
-					<svg class="w-7 h-7 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M5 13l4 4L19 7" />
-					</svg>
-				</div>
-				<p class="text-text-secondary">
-					{#if activeTab === 'movies'}
-						All movies meet quality targets
-					{:else}
-						All episodes meet quality targets
-					{/if}
-				</p>
-			</div>
+			<EmptyState
+				icon="M5 13l4 4L19 7"
+				title={activeTab === 'movies' ? 'All movies meet quality targets' : 'All episodes meet quality targets'}
+				description="No upgrades available at this time"
+				compact
+			/>
 		{:else}
 			<div class="space-y-2">
 				{#each items as item (item.id)}
@@ -208,22 +244,52 @@
 										{/if}
 									</div>
 
-									<!-- Search button -->
-									<button
-										class="px-3 py-1.5 rounded-lg text-xs font-medium bg-white/5 text-text-secondary hover:text-text-primary hover:bg-white/10 transition-colors disabled:opacity-50 flex items-center gap-1.5"
-										onclick={() => handleSearch(item)}
-										disabled={searchingIds.has(item.id)}
-									>
-										{#if searchingIds.has(item.id)}
-											<div class="spinner-sm"></div>
-											Searching...
+									<!-- Action buttons -->
+									<div class="flex items-center gap-2">
+										{#if item.searchStatus === 'searching'}
+											<span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-blue-500/20 text-blue-400 text-xs">
+												<div class="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse"></div>
+												Searching
+											</span>
+										{:else if item.searchStatus === 'pending_retry'}
+											<span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-yellow-500/20 text-yellow-400 text-xs" title="Retries: {item.searchAttempts || 0}">
+												<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+													<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+												</svg>
+												{item.nextSearchAt ? formatRelativeTimeFuture(item.nextSearchAt) : 'waiting'}
+											</span>
+											<button
+												class="px-2 py-1 rounded-lg text-xs font-medium bg-white/5 text-text-secondary hover:text-text-primary hover:bg-white/10 transition-colors disabled:opacity-50"
+												onclick={() => handleResetSearch(item)}
+												disabled={resettingIds.has(item.id)}
+												title="Reset backoff and search again"
+											>
+												{#if resettingIds.has(item.id)}
+													<div class="spinner-sm"></div>
+												{:else}
+													<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+														<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+													</svg>
+												{/if}
+											</button>
 										{:else}
-											<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-												<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-											</svg>
-											Search
+											<button
+												class="px-3 py-1.5 rounded-lg text-xs font-medium bg-white/5 text-text-secondary hover:text-text-primary hover:bg-white/10 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+												onclick={() => handleSearch(item)}
+												disabled={searchingIds.has(item.id)}
+											>
+												{#if searchingIds.has(item.id)}
+													<div class="spinner-sm"></div>
+													Searching...
+												{:else}
+													<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+														<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+													</svg>
+													Search
+												{/if}
+											</button>
 										{/if}
-									</button>
+									</div>
 								</div>
 
 								<!-- Quality comparison -->
@@ -253,6 +319,10 @@
 									{:else}
 										<span>·</span>
 										<span>Never searched</span>
+									{/if}
+									{#if item.searchAttempts && item.searchAttempts > 0}
+										<span>·</span>
+										<span>{item.searchAttempts} attempt{item.searchAttempts > 1 ? 's' : ''}</span>
 									{/if}
 								</div>
 							</div>

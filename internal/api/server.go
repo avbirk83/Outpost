@@ -240,6 +240,12 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/metadata/refresh", s.requireAdmin(s.handleMetadataRefresh))
 	s.mux.HandleFunc("/api/library/clear", s.requireAdmin(s.handleLibraryClear))
 
+	// Match review routes (admin only)
+	s.mux.HandleFunc("/api/review/movies", s.requireAdmin(s.handleMoviesNeedingReview))
+	s.mux.HandleFunc("/api/review/shows", s.requireAdmin(s.handleShowsNeedingReview))
+	s.mux.HandleFunc("/api/review/movie/", s.requireAdmin(s.handleUpdateMovieMatch))
+	s.mux.HandleFunc("/api/review/show/", s.requireAdmin(s.handleUpdateShowMatch))
+
 	// Download client routes (admin only)
 	s.mux.HandleFunc("/api/download-clients", s.requireAdmin(s.handleDownloadClients))
 	s.mux.HandleFunc("/api/download-clients/", s.requireAdmin(s.handleDownloadClient))
@@ -282,6 +288,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/upgrades", s.requireAdmin(s.handleUpgrades))
 	s.mux.HandleFunc("/api/upgrades/search", s.requireAdmin(s.handleUpgradeSearch))
 	s.mux.HandleFunc("/api/upgrades/search-all", s.requireAdmin(s.handleUpgradeSearchAll))
+	s.mux.HandleFunc("/api/upgrades/reset-search", s.requireAdmin(s.handleUpgradeResetSearch))
 
 	// Download tracking routes (admin only)
 	s.mux.HandleFunc("/api/download-items", s.requireAdmin(s.handleDownloadItems))
@@ -1149,6 +1156,140 @@ func (s *Server) handleLibraryClear(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"message": "All library data cleared",
+	})
+}
+
+// handleMoviesNeedingReview returns movies flagged for manual review
+func (s *Server) handleMoviesNeedingReview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	movies, err := s.db.GetMoviesNeedingReview()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(movies)
+}
+
+// handleShowsNeedingReview returns shows flagged for manual review
+func (s *Server) handleShowsNeedingReview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	shows, err := s.db.GetShowsNeedingReview()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(shows)
+}
+
+// handleUpdateMovieMatch updates the TMDB ID for a movie and clears the review flag
+func (s *Server) handleUpdateMovieMatch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Parse movie ID from path
+	idStr := strings.TrimPrefix(r.URL.Path, "/api/review/movie/")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid movie ID", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		TmdbID int64 `json:"tmdbId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Update TMDB ID and clear review flag
+	if err := s.db.UpdateMovieTmdbMatch(id, req.TmdbID); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Fetch fresh metadata in background
+	if s.metadata != nil {
+		go func() {
+			movie, err := s.db.GetMovie(id)
+			if err != nil {
+				log.Printf("Failed to get movie %d for metadata refresh: %v", id, err)
+				return
+			}
+			if err := s.metadata.FetchMovieMetadata(movie); err != nil {
+				log.Printf("Failed to fetch metadata for movie %s: %v", movie.Title, err)
+			}
+		}()
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Movie match updated",
+	})
+}
+
+// handleUpdateShowMatch updates the TMDB ID for a show and clears the review flag
+func (s *Server) handleUpdateShowMatch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Parse show ID from path
+	idStr := strings.TrimPrefix(r.URL.Path, "/api/review/show/")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid show ID", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		TmdbID int64 `json:"tmdbId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Update TMDB ID and clear review flag
+	if err := s.db.UpdateShowTmdbMatch(id, req.TmdbID); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Fetch fresh metadata in background
+	if s.metadata != nil {
+		go func() {
+			show, err := s.db.GetShow(id)
+			if err != nil {
+				log.Printf("Failed to get show %d for metadata refresh: %v", id, err)
+				return
+			}
+			if err := s.metadata.FetchShowMetadata(show); err != nil {
+				log.Printf("Failed to fetch metadata for show %s: %v", show.Title, err)
+			}
+		}()
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Show match updated",
 	})
 }
 
@@ -7670,6 +7811,48 @@ func (s *Server) handleUpgradeSearchAll(w http.ResponseWriter, r *http.Request) 
 		"success": true,
 		"queued":  queuedCount,
 		"message": fmt.Sprintf("Queued %d upgrade searches", queuedCount),
+	})
+}
+
+// handleUpgradeResetSearch resets the search backoff for an upgrade item so it can be searched immediately
+func (s *Server) handleUpgradeResetSearch(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		MediaType string `json:"mediaType"` // "movie" or "episode"
+		MediaID   int64  `json:"mediaId"`   // existing media ID (movie or episode ID)
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.MediaType == "" || req.MediaID == 0 {
+		http.Error(w, "mediaType and mediaId are required", http.StatusBadRequest)
+		return
+	}
+
+	if req.MediaType != "movie" && req.MediaType != "episode" {
+		http.Error(w, "mediaType must be 'movie' or 'episode'", http.StatusBadRequest)
+		return
+	}
+
+	// Reset the backoff for this item
+	err := s.db.ResetWantedSearchBackoff(req.MediaID, req.MediaType)
+	if err != nil {
+		log.Printf("Failed to reset search backoff for %s %d: %v", req.MediaType, req.MediaID, err)
+		http.Error(w, "Failed to reset search backoff", http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Search backoff reset - item will be searched on next upgrade cycle",
 	})
 }
 

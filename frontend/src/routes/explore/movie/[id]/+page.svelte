@@ -151,10 +151,11 @@
 				onclick={toggleWatchlist}
 				disabled={watchlistLoading}
 				active={inWatchlist}
+				compact
 				title={inWatchlist ? 'In Watchlist' : 'Add to Watchlist'}
 			>
 				{#if watchlistLoading}
-					<div class="spinner-md text-cream"></div>
+					<div class="spinner-sm text-cream"></div>
 				{:else if inWatchlist}
 					<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
@@ -168,27 +169,27 @@
 
 			<!-- Request / In Library -->
 			{#if movie.inLibrary && movie.libraryId}
-				<IconButton href="/movies/{movie.libraryId}" variant="green" title="View in Library">
+				<IconButton href="/movies/{movie.libraryId}" variant="green" compact title="View in Library">
 					<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
 					</svg>
 				</IconButton>
 			{:else if movie.requestStatus === 'approved'}
-				<IconButton variant="green" disabled title="Available in Library">
+				<IconButton variant="green" compact disabled title="Available in Library">
 					<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
 					</svg>
 				</IconButton>
 			{:else if requested || movie.requested}
-				<IconButton variant="yellow" disabled title="Request Pending">
+				<IconButton variant="yellow" compact disabled title="Request Pending">
 					<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
 					</svg>
 				</IconButton>
 			{:else}
-				<IconButton onclick={openRequestModal} disabled={requesting} title="Request">
+				<IconButton onclick={openRequestModal} compact disabled={requesting} title="Request">
 					{#if requesting}
-						<div class="spinner-md text-cream"></div>
+						<div class="spinner-sm text-cream"></div>
 					{:else}
 						<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
@@ -199,7 +200,7 @@
 
 			<!-- Trailer button -->
 			{#if movie.trailerKey}
-				<IconButton onclick={() => showTrailer = true} title="Watch Trailer">
+				<IconButton onclick={() => showTrailer = true} compact title="Watch Trailer">
 					<svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
 						<path d="M18 4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V4h-4z"/>
 					</svg>

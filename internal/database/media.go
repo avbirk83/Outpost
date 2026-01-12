@@ -420,7 +420,7 @@ func (d *Database) DeleteEpisode(id int64) error {
 // GetEpisodesByLibrary retrieves all episodes for a library (for cleanup)
 func (d *Database) GetEpisodesByLibrary(libraryID int64) ([]Episode, error) {
 	rows, err := d.db.Query(`
-		SELECT e.id, e.episode_number, e.path
+		SELECT e.id, e.episode_number, e.path, e.missing_since
 		FROM episodes e
 		JOIN seasons sea ON e.season_id = sea.id
 		JOIN shows s ON sea.show_id = s.id
@@ -433,7 +433,7 @@ func (d *Database) GetEpisodesByLibrary(libraryID int64) ([]Episode, error) {
 	var episodes []Episode
 	for rows.Next() {
 		var e Episode
-		if err := rows.Scan(&e.ID, &e.EpisodeNumber, &e.Path); err != nil {
+		if err := rows.Scan(&e.ID, &e.EpisodeNumber, &e.Path, &e.MissingSince); err != nil {
 			continue
 		}
 		episodes = append(episodes, e)
@@ -511,7 +511,7 @@ func (d *Database) DeleteMovie(id int64) error {
 
 // GetMoviesByLibrary retrieves all movies for a library (for cleanup)
 func (d *Database) GetMoviesByLibrary(libraryID int64) ([]Movie, error) {
-	rows, err := d.db.Query(`SELECT id, title, path FROM movies WHERE library_id = ?`, libraryID)
+	rows, err := d.db.Query(`SELECT id, title, path, missing_since FROM movies WHERE library_id = ?`, libraryID)
 	if err != nil {
 		return nil, err
 	}
@@ -520,7 +520,7 @@ func (d *Database) GetMoviesByLibrary(libraryID int64) ([]Movie, error) {
 	var movies []Movie
 	for rows.Next() {
 		var m Movie
-		if err := rows.Scan(&m.ID, &m.Title, &m.Path); err != nil {
+		if err := rows.Scan(&m.ID, &m.Title, &m.Path, &m.MissingSince); err != nil {
 			continue
 		}
 		movies = append(movies, m)
@@ -572,5 +572,209 @@ func (d *Database) UpdateMoviePlayCount(id int64) error {
 			play_count = play_count + 1,
 			last_watched_at = ?
 		WHERE id = ?`, now, id)
+	return err
+}
+
+// Missing tracking methods
+
+// MarkMovieMissing marks a movie as missing (file not found)
+func (d *Database) MarkMovieMissing(id int64) error {
+	_, err := d.db.Exec(`UPDATE movies SET missing_since = ? WHERE id = ? AND missing_since IS NULL`,
+		time.Now(), id)
+	return err
+}
+
+// ClearMovieMissing clears the missing status when file reappears
+func (d *Database) ClearMovieMissing(id int64) error {
+	_, err := d.db.Exec(`UPDATE movies SET missing_since = NULL WHERE id = ?`, id)
+	return err
+}
+
+// MarkEpisodeMissing marks an episode as missing
+func (d *Database) MarkEpisodeMissing(id int64) error {
+	_, err := d.db.Exec(`UPDATE episodes SET missing_since = ? WHERE id = ? AND missing_since IS NULL`,
+		time.Now(), id)
+	return err
+}
+
+// ClearEpisodeMissing clears the missing status when file reappears
+func (d *Database) ClearEpisodeMissing(id int64) error {
+	_, err := d.db.Exec(`UPDATE episodes SET missing_since = NULL WHERE id = ?`, id)
+	return err
+}
+
+// GetMissingMovies returns movies that have been missing for longer than the given duration
+func (d *Database) GetMissingMovies(olderThan time.Duration) ([]Movie, error) {
+	cutoff := time.Now().Add(-olderThan)
+	rows, err := d.db.Query(`
+		SELECT id, library_id, title, path, missing_since
+		FROM movies
+		WHERE missing_since IS NOT NULL AND missing_since < ?`, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var movies []Movie
+	for rows.Next() {
+		var m Movie
+		if err := rows.Scan(&m.ID, &m.LibraryID, &m.Title, &m.Path, &m.MissingSince); err != nil {
+			continue
+		}
+		movies = append(movies, m)
+	}
+	return movies, nil
+}
+
+// GetMissingEpisodes returns episodes that have been missing for longer than the given duration
+func (d *Database) GetMissingEpisodes(olderThan time.Duration) ([]Episode, error) {
+	cutoff := time.Now().Add(-olderThan)
+	rows, err := d.db.Query(`
+		SELECT id, season_id, episode_number, title, path, missing_since
+		FROM episodes
+		WHERE missing_since IS NOT NULL AND missing_since < ?`, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var episodes []Episode
+	for rows.Next() {
+		var e Episode
+		if err := rows.Scan(&e.ID, &e.SeasonID, &e.EpisodeNumber, &e.Title, &e.Path, &e.MissingSince); err != nil {
+			continue
+		}
+		episodes = append(episodes, e)
+	}
+	return episodes, nil
+}
+
+// DeleteMissingMovies deletes movies that have been missing for longer than the given duration
+func (d *Database) DeleteMissingMovies(olderThan time.Duration) (int, error) {
+	cutoff := time.Now().Add(-olderThan)
+	result, err := d.db.Exec(`DELETE FROM movies WHERE missing_since IS NOT NULL AND missing_since < ?`, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	count, _ := result.RowsAffected()
+	return int(count), nil
+}
+
+// DeleteMissingEpisodes deletes episodes that have been missing for longer than the given duration
+func (d *Database) DeleteMissingEpisodes(olderThan time.Duration) (int, error) {
+	cutoff := time.Now().Add(-olderThan)
+	result, err := d.db.Exec(`DELETE FROM episodes WHERE missing_since IS NOT NULL AND missing_since < ?`, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	count, _ := result.RowsAffected()
+	return int(count), nil
+}
+
+// Match review methods
+
+// GetMoviesNeedingReview returns movies flagged for manual review (low confidence matches)
+func (d *Database) GetMoviesNeedingReview() ([]Movie, error) {
+	rows, err := d.db.Query(`
+		SELECT id, library_id, tmdb_id, title, year, path, match_confidence
+		FROM movies
+		WHERE needs_match_review = 1
+		ORDER BY match_confidence ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var movies []Movie
+	for rows.Next() {
+		var m Movie
+		if err := rows.Scan(&m.ID, &m.LibraryID, &m.TmdbID, &m.Title, &m.Year, &m.Path, &m.MatchConfidence); err != nil {
+			continue
+		}
+		m.NeedsMatchReview = true
+		movies = append(movies, m)
+	}
+	return movies, nil
+}
+
+// GetShowsNeedingReview returns shows flagged for manual review
+func (d *Database) GetShowsNeedingReview() ([]Show, error) {
+	rows, err := d.db.Query(`
+		SELECT id, library_id, tmdb_id, title, year, path, match_confidence
+		FROM shows
+		WHERE needs_match_review = 1
+		ORDER BY match_confidence ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var shows []Show
+	for rows.Next() {
+		var s Show
+		if err := rows.Scan(&s.ID, &s.LibraryID, &s.TmdbID, &s.Title, &s.Year, &s.Path, &s.MatchConfidence); err != nil {
+			continue
+		}
+		s.NeedsMatchReview = true
+		shows = append(shows, s)
+	}
+	return shows, nil
+}
+
+// UpdateMovieTmdbMatch updates the TMDB ID for a movie and clears the review flag
+func (d *Database) UpdateMovieTmdbMatch(id, tmdbID int64) error {
+	_, err := d.db.Exec(`
+		UPDATE movies SET
+			tmdb_id = ?,
+			needs_match_review = 0,
+			match_confidence = 1.0
+		WHERE id = ?`, tmdbID, id)
+	return err
+}
+
+// UpdateShowTmdbMatch updates the TMDB ID for a show and clears the review flag
+func (d *Database) UpdateShowTmdbMatch(id, tmdbID int64) error {
+	_, err := d.db.Exec(`
+		UPDATE shows SET
+			tmdb_id = ?,
+			needs_match_review = 0,
+			match_confidence = 1.0
+		WHERE id = ?`, tmdbID, id)
+	return err
+}
+
+// CreateEpisodeWithExtras creates an episode with multi-episode and absolute number support
+func (d *Database) CreateEpisodeWithExtras(ep *Episode) error {
+	result, err := d.db.Exec(
+		`INSERT INTO episodes (season_id, episode_number, episode_end, absolute_number, title, path, size, match_confidence)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		ep.SeasonID, ep.EpisodeNumber, ep.EpisodeEnd, ep.AbsoluteNumber, ep.Title, ep.Path, ep.Size, ep.MatchConfidence,
+	)
+	if err != nil {
+		return err
+	}
+	ep.ID, _ = result.LastInsertId()
+	return nil
+}
+
+// SetMovieMatchConfidence updates the match confidence and review flag for a movie
+func (d *Database) SetMovieMatchConfidence(id int64, confidence float64, needsReview bool) error {
+	reviewInt := 0
+	if needsReview {
+		reviewInt = 1
+	}
+	_, err := d.db.Exec(`UPDATE movies SET match_confidence = ?, needs_match_review = ? WHERE id = ?`,
+		confidence, reviewInt, id)
+	return err
+}
+
+// SetShowMatchConfidence updates the match confidence and review flag for a show
+func (d *Database) SetShowMatchConfidence(id int64, confidence float64, needsReview bool) error {
+	reviewInt := 0
+	if needsReview {
+		reviewInt = 1
+	}
+	_, err := d.db.Exec(`UPDATE shows SET match_confidence = ?, needs_match_review = ? WHERE id = ?`,
+		confidence, reviewInt, id)
 	return err
 }
