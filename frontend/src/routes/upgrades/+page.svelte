@@ -108,12 +108,14 @@
 	}
 
 	function toggleShow(showId: number) {
-		if (expandedShows.has(showId)) {
-			expandedShows.delete(showId);
+		// Create a new Set to trigger Svelte 5 reactivity
+		const newSet = new Set(expandedShows);
+		if (newSet.has(showId)) {
+			newSet.delete(showId);
 		} else {
-			expandedShows.add(showId);
+			newSet.add(showId);
 		}
-		expandedShows = expandedShows;
+		expandedShows = newSet;
 	}
 
 	function formatBytes(bytes: number): string {

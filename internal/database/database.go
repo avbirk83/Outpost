@@ -4039,11 +4039,11 @@ func (d *Database) GetUpgradeableMoviesWithOptions(limit int, excludeInBackoff b
 		       END as search_status,
 		       COALESCE(mqs.upgrade_paused, 0)
 		FROM movies m
-		LEFT JOIN media_quality_status mqs ON mqs.media_id = m.id AND mqs.media_type = 'movie'
+		INNER JOIN media_quality_status mqs ON mqs.media_id = m.id AND mqs.media_type = 'movie'
 		LEFT JOIN media_quality_override mqo ON mqo.media_id = m.id AND mqo.media_type = 'movie'
 		LEFT JOIN quality_presets qp ON qp.id = COALESCE(mqo.preset_id, (SELECT id FROM quality_presets WHERE is_default = 1 AND media_type = 'movie' LIMIT 1))
 		LEFT JOIN wanted w ON w.existing_media_id = m.id AND w.upgrade_for_type = 'movie' AND w.is_upgrade = 1
-		WHERE COALESCE(mqs.target_met, 0) = 0
+		WHERE mqs.target_met = 0
 	`
 	if excludeInBackoff {
 		query += ` AND (w.id IS NULL OR w.next_search_at IS NULL OR w.next_search_at <= datetime('now'))`
@@ -4117,11 +4117,11 @@ func (d *Database) GetUpgradeableEpisodesWithOptions(limit int, excludeInBackoff
 		JOIN seasons se ON se.id = e.season_id
 		JOIN shows s ON s.id = se.show_id
 		JOIN shows sh ON sh.id = se.show_id
-		LEFT JOIN media_quality_status mqs ON mqs.media_id = e.id AND mqs.media_type = 'episode'
+		INNER JOIN media_quality_status mqs ON mqs.media_id = e.id AND mqs.media_type = 'episode'
 		LEFT JOIN media_quality_override mqo ON mqo.media_id = s.id AND mqo.media_type = 'show'
 		LEFT JOIN quality_presets qp ON qp.id = COALESCE(mqo.preset_id, (SELECT id FROM quality_presets WHERE is_default = 1 AND media_type = 'tv' LIMIT 1))
 		LEFT JOIN wanted w ON w.existing_media_id = e.id AND w.upgrade_for_type = 'episode' AND w.is_upgrade = 1
-		WHERE COALESCE(mqs.target_met, 0) = 0
+		WHERE mqs.target_met = 0
 	`
 	if excludeInBackoff {
 		query += ` AND (w.id IS NULL OR w.next_search_at IS NULL OR w.next_search_at <= datetime('now'))`
