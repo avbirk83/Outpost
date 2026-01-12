@@ -5,14 +5,15 @@
 		searchUpgrade,
 		searchAllUpgrades,
 		resetUpgradeSearch,
+		pauseUpgrade,
 		getImageUrl,
 		type UpgradeableItem,
 		type UpgradesSummary
 	} from '$lib/api';
 	import { toast } from '$lib/stores/toast';
-	import { LoadingSpinner, EmptyState, Button } from '$lib/components/ui';
+	import { LoadingSpinner, EmptyState } from '$lib/components/ui';
 
-	type Tab = 'movies' | 'episodes';
+	type Tab = 'movies' | 'tv';
 	let activeTab: Tab = $state('movies');
 
 	let summary: UpgradesSummary | null = $state(null);
@@ -20,6 +21,17 @@
 	let searchingIds: Set<number> = $state(new Set());
 	let searchingAll = $state(false);
 	let resettingIds: Set<number> = $state(new Set());
+	let pausingIds: Set<number> = $state(new Set());
+	let expandedShows: Set<number> = $state(new Set());
+
+	// Group episodes by show
+	interface ShowGroup {
+		showId: number;
+		showTitle: string;
+		posterPath?: string;
+		episodes: UpgradeableItem[];
+		totalSize: number;
+	}
 
 	onMount(async () => {
 		await loadUpgrades();
@@ -43,7 +55,6 @@
 		try {
 			await searchUpgrade(item.type, item.id);
 			toast.success(`Searching for upgrade: ${item.title}`);
-			// Reload to update last searched
 			await loadUpgrades();
 		} catch (e) {
 			toast.error('Search failed');
@@ -81,11 +92,36 @@
 		}
 	}
 
+	async function handlePause(item: UpgradeableItem, pause: boolean) {
+		pausingIds.add(item.id);
+		pausingIds = pausingIds;
+		try {
+			await pauseUpgrade(item.type, item.id, pause);
+			toast.success(pause ? `Paused upgrades for: ${item.title}` : `Resumed upgrades for: ${item.title}`);
+			await loadUpgrades();
+		} catch (e) {
+			toast.error('Failed to update pause status');
+		} finally {
+			pausingIds.delete(item.id);
+			pausingIds = pausingIds;
+		}
+	}
+
+	function toggleShow(showId: number) {
+		if (expandedShows.has(showId)) {
+			expandedShows.delete(showId);
+		} else {
+			expandedShows.add(showId);
+		}
+		expandedShows = expandedShows;
+	}
+
 	function formatBytes(bytes: number): string {
-		if (bytes === 0) return '0 B';
+		if (!bytes || bytes <= 0 || !isFinite(bytes)) return '0 B';
 		const k = 1024;
 		const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
 		const i = Math.floor(Math.log(bytes) / Math.log(k));
+		if (i < 0 || i >= sizes.length || !isFinite(i)) return '0 B';
 		return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 	}
 
@@ -109,12 +145,43 @@
 		return `in ${Math.floor(hours / 24)}d`;
 	}
 
-	let movies = $derived((summary as UpgradesSummary | null)?.movies || []);
-	let episodes = $derived((summary as UpgradesSummary | null)?.episodes || []);
+	let movies = $derived(summary?.movies ?? []);
+	let episodes = $derived(summary?.episodes ?? []);
+
+	// Group episodes by show
+	let showGroups = $derived.by(() => {
+		const groups = new Map<number, ShowGroup>();
+		for (const ep of episodes) {
+			const showId = ep.showId ?? 0;
+			if (!groups.has(showId)) {
+				groups.set(showId, {
+					showId,
+					showTitle: ep.showTitle ?? 'Unknown Show',
+					posterPath: ep.posterPath,
+					episodes: [],
+					totalSize: 0
+				});
+			}
+			const group = groups.get(showId)!;
+			group.episodes.push(ep);
+			group.totalSize += ep.size || 0;
+		}
+		// Sort episodes within each group by season/episode
+		for (const group of groups.values()) {
+			group.episodes.sort((a, b) => {
+				const seasonDiff = (a.seasonNumber ?? 0) - (b.seasonNumber ?? 0);
+				if (seasonDiff !== 0) return seasonDiff;
+				return (a.episodeNumber ?? 0) - (b.episodeNumber ?? 0);
+			});
+		}
+		return Array.from(groups.values()).sort((a, b) => b.episodes.length - a.episodes.length);
+	});
+
 	let counts = $derived({
 		movies: movies.length,
+		shows: showGroups.length,
 		episodes: episodes.length,
-		total: (summary as UpgradesSummary | null)?.totalCount || 0
+		total: summary?.totalCount ?? 0
 	});
 </script>
 
@@ -183,30 +250,29 @@
 			{/if}
 		</button>
 		<button
-			class="px-3 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-1.5 {activeTab === 'episodes' ? 'bg-amber-400 text-black' : 'bg-bg-card border border-border-subtle text-text-secondary hover:text-text-primary'}"
-			onclick={() => activeTab = 'episodes'}
+			class="px-3 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-1.5 {activeTab === 'tv' ? 'bg-amber-400 text-black' : 'bg-bg-card border border-border-subtle text-text-secondary hover:text-text-primary'}"
+			onclick={() => activeTab = 'tv'}
 		>
-			Episodes
-			{#if counts.episodes > 0}
-				<span class="px-1.5 py-0.5 text-xs rounded-full {activeTab === 'episodes' ? 'bg-black/20' : 'bg-green-500 text-white'}">{counts.episodes}</span>
+			TV
+			{#if counts.shows > 0}
+				<span class="px-1.5 py-0.5 text-xs rounded-full {activeTab === 'tv' ? 'bg-black/20' : 'bg-green-500 text-white'}">{counts.shows}</span>
 			{/if}
 		</button>
 	</div>
 
 	{#if loading}
 		<LoadingSpinner size="lg" fullPage />
-	{:else}
-		{@const items = activeTab === 'movies' ? movies : episodes}
-		{#if items.length === 0}
+	{:else if activeTab === 'movies'}
+		{#if movies.length === 0}
 			<EmptyState
 				icon="M5 13l4 4L19 7"
-				title={activeTab === 'movies' ? 'All movies meet quality targets' : 'All episodes meet quality targets'}
+				title="All movies meet quality targets"
 				description="No upgrades available at this time"
 				compact
 			/>
 		{:else}
 			<div class="space-y-2">
-				{#each items as item (item.id)}
+				{#each movies as item (item.id)}
 					<div class="bg-bg-card border border-border-subtle rounded-xl p-4">
 						<div class="flex items-start gap-3">
 							<!-- Poster -->
@@ -229,7 +295,7 @@
 								<div class="flex items-start justify-between gap-2">
 									<div class="min-w-0">
 										<a
-											href={item.type === 'movie' ? `/movies/${item.id}` : `/tv/${item.id}`}
+											href="/movies/{item.id}"
 											class="font-medium text-text-primary hover:text-amber-400 truncate block"
 										>
 											{item.title}
@@ -237,16 +303,33 @@
 												<span class="text-text-muted">({item.year})</span>
 											{/if}
 										</a>
-										{#if item.type === 'episode' && item.showTitle}
-											<p class="text-xs text-text-muted truncate mt-0.5">
-												{item.showTitle} - S{String(item.seasonNumber).padStart(2, '0')}E{String(item.episodeNumber).padStart(2, '0')}
-											</p>
-										{/if}
 									</div>
 
 									<!-- Action buttons -->
 									<div class="flex items-center gap-2">
-										{#if item.searchStatus === 'searching'}
+										{#if item.searchStatus === 'paused' || item.upgradePaused}
+											<span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-gray-500/20 text-gray-400 text-xs">
+												<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+													<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+												</svg>
+												Paused
+											</span>
+											<button
+												class="px-2 py-1 rounded-lg text-xs font-medium bg-green-500/20 text-green-400 hover:bg-green-500/30 transition-colors disabled:opacity-50"
+												onclick={() => handlePause(item, false)}
+												disabled={pausingIds.has(item.id)}
+												title="Resume upgrade search"
+											>
+												{#if pausingIds.has(item.id)}
+													<div class="spinner-sm"></div>
+												{:else}
+													<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+														<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+														<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+													</svg>
+												{/if}
+											</button>
+										{:else if item.searchStatus === 'searching'}
 											<span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-blue-500/20 text-blue-400 text-xs">
 												<div class="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse"></div>
 												Searching
@@ -272,6 +355,20 @@
 													</svg>
 												{/if}
 											</button>
+											<button
+												class="px-2 py-1 rounded-lg text-xs font-medium bg-white/5 text-text-secondary hover:text-text-primary hover:bg-white/10 transition-colors disabled:opacity-50"
+												onclick={() => handlePause(item, true)}
+												disabled={pausingIds.has(item.id)}
+												title="Pause upgrade search"
+											>
+												{#if pausingIds.has(item.id)}
+													<div class="spinner-sm"></div>
+												{:else}
+													<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+														<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+													</svg>
+												{/if}
+											</button>
 										{:else}
 											<button
 												class="px-3 py-1.5 rounded-lg text-xs font-medium bg-white/5 text-text-secondary hover:text-text-primary hover:bg-white/10 transition-colors disabled:opacity-50 flex items-center gap-1.5"
@@ -286,6 +383,20 @@
 														<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
 													</svg>
 													Search
+												{/if}
+											</button>
+											<button
+												class="px-2 py-1 rounded-lg text-xs font-medium bg-white/5 text-text-secondary hover:text-text-primary hover:bg-white/10 transition-colors disabled:opacity-50"
+												onclick={() => handlePause(item, true)}
+												disabled={pausingIds.has(item.id)}
+												title="Pause upgrade search"
+											>
+												{#if pausingIds.has(item.id)}
+													<div class="spinner-sm"></div>
+												{:else}
+													<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+														<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+													</svg>
 												{/if}
 											</button>
 										{/if}
@@ -332,7 +443,7 @@
 			<div class="flex justify-center pt-4">
 				<button
 					class="px-4 py-2 rounded-lg bg-bg-card border border-border-subtle text-text-secondary hover:text-text-primary text-sm font-medium transition-colors disabled:opacity-50 flex items-center gap-2"
-					onclick={() => handleSearchAll(activeTab === 'movies' ? 'movie' : 'episode')}
+					onclick={() => handleSearchAll('movie')}
 					disabled={searchingAll}
 				>
 					{#if searchingAll}
@@ -342,7 +453,216 @@
 							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
 						</svg>
 					{/if}
-					Search Top 10 {activeTab === 'movies' ? 'Movies' : 'Episodes'}
+					Search Top 10 Movies
+				</button>
+			</div>
+		{/if}
+	{:else}
+		<!-- TV Shows Tab -->
+		{#if showGroups.length === 0}
+			<EmptyState
+				icon="M5 13l4 4L19 7"
+				title="All TV shows meet quality targets"
+				description="No upgrades available at this time"
+				compact
+			/>
+		{:else}
+			<div class="space-y-2">
+				{#each showGroups as group (group.showId)}
+					<div class="bg-bg-card border border-border-subtle rounded-xl overflow-hidden">
+						<!-- Show Header (clickable to expand) -->
+						<button
+							class="w-full p-4 flex items-center gap-3 hover:bg-white/5 transition-colors text-left"
+							onclick={() => toggleShow(group.showId)}
+						>
+							<!-- Poster -->
+							{#if group.posterPath}
+								<img
+									src={getImageUrl(group.posterPath)}
+									alt=""
+									class="w-12 h-18 rounded-lg object-cover flex-shrink-0"
+								/>
+							{:else}
+								<div class="w-12 h-18 rounded-lg bg-bg-elevated flex items-center justify-center flex-shrink-0">
+									<svg class="w-6 h-6 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z" />
+									</svg>
+								</div>
+							{/if}
+
+							<!-- Show Info -->
+							<div class="flex-1 min-w-0">
+								<div class="flex items-center justify-between gap-2">
+									<a
+										href="/tv/{group.showId}"
+										class="font-medium text-text-primary hover:text-amber-400 truncate"
+										onclick={(e) => e.stopPropagation()}
+									>
+										{group.showTitle}
+									</a>
+									<div class="flex items-center gap-2">
+										<span class="px-2 py-0.5 text-xs rounded-full bg-green-500/20 text-green-400">
+											{group.episodes.length} episode{group.episodes.length > 1 ? 's' : ''}
+										</span>
+										<svg
+											class="w-4 h-4 text-text-muted transition-transform {expandedShows.has(group.showId) ? 'rotate-180' : ''}"
+											fill="none"
+											stroke="currentColor"
+											viewBox="0 0 24 24"
+										>
+											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+										</svg>
+									</div>
+								</div>
+								<p class="text-xs text-text-muted mt-1">{formatBytes(group.totalSize)} total</p>
+							</div>
+						</button>
+
+						<!-- Episodes List (collapsible) -->
+						{#if expandedShows.has(group.showId)}
+							<div class="border-t border-border-subtle">
+								{#each group.episodes as item (item.id)}
+									<div class="p-3 pl-8 border-b border-border-subtle last:border-b-0 hover:bg-white/5">
+										<div class="flex items-center justify-between gap-2">
+											<div class="min-w-0 flex-1">
+												<div class="flex items-center gap-2">
+													<span class="text-xs text-text-muted font-mono">
+														S{String(item.seasonNumber).padStart(2, '0')}E{String(item.episodeNumber).padStart(2, '0')}
+													</span>
+													<span class="text-sm text-text-primary truncate">{item.title}</span>
+												</div>
+												<div class="flex items-center gap-2 mt-1">
+													<span class="px-1.5 py-0.5 rounded text-xs bg-orange-500/20 text-orange-400">
+														{item.currentQuality || 'Unknown'}
+													</span>
+													<svg class="w-2.5 h-2.5 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+														<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6" />
+													</svg>
+													<span class="px-1.5 py-0.5 rounded text-xs bg-green-500/20 text-green-400">
+														{item.cutoffQuality || 'Better'}
+													</span>
+													<span class="text-xs text-text-muted ml-2">{formatBytes(item.size)}</span>
+												</div>
+											</div>
+
+											<!-- Action buttons -->
+											<div class="flex items-center gap-2">
+												{#if item.searchStatus === 'paused' || item.upgradePaused}
+													<span class="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-gray-500/20 text-gray-400 text-xs">
+														<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+															<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+														</svg>
+														Paused
+													</span>
+													<button
+														class="p-1 rounded-lg text-xs bg-green-500/20 text-green-400 hover:bg-green-500/30 transition-colors disabled:opacity-50"
+														onclick={() => handlePause(item, false)}
+														disabled={pausingIds.has(item.id)}
+														title="Resume"
+													>
+														{#if pausingIds.has(item.id)}
+															<div class="spinner-sm"></div>
+														{:else}
+															<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+																<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+															</svg>
+														{/if}
+													</button>
+												{:else if item.searchStatus === 'searching'}
+													<span class="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-blue-500/20 text-blue-400 text-xs">
+														<div class="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse"></div>
+														Searching
+													</span>
+												{:else if item.searchStatus === 'pending_retry'}
+													<span class="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-yellow-500/20 text-yellow-400 text-xs">
+														<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+															<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+														</svg>
+														{item.nextSearchAt ? formatRelativeTimeFuture(item.nextSearchAt) : 'waiting'}
+													</span>
+													<button
+														class="p-1 rounded-lg text-xs bg-white/5 text-text-secondary hover:text-text-primary hover:bg-white/10 transition-colors disabled:opacity-50"
+														onclick={() => handleResetSearch(item)}
+														disabled={resettingIds.has(item.id)}
+														title="Reset backoff"
+													>
+														{#if resettingIds.has(item.id)}
+															<div class="spinner-sm"></div>
+														{:else}
+															<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+																<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+															</svg>
+														{/if}
+													</button>
+													<button
+														class="p-1 rounded-lg text-xs bg-white/5 text-text-secondary hover:text-text-primary hover:bg-white/10 transition-colors disabled:opacity-50"
+														onclick={() => handlePause(item, true)}
+														disabled={pausingIds.has(item.id)}
+														title="Pause"
+													>
+														{#if pausingIds.has(item.id)}
+															<div class="spinner-sm"></div>
+														{:else}
+															<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+																<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+															</svg>
+														{/if}
+													</button>
+												{:else}
+													<button
+														class="px-2 py-1 rounded-lg text-xs font-medium bg-white/5 text-text-secondary hover:text-text-primary hover:bg-white/10 transition-colors disabled:opacity-50 flex items-center gap-1"
+														onclick={() => handleSearch(item)}
+														disabled={searchingIds.has(item.id)}
+													>
+														{#if searchingIds.has(item.id)}
+															<div class="spinner-sm"></div>
+														{:else}
+															<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+																<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+															</svg>
+															Search
+														{/if}
+													</button>
+													<button
+														class="p-1 rounded-lg text-xs bg-white/5 text-text-secondary hover:text-text-primary hover:bg-white/10 transition-colors disabled:opacity-50"
+														onclick={() => handlePause(item, true)}
+														disabled={pausingIds.has(item.id)}
+														title="Pause"
+													>
+														{#if pausingIds.has(item.id)}
+															<div class="spinner-sm"></div>
+														{:else}
+															<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+																<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+															</svg>
+														{/if}
+													</button>
+												{/if}
+											</div>
+										</div>
+									</div>
+								{/each}
+							</div>
+						{/if}
+					</div>
+				{/each}
+			</div>
+
+			<!-- Search type button -->
+			<div class="flex justify-center pt-4">
+				<button
+					class="px-4 py-2 rounded-lg bg-bg-card border border-border-subtle text-text-secondary hover:text-text-primary text-sm font-medium transition-colors disabled:opacity-50 flex items-center gap-2"
+					onclick={() => handleSearchAll('episode')}
+					disabled={searchingAll}
+				>
+					{#if searchingAll}
+						<div class="spinner-sm"></div>
+					{:else}
+						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+						</svg>
+					{/if}
+					Search Top 10 Episodes
 				</button>
 			</div>
 		{/if}

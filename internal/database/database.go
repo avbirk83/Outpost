@@ -385,6 +385,7 @@ type MediaQualityStatus struct {
 	CurrentEdition     *string    `json:"currentEdition"`
 	TargetMet          bool       `json:"targetMet"`
 	UpgradeAvailable   bool       `json:"upgradeAvailable"`
+	UpgradePaused      bool       `json:"upgradePaused"`
 	LastSearch         *time.Time `json:"lastSearch"`
 	UpgradeSearchedAt  *time.Time `json:"upgradeSearchedAt"`
 	CurrentScore       int        `json:"currentScore"`
@@ -401,6 +402,7 @@ type UpgradeableItem struct {
 	Year           int     `json:"year,omitempty"`
 	SeasonNumber   int     `json:"seasonNumber,omitempty"`
 	EpisodeNumber  int     `json:"episodeNumber,omitempty"`
+	ShowID         int64   `json:"showId,omitempty"`
 	ShowTitle      string  `json:"showTitle,omitempty"`
 	CurrentQuality string  `json:"currentQuality"`
 	CurrentScore   int     `json:"currentScore"`
@@ -410,9 +412,10 @@ type UpgradeableItem struct {
 	Size           int64   `json:"size"`
 	LastSearched   *string `json:"lastSearched,omitempty"`
 	// Search status fields
-	SearchStatus   string  `json:"searchStatus,omitempty"`   // "searching", "pending_retry", "not_searched"
-	SearchAttempts int     `json:"searchAttempts,omitempty"`
+	SearchStatus   string `json:"searchStatus,omitempty"` // "searching", "pending_retry", "not_searched", "paused"
+	SearchAttempts int    `json:"searchAttempts,omitempty"`
 	NextSearchAt   *string `json:"nextSearchAt,omitempty"`
+	UpgradePaused  bool   `json:"upgradePaused,omitempty"`
 }
 
 // UpgradesSummary contains the list of upgradeable items
@@ -1663,6 +1666,8 @@ func (d *Database) migrate() error {
 		"ALTER TABLE episodes ADD COLUMN absolute_number INTEGER",
 		"ALTER TABLE episodes ADD COLUMN episode_end INTEGER",
 		"ALTER TABLE episodes ADD COLUMN match_confidence REAL DEFAULT 1.0",
+		// Pause upgrades for specific items
+		"ALTER TABLE media_quality_status ADD COLUMN upgrade_paused INTEGER DEFAULT 0",
 	}
 	for _, m := range migrations {
 		// Ignore errors (column may already exist)
@@ -4027,10 +4032,12 @@ func (d *Database) GetUpgradeableMoviesWithOptions(limit int, excludeInBackoff b
 		       w.search_attempts,
 		       w.next_search_at,
 		       CASE
+		           WHEN COALESCE(mqs.upgrade_paused, 0) = 1 THEN 'paused'
 		           WHEN w.id IS NOT NULL AND w.next_search_at > datetime('now') THEN 'pending_retry'
 		           WHEN w.id IS NOT NULL THEN 'searching'
 		           ELSE 'not_searched'
-		       END as search_status
+		       END as search_status,
+		       COALESCE(mqs.upgrade_paused, 0)
 		FROM movies m
 		LEFT JOIN media_quality_status mqs ON mqs.media_id = m.id AND mqs.media_type = 'movie'
 		LEFT JOIN media_quality_override mqo ON mqo.media_id = m.id AND mqo.media_type = 'movie'
@@ -4040,8 +4047,9 @@ func (d *Database) GetUpgradeableMoviesWithOptions(limit int, excludeInBackoff b
 	`
 	if excludeInBackoff {
 		query += ` AND (w.id IS NULL OR w.next_search_at IS NULL OR w.next_search_at <= datetime('now'))`
+		query += ` AND COALESCE(mqs.upgrade_paused, 0) = 0`
 	}
-	query += ` ORDER BY (COALESCE(mqs.cutoff_score, 100) - COALESCE(mqs.current_score, 0)) DESC, mqs.upgrade_searched_at ASC NULLS FIRST`
+	query += ` ORDER BY COALESCE(mqs.upgrade_paused, 0) ASC, (COALESCE(mqs.cutoff_score, 100) - COALESCE(mqs.current_score, 0)) DESC, mqs.upgrade_searched_at ASC NULLS FIRST`
 	if limit > 0 {
 		query += fmt.Sprintf(" LIMIT %d", limit)
 	}
@@ -4057,12 +4065,14 @@ func (d *Database) GetUpgradeableMoviesWithOptions(limit int, excludeInBackoff b
 		var item UpgradeableItem
 		var lastSearched, nextSearchAt *time.Time
 		var searchAttempts *int
+		var upgradePaused int
 		if err := rows.Scan(&item.ID, &item.Title, &item.Year, &item.PosterPath, &item.Size,
 			&item.CurrentQuality, &item.CurrentScore, &item.CutoffQuality, &item.CutoffScore,
-			&lastSearched, &searchAttempts, &nextSearchAt, &item.SearchStatus); err != nil {
+			&lastSearched, &searchAttempts, &nextSearchAt, &item.SearchStatus, &upgradePaused); err != nil {
 			return nil, err
 		}
 		item.Type = "movie"
+		item.UpgradePaused = upgradePaused == 1
 		if lastSearched != nil {
 			ls := lastSearched.Format(time.RFC3339)
 			item.LastSearched = &ls
@@ -4087,7 +4097,7 @@ func (d *Database) GetUpgradeableEpisodes(limit int) ([]UpgradeableItem, error) 
 // GetUpgradeableEpisodesWithOptions returns episodes with option to exclude items in backoff
 func (d *Database) GetUpgradeableEpisodesWithOptions(limit int, excludeInBackoff bool) ([]UpgradeableItem, error) {
 	query := `
-		SELECT e.id, e.title, s.title as show_title, se.season_number, e.episode_number,
+		SELECT e.id, e.title, s.id as show_id, s.title as show_title, se.season_number, e.episode_number,
 		       sh.poster_path, e.size,
 		       COALESCE(mqs.current_resolution, 'Unknown') || ' ' || COALESCE(mqs.current_source, '') as current_quality,
 		       COALESCE(mqs.current_score, 0),
@@ -4097,10 +4107,12 @@ func (d *Database) GetUpgradeableEpisodesWithOptions(limit int, excludeInBackoff
 		       w.search_attempts,
 		       w.next_search_at,
 		       CASE
+		           WHEN COALESCE(mqs.upgrade_paused, 0) = 1 THEN 'paused'
 		           WHEN w.id IS NOT NULL AND w.next_search_at > datetime('now') THEN 'pending_retry'
 		           WHEN w.id IS NOT NULL THEN 'searching'
 		           ELSE 'not_searched'
-		       END as search_status
+		       END as search_status,
+		       COALESCE(mqs.upgrade_paused, 0)
 		FROM episodes e
 		JOIN seasons se ON se.id = e.season_id
 		JOIN shows s ON s.id = se.show_id
@@ -4113,8 +4125,9 @@ func (d *Database) GetUpgradeableEpisodesWithOptions(limit int, excludeInBackoff
 	`
 	if excludeInBackoff {
 		query += ` AND (w.id IS NULL OR w.next_search_at IS NULL OR w.next_search_at <= datetime('now'))`
+		query += ` AND COALESCE(mqs.upgrade_paused, 0) = 0`
 	}
-	query += ` ORDER BY (COALESCE(mqs.cutoff_score, 100) - COALESCE(mqs.current_score, 0)) DESC, mqs.upgrade_searched_at ASC NULLS FIRST`
+	query += ` ORDER BY COALESCE(mqs.upgrade_paused, 0) ASC, (COALESCE(mqs.cutoff_score, 100) - COALESCE(mqs.current_score, 0)) DESC, mqs.upgrade_searched_at ASC NULLS FIRST`
 	if limit > 0 {
 		query += fmt.Sprintf(" LIMIT %d", limit)
 	}
@@ -4130,12 +4143,14 @@ func (d *Database) GetUpgradeableEpisodesWithOptions(limit int, excludeInBackoff
 		var item UpgradeableItem
 		var lastSearched, nextSearchAt *time.Time
 		var searchAttempts *int
-		if err := rows.Scan(&item.ID, &item.Title, &item.ShowTitle, &item.SeasonNumber, &item.EpisodeNumber,
+		var upgradePaused int
+		if err := rows.Scan(&item.ID, &item.Title, &item.ShowID, &item.ShowTitle, &item.SeasonNumber, &item.EpisodeNumber,
 			&item.PosterPath, &item.Size, &item.CurrentQuality, &item.CurrentScore,
-			&item.CutoffQuality, &item.CutoffScore, &lastSearched, &searchAttempts, &nextSearchAt, &item.SearchStatus); err != nil {
+			&item.CutoffQuality, &item.CutoffScore, &lastSearched, &searchAttempts, &nextSearchAt, &item.SearchStatus, &upgradePaused); err != nil {
 			return nil, err
 		}
 		item.Type = "episode"
+		item.UpgradePaused = upgradePaused == 1
 		if lastSearched != nil {
 			ls := lastSearched.Format(time.RFC3339)
 			item.LastSearched = &ls
@@ -4228,6 +4243,21 @@ func (d *Database) UpdateQualityScores(mediaID int64, mediaType string, currentS
 		    updated_at = CURRENT_TIMESTAMP
 		WHERE media_id = ? AND media_type = ?
 	`, currentScore, cutoffScore, currentScore, cutoffScore, mediaID, mediaType)
+	return err
+}
+
+// SetUpgradePaused sets the upgrade paused status for a media item
+func (d *Database) SetUpgradePaused(mediaID int64, mediaType string, paused bool) error {
+	pausedInt := 0
+	if paused {
+		pausedInt = 1
+	}
+	_, err := d.db.Exec(`
+		UPDATE media_quality_status
+		SET upgrade_paused = ?,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE media_id = ? AND media_type = ?
+	`, pausedInt, mediaID, mediaType)
 	return err
 }
 

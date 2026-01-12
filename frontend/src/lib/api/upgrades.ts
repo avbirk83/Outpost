@@ -7,6 +7,7 @@ export interface UpgradeableItem {
 	year?: number;
 	seasonNumber?: number;
 	episodeNumber?: number;
+	showId?: number;
 	showTitle?: string;
 	currentQuality: string;
 	currentScore: number;
@@ -15,9 +16,10 @@ export interface UpgradeableItem {
 	posterPath?: string;
 	size: number;
 	lastSearched?: string;
-	searchStatus?: 'searching' | 'pending_retry' | 'not_searched';
+	searchStatus?: 'searching' | 'pending_retry' | 'not_searched' | 'paused';
 	searchAttempts?: number;
 	nextSearchAt?: string;
+	upgradePaused?: boolean;
 }
 
 export interface UpgradesSummary {
@@ -70,6 +72,20 @@ export async function resetUpgradeSearch(
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ mediaType, mediaId })
+	});
+	if (!response.ok) throw new Error(`API error: ${response.status}`);
+	return response.json();
+}
+
+export async function pauseUpgrade(
+	mediaType: 'movie' | 'episode',
+	mediaId: number,
+	paused: boolean
+): Promise<{ success: boolean; message: string }> {
+	const response = await apiFetch(`${API_BASE}/upgrades/pause`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ mediaType, mediaId, paused })
 	});
 	if (!response.ok) throw new Error(`API error: ${response.status}`);
 	return response.json();

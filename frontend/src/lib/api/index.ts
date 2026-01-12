@@ -413,6 +413,7 @@ export {
 	searchUpgrade,
 	searchAllUpgrades,
 	resetUpgradeSearch,
+	pauseUpgrade,
 	formatQualityComparison,
 	getScoreDifference
 } from './upgrades';

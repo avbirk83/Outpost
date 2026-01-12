@@ -289,6 +289,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/upgrades/search", s.requireAdmin(s.handleUpgradeSearch))
 	s.mux.HandleFunc("/api/upgrades/search-all", s.requireAdmin(s.handleUpgradeSearchAll))
 	s.mux.HandleFunc("/api/upgrades/reset-search", s.requireAdmin(s.handleUpgradeResetSearch))
+	s.mux.HandleFunc("/api/upgrades/pause", s.requireAdmin(s.handleUpgradePause))
 
 	// Download tracking routes (admin only)
 	s.mux.HandleFunc("/api/download-items", s.requireAdmin(s.handleDownloadItems))
@@ -7876,6 +7877,52 @@ func (s *Server) handleUpgradeResetSearch(w http.ResponseWriter, r *http.Request
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"message": "Search backoff reset - item will be searched on next upgrade cycle",
+	})
+}
+
+// handleUpgradePause pauses or resumes upgrade searching for a media item
+func (s *Server) handleUpgradePause(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		MediaType string `json:"mediaType"` // "movie" or "episode"
+		MediaID   int64  `json:"mediaId"`
+		Paused    bool   `json:"paused"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.MediaType == "" || req.MediaID == 0 {
+		http.Error(w, "mediaType and mediaId are required", http.StatusBadRequest)
+		return
+	}
+
+	if req.MediaType != "movie" && req.MediaType != "episode" {
+		http.Error(w, "mediaType must be 'movie' or 'episode'", http.StatusBadRequest)
+		return
+	}
+
+	err := s.db.SetUpgradePaused(req.MediaID, req.MediaType, req.Paused)
+	if err != nil {
+		log.Printf("Failed to set upgrade paused for %s %d: %v", req.MediaType, req.MediaID, err)
+		http.Error(w, "Failed to update pause status", http.StatusInternalServerError)
+		return
+	}
+
+	action := "resumed"
+	if req.Paused {
+		action = "paused"
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": fmt.Sprintf("Upgrade search %s", action),
 	})
 }
 
