@@ -996,7 +996,7 @@ func (s *Scheduler) searchAndGrab(item *database.WantedItem) {
 
 	// Try each acceptable result until one succeeds
 	var grabbed bool
-	for _, result := range acceptableResults {
+	for i, result := range acceptableResults {
 		err = s.grabRelease(result, item.Type, item.TmdbID)
 		if err == nil {
 			log.Printf("Scheduler: grabbed %s for %s (score: %d)", result.Title, item.Title, result.TotalScore)
@@ -1004,6 +1004,14 @@ func (s *Scheduler) searchAndGrab(item *database.WantedItem) {
 			break
 		}
 		log.Printf("Scheduler: grab failed for %s, trying next: %v", result.Title, err)
+		// Add delay between retries to avoid rate limiting (like Sonarr does)
+		if i < len(acceptableResults)-1 {
+			if strings.Contains(err.Error(), "429") {
+				time.Sleep(2 * time.Second) // Longer delay for rate limit errors
+			} else {
+				time.Sleep(500 * time.Millisecond) // Short delay for other errors
+			}
+		}
 	}
 
 	if !grabbed {
