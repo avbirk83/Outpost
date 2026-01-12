@@ -843,8 +843,30 @@ func (s *Scheduler) searchAndGrab(item *database.WantedItem) {
 	// Try each preset until we find an acceptable result
 	var bestResult *indexer.ScoredSearchResult
 	var usedPresetID *int64
-	for _, presetID := range presetsToTry {
+	for presetIdx, presetID := range presetsToTry {
+		// Log which preset we're trying
+		if presetID != nil {
+			for _, p := range allPresets {
+				if p.ID == *presetID {
+					log.Printf("Scheduler: trying preset %d/%d: '%s' (res=%s, src=%s)", 
+						presetIdx+1, len(presetsToTry), p.Name, p.Resolution, p.Source)
+					break
+				}
+			}
+		} else {
+			log.Printf("Scheduler: trying preset %d/%d: <no preset - accept all>", presetIdx+1, len(presetsToTry))
+		}
+
 		scoredResults := s.scoreResultsWithPreset(results, presetID)
+
+		// Count how many passed vs rejected
+		passed := 0
+		for _, r := range scoredResults {
+			if !r.Rejected {
+				passed++
+			}
+		}
+		log.Printf("Scheduler: %d/%d results passed preset filter", passed, len(scoredResults))
 
 		// Find best non-rejected, non-blocklisted result for this preset
 		for i := range scoredResults {
@@ -1230,77 +1252,153 @@ func (s *Scheduler) passesReleaseFilters(releaseName string, presetID int64) boo
 }
 
 // matchesPreset checks if a parsed release matches the quality preset criteria
+// This function enforces strict matching - releases that don't match are rejected
+// Fallback to lower quality presets happens at the caller level
 func (s *Scheduler) matchesPreset(parsed *parser.ParsedRelease, preset *database.QualityPreset) (bool, string) {
 	if preset == nil {
 		return true, "" // No preset means accept all
 	}
 
-	// Check resolution - use minimum resolution instead of exact match
-	// This allows 4K presets to grab 1080p as fallback when 4K isn't available
-	// Resolution is used for scoring (higher = better), not strict filtering
-	minResolution := "720p" // Default minimum acceptable resolution
-
-	// Resolution priority order (higher = better quality)
+	// Resolution priority map (higher = better quality)
 	resOrder := map[string]int{
 		"2160p": 4, "4k": 4, "uhd": 4,
 		"1080p": 3, "1080i": 3,
 		"720p": 2,
 		"480p": 1, "sd": 1,
+		"any": 0, "": 0,
 	}
 
-	releaseRes := strings.ToLower(parsed.Resolution)
-	releaseOrder := resOrder[releaseRes]
-	if releaseOrder == 0 {
-		// Unknown resolution - accept but treat as low quality
-		releaseOrder = 1
+	// 1. CHECK RESOLUTION - Release must meet preset's target resolution
+	if preset.Resolution != "" && preset.Resolution != "any" {
+		releaseRes := strings.ToLower(parsed.Resolution)
+		presetRes := strings.ToLower(preset.Resolution)
+		
+		// Normalize 4k variants
+		if presetRes == "4k" || presetRes == "uhd" {
+			presetRes = "2160p"
+		}
+		if releaseRes == "4k" || releaseRes == "uhd" {
+			releaseRes = "2160p"
+		}
+		
+		releaseOrder := resOrder[releaseRes]
+		presetOrder := resOrder[presetRes]
+		
+		// Release must be at or above the preset's target resolution
+		if releaseOrder < presetOrder {
+			return false, fmt.Sprintf("resolution %s below preset requirement %s", parsed.Resolution, preset.Resolution)
+		}
 	}
 
-	minOrder := resOrder[minResolution]
-	if releaseOrder < minOrder {
-		return false, fmt.Sprintf("resolution below minimum: %s (minimum: %s)", parsed.Resolution, minResolution)
+	// 2. CHECK SOURCE - Release must match preset's source requirement
+	if preset.Source != "" && preset.Source != "any" {
+		releaseSource := strings.ToLower(parsed.Source)
+		presetSource := strings.ToLower(preset.Source)
+		
+		// Normalize source names
+		sourceNormalize := map[string]string{
+			"web-dl": "webdl", "web": "webdl",
+			"blu-ray": "bluray", "bdrip": "bluray", "brrip": "bluray",
+			"dvdrip": "dvd",
+		}
+		if norm, ok := sourceNormalize[releaseSource]; ok {
+			releaseSource = norm
+		}
+		if norm, ok := sourceNormalize[presetSource]; ok {
+			presetSource = norm
+		}
+		
+		// For strict matching: source must match exactly
+		// Exception: bluray preset can accept remux (remux is higher quality bluray)
+		sourceMatches := releaseSource == presetSource
+		if presetSource == "bluray" && releaseSource == "remux" {
+			sourceMatches = true
+		}
+		
+		if !sourceMatches {
+			return false, fmt.Sprintf("source %s doesn't match preset requirement %s", parsed.Source, preset.Source)
+		}
 	}
 
-	// Source and codec are now preference-based, not rejection-based
-	// Scoring handles the preference (remux > bluray > web > hdtv)
-	// We only reject truly bad sources like CAM, TS, WORKPRINT
-	releaseSource := strings.ToLower(parsed.Source)
-	badSources := map[string]bool{
-		"cam": true, "ts": true, "tc": true, "screener": true,
-		"dvdscr": true, "r5": true, "workprint": true,
-	}
-	if badSources[releaseSource] {
-		return false, fmt.Sprintf("unacceptable source: %s", parsed.Source)
-	}
-
-	// Codec check is also preference-based now
-	// All modern codecs (hevc, av1, avc) are acceptable, scoring handles preference
-	releaseCodec := strings.ToLower(parsed.Codec)
-	badCodecs := map[string]bool{
-		"xvid": true, "divx": true, "mpeg2": true,
-	}
-	if badCodecs[releaseCodec] {
-		return false, fmt.Sprintf("unacceptable codec: %s", parsed.Codec)
-	}
-
-	// Check HDR formats (if preset has specific requirements)
+	// 3. CHECK HDR - If preset specifies HDR formats, release must have one of them
 	if len(preset.HDRFormats) > 0 {
 		releaseHDR := strings.ToLower(parsed.HDR)
-		hasMatchingHDR := false
+		matched := false
+		hasAny := false
+		
 		for _, hdr := range preset.HDRFormats {
-			if strings.EqualFold(hdr, releaseHDR) || strings.EqualFold(hdr, "any") {
-				hasMatchingHDR = true
+			hdrLower := strings.ToLower(hdr)
+			if hdrLower == "any" {
+				hasAny = true
+				matched = true
+				break
+			}
+			if hdrLower == "sdr" && releaseHDR == "" {
+				matched = true
+				break
+			}
+			if releaseHDR != "" && strings.Contains(releaseHDR, hdrLower) {
+				matched = true
 				break
 			}
 		}
-		if !hasMatchingHDR && releaseHDR != "" {
-			// Only reject if we have HDR requirements and release has different HDR
-			// If release has no HDR, that's okay (SDR fallback)
+		
+		// If preset requires specific HDR and release doesn't match, reject
+		// But if release has no HDR (SDR), accept as fallback unless preset explicitly lists formats
+		if !matched && !hasAny {
+			if releaseHDR != "" {
+				return false, fmt.Sprintf("HDR format %s not in preset requirements %v", parsed.HDR, preset.HDRFormats)
+			}
+			// SDR release with HDR preset - reject only if preset doesn't include SDR option
+			// For now, allow SDR as fallback
 		}
 	}
 
-	// Check minimum seeders
+	// 4. CHECK AUDIO FORMATS - If preset specifies audio, release should match
+	if len(preset.AudioFormats) > 0 {
+		releaseAudio := strings.ToLower(parsed.AudioFormat)
+		matched := false
+		
+		for _, audio := range preset.AudioFormats {
+			audioLower := strings.ToLower(audio)
+			if audioLower == "any" {
+				matched = true
+				break
+			}
+			if releaseAudio != "" && strings.Contains(releaseAudio, audioLower) {
+				matched = true
+				break
+			}
+		}
+		
+		// If release has audio info and doesn't match, reject
+		// If release has no audio info, accept (parser might not have detected it)
+		if !matched && releaseAudio != "" {
+			return false, fmt.Sprintf("audio format %s not in preset requirements %v", parsed.AudioFormat, preset.AudioFormats)
+		}
+	}
+
+	// 5. ALWAYS REJECT BAD SOURCES (CAM, TS, etc.)
+	badSources := map[string]bool{
+		"cam": true, "ts": true, "tc": true, "telesync": true,
+		"screener": true, "dvdscr": true, "r5": true, 
+		"workprint": true, "hdts": true, "hdtc": true,
+	}
+	if badSources[strings.ToLower(parsed.Source)] {
+		return false, fmt.Sprintf("unacceptable source: %s", parsed.Source)
+	}
+
+	// 6. REJECT BAD CODECS
+	badCodecs := map[string]bool{
+		"xvid": true, "divx": true, "mpeg2": true, "mpeg4": true,
+	}
+	if badCodecs[strings.ToLower(parsed.Codec)] {
+		return false, fmt.Sprintf("unacceptable codec: %s", parsed.Codec)
+	}
+
+	// 7. CHECK MINIMUM SEEDERS
 	if preset.MinSeeders > 0 && parsed.Seeders > 0 && parsed.Seeders < preset.MinSeeders {
-		return false, fmt.Sprintf("insufficient seeders: want %d+, got %d", preset.MinSeeders, parsed.Seeders)
+		return false, fmt.Sprintf("insufficient seeders: %d < %d required", parsed.Seeders, preset.MinSeeders)
 	}
 
 	return true, ""
@@ -1314,6 +1412,14 @@ func (s *Scheduler) scoreResultsWithPreset(results []indexer.SearchResult, prese
 		if err == nil {
 			preset = p
 		}
+	}
+
+	// Log which preset is being evaluated
+	if preset != nil {
+		log.Printf("Scheduler: scoring %d results against preset '%s' (res=%s, src=%s)", 
+			len(results), preset.Name, preset.Resolution, preset.Source)
+	} else {
+		log.Printf("Scheduler: scoring %d results with no preset (accept all)", len(results))
 	}
 
 	var scoredResults []indexer.ScoredSearchResult
@@ -1346,6 +1452,7 @@ func (s *Scheduler) scoreResultsWithPreset(results []indexer.SearchResult, prese
 		if !matches {
 			scored.Rejected = true
 			scored.RejectionReason = reason
+			log.Printf("Scheduler: REJECTED '%s' - %s", result.Title, reason)
 		}
 
 		// Check for blocked releases
@@ -2064,18 +2171,41 @@ func calculateTitleScore(releaseTitle, wantedTitle string) int {
 	return levenScore
 }
 
-// sortPresetsByQuality sorts presets by quality priority (highest quality first)
-func sortPresetsByQuality(presets []database.QualityPreset) []database.QualityPreset {
+// sortPresetsByPriority sorts presets by their Priority field (lower = higher priority = try first)
+// This allows users to control the exact fallback order
+func sortPresetsByPriority(presets []database.QualityPreset) []database.QualityPreset {
 	sorted := make([]database.QualityPreset, len(presets))
 	copy(sorted, presets)
 
-	// Quality priority map (higher = better)
+	// Sort by Priority field (lower number = higher priority)
+	// If Priority is 0 or equal, fall back to quality-based sorting
+	for i := 0; i < len(sorted)-1; i++ {
+		for j := i + 1; j < len(sorted); j++ {
+			// Primary sort: by Priority field (lower = first)
+			if sorted[j].Priority < sorted[i].Priority {
+				sorted[i], sorted[j] = sorted[j], sorted[i]
+			} else if sorted[j].Priority == sorted[i].Priority {
+				// Secondary sort: by quality (higher quality first)
+				scoreI := getQualityScore(sorted[i])
+				scoreJ := getQualityScore(sorted[j])
+				if scoreJ > scoreI {
+					sorted[i], sorted[j] = sorted[j], sorted[i]
+				}
+			}
+		}
+	}
+
+	return sorted
+}
+
+// getQualityScore calculates a quality score for a preset based on resolution and source
+func getQualityScore(preset database.QualityPreset) int {
 	resPriority := map[string]int{
 		"2160p": 100, "4k": 100, "uhd": 100,
 		"1080p": 80, "1080i": 75,
 		"720p": 60,
 		"480p": 40, "sd": 40,
-		"any": 50, "": 50, // "any" or empty goes in the middle
+		"any": 50, "": 50,
 	}
 
 	sourcePriority := map[string]int{
@@ -2088,24 +2218,15 @@ func sortPresetsByQuality(presets []database.QualityPreset) []database.QualityPr
 		"any": 50, "": 50,
 	}
 
-	// Bubble sort by quality priority
-	for i := 0; i < len(sorted)-1; i++ {
-		for j := i + 1; j < len(sorted); j++ {
-			// Calculate priority score for each preset
-			scoreI := resPriority[strings.ToLower(sorted[i].Resolution)] * 10
-			scoreI += sourcePriority[strings.ToLower(sorted[i].Source)]
+	score := resPriority[strings.ToLower(preset.Resolution)] * 10
+	score += sourcePriority[strings.ToLower(preset.Source)]
+	return score
+}
 
-			scoreJ := resPriority[strings.ToLower(sorted[j].Resolution)] * 10
-			scoreJ += sourcePriority[strings.ToLower(sorted[j].Source)]
-
-			// Higher score = higher quality, should come first
-			if scoreJ > scoreI {
-				sorted[i], sorted[j] = sorted[j], sorted[i]
-			}
-		}
-	}
-
-	return sorted
+// sortPresetsByQuality sorts presets by quality priority (highest quality first)
+// DEPRECATED: Use sortPresetsByPriority instead for user-controlled fallback order
+func sortPresetsByQuality(presets []database.QualityPreset) []database.QualityPreset {
+	return sortPresetsByPriority(presets)
 }
 
 // runTraktSyncTask syncs watch history with Trakt.tv for all enabled users
