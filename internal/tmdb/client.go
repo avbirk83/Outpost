@@ -254,14 +254,31 @@ type SeasonDetails struct {
 }
 
 type EpisodeInfo struct {
-	ID            int64   `json:"id"`
-	EpisodeNumber int     `json:"episode_number"`
-	Name          string  `json:"name"`
-	Overview      string  `json:"overview"`
-	AirDate       string  `json:"air_date"`
-	Runtime       int     `json:"runtime"`
-	StillPath     string  `json:"still_path"`
-	VoteAverage   float64 `json:"vote_average"`
+	ID            int64              `json:"id"`
+	EpisodeNumber int                `json:"episode_number"`
+	Name          string             `json:"name"`
+	Overview      string             `json:"overview"`
+	AirDate       string             `json:"air_date"`
+	Runtime       int                `json:"runtime"`
+	StillPath     string             `json:"still_path"`
+	VoteAverage   float64            `json:"vote_average"`
+	GuestStars    []EpisodeGuestStar `json:"guest_stars,omitempty"`
+	Crew          []EpisodeCrew      `json:"crew,omitempty"`
+}
+
+type EpisodeGuestStar struct {
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`
+	Character   string `json:"character"`
+	ProfilePath string `json:"profile_path"`
+}
+
+type EpisodeCrew struct {
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`
+	Job         string `json:"job"`
+	Department  string `json:"department"`
+	ProfilePath string `json:"profile_path"`
 }
 
 // Content rating types

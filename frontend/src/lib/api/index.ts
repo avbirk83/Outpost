@@ -77,7 +77,10 @@ export {
 	getChapters,
 	getSkipSegments,
 	saveSkipSegment,
-	deleteSkipSegment
+	deleteSkipSegment,
+	getMediaSegments,
+	saveMediaSegment,
+	deleteMediaSegment
 } from './streaming';
 export type {
 	VideoStream,
@@ -86,7 +89,8 @@ export type {
 	MediaInfo,
 	Chapter,
 	SkipSegment,
-	SkipSegments
+	SkipSegments,
+	MediaSegment
 } from './streaming';
 
 // Progress and Watch State
@@ -453,3 +457,7 @@ export type {
 	TraktSyncResult,
 	TraktTestResult
 } from './trakt';
+
+// Intro Detection
+export { detectShowIntros } from './media_intro';
+export type { IntroDetectionResult } from './media_intro';

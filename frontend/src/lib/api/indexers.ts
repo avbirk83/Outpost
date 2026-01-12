@@ -23,6 +23,7 @@ export interface Indexer {
 	supportsImdb?: boolean;
 	supportsTmdb?: boolean;
 	supportsTvdb?: boolean;
+	contentTypes?: string; // Comma-separated: movie,tv,anime - restricts what this indexer searches for
 }
 
 export interface ProwlarrConfig {

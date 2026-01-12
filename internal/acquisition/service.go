@@ -2,6 +2,7 @@ package acquisition
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -177,6 +178,15 @@ func (s *Service) handleReadyForImport(td *download.TrackedDownload) {
 	}
 
 	log.Printf("Successfully imported: %s -> %s", td.Title, importPath)
+
+	// Remove from wanted list (so it doesn't show as "searching" in Activity)
+	if td.MediaID != nil {
+		if err := s.db.DeleteWantedByTmdb(td.MediaType, *td.MediaID); err != nil {
+			log.Printf("Error removing from wanted list: %v", err)
+		} else {
+			log.Printf("Removed from wanted list: %s (tmdbID=%d)", td.Title, *td.MediaID)
+		}
+	}
 
 	// Send notifications
 	if s.notifications != nil {
@@ -369,28 +379,32 @@ func (s *Service) handleImportFailure(td *download.TrackedDownload, err error) {
 func (s *Service) handleReadyToRemove(td *download.TrackedDownload) {
 	log.Printf("Download ready for removal (ratio: %.2f, time: %v): %s",
 		td.Ratio, td.SeedingTime, td.Title)
-	s.removeFromClient(td, false)
+	if err := s.removeFromClient(td, false); err != nil {
+		log.Printf("Failed to remove completed download from client: %v", err)
+	}
 }
 
 // removeFromClient removes a download from the client
-func (s *Service) removeFromClient(td *download.TrackedDownload, deleteFiles bool) {
+func (s *Service) removeFromClient(td *download.TrackedDownload, deleteFiles bool) error {
 	clientConfig, err := s.db.GetDownloadClient(td.DownloadClientID)
 	if err != nil {
 		log.Printf("Error getting download client: %v", err)
-		return
+		return fmt.Errorf("failed to get download client: %w", err)
 	}
 
 	client, err := downloadclient.New(clientConfig)
 	if err != nil {
 		log.Printf("Error creating download client: %v", err)
-		return
+		return fmt.Errorf("failed to create download client: %w", err)
 	}
 
 	if err := client.DeleteDownload(td.ExternalID, deleteFiles); err != nil {
 		log.Printf("Error removing from client: %v", err)
-	} else {
-		log.Printf("Removed from client: %s", td.Title)
+		return fmt.Errorf("failed to remove from client: %w", err)
 	}
+
+	log.Printf("Removed from client: %s", td.Title)
+	return nil
 }
 
 // GrabRelease sends a release to the download client and tracks it
@@ -563,21 +577,45 @@ func (s *Service) GetTrackedDownload(id int64) (*download.TrackedDownload, error
 
 // DeleteTrackedDownload removes a tracked download, optionally deleting from client
 func (s *Service) DeleteTrackedDownload(id int64, deleteFromClient bool, deleteFiles bool) error {
+	log.Printf("DeleteTrackedDownload: id=%d, deleteFromClient=%v, deleteFiles=%v", id, deleteFromClient, deleteFiles)
+
 	td, err := s.monitoring.GetTrackedDownload(id)
 	if err != nil {
+		log.Printf("DeleteTrackedDownload: failed to get tracked download: %v", err)
 		return err
 	}
 	if td == nil {
+		log.Printf("DeleteTrackedDownload: tracked download %d not found (already deleted?)", id)
 		return nil // Already deleted
 	}
 
+	log.Printf("DeleteTrackedDownload: found download - title=%s, externalID=%s, clientID=%d", td.Title, td.ExternalID, td.DownloadClientID)
+
+	var clientErr error
 	// Remove from download client if requested
 	if deleteFromClient {
-		s.removeFromClient(td, deleteFiles)
+		log.Printf("DeleteTrackedDownload: removing from client...")
+		clientErr = s.removeFromClient(td, deleteFiles)
+		if clientErr != nil {
+			log.Printf("DeleteTrackedDownload: client removal failed: %v", clientErr)
+		} else {
+			log.Printf("DeleteTrackedDownload: client removal successful")
+		}
 	}
 
-	// Delete from database
-	return s.monitoring.DeleteTrackedDownload(id)
+	// Delete from database (even if client delete failed, to avoid orphaned records)
+	if err := s.monitoring.DeleteTrackedDownload(id); err != nil {
+		log.Printf("DeleteTrackedDownload: failed to delete from database: %v", err)
+		return err
+	}
+	log.Printf("DeleteTrackedDownload: deleted from database")
+
+	// Return client error after database is cleaned up (so user knows to check manually)
+	if clientErr != nil {
+		return clientErr
+	}
+
+	return nil
 }
 
 // --- Helper functions ---

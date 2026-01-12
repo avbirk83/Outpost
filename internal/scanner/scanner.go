@@ -722,6 +722,7 @@ func (s *Scanner) scanTV(lib *database.Library) error {
 	defer s.clearProgress()
 
 	var added, skipped, errors int
+	modifiedSeasons := make(map[int64]bool) // Track seasons with new episodes
 
 	// Phase 0: Clean up orphaned entries (files that no longer exist)
 	s.cleanupOrphanedEpisodes(lib.ID)
@@ -890,14 +891,17 @@ func (s *Scanner) scanTV(lib *database.Library) error {
 				} else {
 					log.Printf("Added episode: %s S%02dE%02d", folderInfo.Title, parseResult.Season, parseResult.Episode)
 				}
+				modifiedSeasons[season.ID] = true
 				// Detect and store quality from filename
 				s.detectAndStoreQuality(episode.ID, "episode", filepath.Base(path), path)
-				// Extract subtitles, chapters, and auto-download subtitles in background
-				go func(ep *database.Episode, p string, showName string, sNum, eNum int) {
+				// Extract subtitles, chapters, fingerprint, and auto-download subtitles in background
+				go func(ep *database.Episode, p string, showName string, sNum, eNum int, seasonID int64) {
 					s.ExtractSubtitles(p)
 					s.ExtractChapters("episode", ep.ID, p)
 					s.AutoDownloadSubtitles("episode", p, showName, 0, sNum, eNum)
-				}(episode, path, folderInfo.Title, parseResult.Season, parseResult.Episode)
+					// Extract audio fingerprint for intro detection
+					s.ExtractEpisodeFingerprint(ep)
+				}(episode, path, folderInfo.Title, parseResult.Season, parseResult.Episode, season.ID)
 			}
 		}
 
@@ -910,7 +914,38 @@ func (s *Scanner) scanTV(lib *database.Library) error {
 	}
 
 	s.setResult(lib.Name, added, skipped, errors)
+
+	// Trigger intro detection for modified seasons in background
+	if len(modifiedSeasons) > 0 && CheckFFmpegChromaprint() {
+		go func(seasons map[int64]bool) {
+			detector := NewIntroDetector(s.db)
+			for seasonID := range seasons {
+				log.Printf("Running intro detection for season %d", seasonID)
+				if err := detector.DetectIntroForSeason(seasonID); err != nil {
+					log.Printf("Intro detection failed for season %d: %v", seasonID, err)
+				}
+			}
+		}(modifiedSeasons)
+	}
+
 	return nil
+}
+
+// ExtractEpisodeFingerprint extracts audio fingerprint for an episode (for intro detection)
+func (s *Scanner) ExtractEpisodeFingerprint(episode *database.Episode) {
+	if episode == nil || episode.Path == "" {
+		return
+	}
+
+	// Check if chromaprint is available
+	if !CheckFFmpegChromaprint() {
+		return
+	}
+
+	detector := NewIntroDetector(s.db)
+	if err := detector.AnalyzeEpisode(episode); err != nil {
+		log.Printf("Failed to extract fingerprint for episode %d: %v", episode.ID, err)
+	}
 }
 
 func (s *Scanner) scanMusic(lib *database.Library) error {
@@ -1676,6 +1711,174 @@ func (s *Scanner) ExtractChapters(mediaType string, mediaID int64, videoPath str
 	} else {
 		log.Printf("Saved %d chapters for %s", len(chapters), baseName)
 	}
+
+	// Also detect intro/credits segments from chapter titles (for episodes)
+	if mediaType == "episode" {
+		s.DetectSegmentsFromChapters(mediaID, chapters)
+	}
+}
+
+// DetectSegmentsFromChapters analyzes chapter titles to find intro/credits segments
+func (s *Scanner) DetectSegmentsFromChapters(episodeID int64, chapters []database.Chapter) {
+	for _, ch := range chapters {
+		title := strings.ToLower(ch.Title)
+		if title == "" {
+			continue
+		}
+
+		var segmentType string
+
+		// Check for intro markers
+		if matchesIntro(title) {
+			segmentType = "intro"
+		} else if matchesCredits(title) {
+			segmentType = "credits"
+		} else if matchesRecap(title) {
+			segmentType = "recap"
+		} else if matchesPreview(title) {
+			segmentType = "preview"
+		}
+
+		if segmentType != "" {
+			segment := &database.MediaSegment{
+				EpisodeID:    episodeID,
+				SegmentType:  segmentType,
+				StartSeconds: ch.StartTime,
+				EndSeconds:   ch.EndTime,
+				Confidence:   1.0, // High confidence - from explicit chapter marker
+				Source:       "chapter",
+			}
+			if err := s.db.CreateMediaSegment(segment); err != nil {
+				log.Printf("Failed to save %s segment for episode %d: %v", segmentType, episodeID, err)
+			} else {
+				log.Printf("Detected %s segment from chapter '%s' (%.1f-%.1f)", segmentType, ch.Title, ch.StartTime, ch.EndTime)
+			}
+		}
+	}
+}
+
+// DetectSegmentsFromFile extracts chapters and detects segments for an episode
+func (s *Scanner) DetectSegmentsFromFile(episodeID int64, videoPath string) {
+	baseName := filepath.Base(videoPath)
+
+	// Get chapter info using ffprobe
+	cmd := exec.Command("ffprobe",
+		"-v", "quiet",
+		"-print_format", "json",
+		"-show_chapters",
+		videoPath,
+	)
+	output, err := cmd.Output()
+	if err != nil {
+		// Not an error - many files don't have chapters
+		return
+	}
+
+	var probeResult struct {
+		Chapters []struct {
+			ID        int               `json:"id"`
+			TimeBase  string            `json:"time_base"`
+			Start     int64             `json:"start"`
+			StartTime string            `json:"start_time"`
+			End       int64             `json:"end"`
+			EndTime   string            `json:"end_time"`
+			Tags      map[string]string `json:"tags"`
+		} `json:"chapters"`
+	}
+	if err := json.Unmarshal(output, &probeResult); err != nil {
+		log.Printf("Failed to parse ffprobe chapters for segment detection in %s: %v", baseName, err)
+		return
+	}
+
+	if len(probeResult.Chapters) == 0 {
+		return
+	}
+
+	// Convert to Chapter type and detect segments
+	var chapters []database.Chapter
+	for i, ch := range probeResult.Chapters {
+		startTime, _ := strconv.ParseFloat(ch.StartTime, 64)
+		endTime, _ := strconv.ParseFloat(ch.EndTime, 64)
+		title := ""
+		if t, ok := ch.Tags["title"]; ok {
+			title = t
+		}
+		chapters = append(chapters, database.Chapter{
+			MediaType:    "episode",
+			MediaID:      episodeID,
+			ChapterIndex: i,
+			Title:        title,
+			StartTime:    startTime,
+			EndTime:      endTime,
+		})
+	}
+
+	s.DetectSegmentsFromChapters(episodeID, chapters)
+}
+
+// matchesIntro checks if a chapter title indicates an intro/opening
+func matchesIntro(title string) bool {
+	patterns := []string{
+		"intro", "opening", "op ", "op.", "op:",
+		"オープニング", // Japanese: Opening
+		"theme", "title sequence",
+	}
+	for _, p := range patterns {
+		if strings.Contains(title, p) {
+			return true
+		}
+	}
+	// Exact matches
+	if title == "op" {
+		return true
+	}
+	return false
+}
+
+// matchesCredits checks if a chapter title indicates credits/ending
+func matchesCredits(title string) bool {
+	patterns := []string{
+		"credits", "ending", "ed ", "ed.", "ed:",
+		"outro", "end credits",
+		"エンディング", // Japanese: Ending
+	}
+	for _, p := range patterns {
+		if strings.Contains(title, p) {
+			return true
+		}
+	}
+	// Exact matches
+	if title == "ed" {
+		return true
+	}
+	return false
+}
+
+// matchesRecap checks if a chapter title indicates a recap
+func matchesRecap(title string) bool {
+	patterns := []string{
+		"recap", "previously", "last time",
+	}
+	for _, p := range patterns {
+		if strings.Contains(title, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchesPreview checks if a chapter title indicates a preview/next episode
+func matchesPreview(title string) bool {
+	patterns := []string{
+		"preview", "next time", "next episode",
+		"予告", // Japanese: Preview
+	}
+	for _, p := range patterns {
+		if strings.Contains(title, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // AutoDownloadSubtitles downloads subtitles from OpenSubtitles if auto-download is enabled

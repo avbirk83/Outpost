@@ -30,6 +30,7 @@
 	import ScrollSection from '$lib/components/containers/ScrollSection.svelte';
 	import MediaCard from '$lib/components/media/MediaCard.svelte';
 	import TrailerModal from '$lib/components/TrailerModal.svelte';
+	import RequestModal from '$lib/components/RequestModal.svelte';
 	import IconButton from '$lib/components/IconButton.svelte';
 
 	function formatShortDate(dateStr: string | undefined): string {
@@ -72,6 +73,8 @@
 	let error: string | null = $state(null);
 	let showTrailerModal = $state(false);
 	let trailerHero: DiscoverItem | null = $state(null); // Capture hero when opening trailer
+	let showRequestModal = $state(false);
+	let requestHero: DiscoverItem | null = $state(null); // Capture hero when opening request modal
 
 	const currentHero = $derived(() => heroItems[heroIndex] || null);
 
@@ -202,11 +205,20 @@
 		return heroWatchlistStatus.get(getHeroWatchlistKey(hero)) || false;
 	}
 
-	async function handleHeroRequest() {
+	function handleHeroRequest() {
 		const hero = currentHero();
 		if (!hero || requestingHero) return;
+		requestHero = hero;
+		showRequestModal = true;
+	}
 
+	async function handleRequestConfirm(qualityPresetId: number, selectedSeasons?: number[]) {
+		const hero = requestHero;
+		if (!hero) return;
+
+		showRequestModal = false;
 		requestingHero = true;
+
 		try {
 			const title = hero.title || hero.name || '';
 			const dateStr = hero.releaseDate || hero.firstAirDate;
@@ -218,7 +230,9 @@
 				title,
 				year,
 				overview: hero.overview || undefined,
-				posterPath: hero.posterPath || undefined
+				posterPath: hero.posterPath || undefined,
+				qualityPresetId,
+				seasons: selectedSeasons
 			});
 			heroItems = heroItems.map(item => {
 				if (item.id === hero.id && item.mediaType === hero.mediaType) {
@@ -242,6 +256,7 @@
 			}
 		} finally {
 			requestingHero = false;
+			requestHero = null;
 		}
 	}
 
@@ -626,5 +641,23 @@
 		tmdbId={trailerHero.id}
 		mediaType={trailerHero.mediaType === 'movie' ? 'movie' : 'tv'}
 		title={trailerHero.title || trailerHero.name}
+	/>
+{/if}
+
+<!-- Request Modal -->
+{#if showRequestModal && requestHero}
+	<RequestModal
+		item={{
+			title: requestHero.title || requestHero.name || '',
+			year: (requestHero.releaseDate || requestHero.firstAirDate) ? parseInt((requestHero.releaseDate || requestHero.firstAirDate || '').substring(0, 4)) : undefined,
+			type: requestHero.mediaType === 'movie' ? 'movie' : 'show',
+			posterPath: requestHero.posterPath,
+			backdropPath: requestHero.backdropPath,
+			overview: requestHero.overview,
+			tmdbId: requestHero.id
+		}}
+		mode="request"
+		onConfirm={handleRequestConfirm}
+		onCancel={() => { showRequestModal = false; requestHero = null; }}
 	/>
 {/if}

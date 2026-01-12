@@ -8,7 +8,7 @@
 		getShowSuggestions, addToWatchlist, removeFromWatchlist, isInWatchlist,
 		deleteEpisode, getShowQuality, setShowQuality, getQualityPresets,
 		getSkipSegments, saveSkipSegment, deleteSkipSegment,
-		getMissingEpisodes, requestMissingEpisodes,
+		getMissingEpisodes, requestMissingEpisodes, detectShowIntros,
 		type ShowDetail, type QualityProfile, type TMDBShowResult, type QualityInfo, type QualityPreset, type SkipSegments,
 		type MissingEpisodesResult, type MissingEpisode
 	} from '$lib/api';
@@ -21,6 +21,7 @@
 	import Dropdown from '$lib/components/Dropdown.svelte';
 	import AddToCollectionButton from '$lib/components/AddToCollectionButton.svelte';
 	import SubtitleSearchModal from '$lib/components/SubtitleSearchModal.svelte';
+	import SeasonEpisodeList from '$lib/components/SeasonEpisodeList.svelte';
 
 	let show: ShowDetail | null = $state(null);
 	let loading = $state(true);
@@ -66,6 +67,9 @@
 	let requestingMissing = $state(false);
 	let requestingSeasonMissing = $state<number | null>(null);
 	let showMissingSection = $state(false);
+
+	// Intro detection
+	let detectingIntros = $state(false);
 
 	// Common language options for audio/subtitle preferences
 	const languageOptions = [
@@ -209,16 +213,26 @@
 		}
 	}
 
-	async function handleToggleEpisodeWatched(episodeId: number, runtime?: number, e?: Event) {
-		e?.stopPropagation();
+	async function handleToggleEpisodeWatched(episodeId: number) {
 		togglingEpisode = episodeId;
+		// Find the episode runtime
+		let runtime = 2400; // default 40 minutes
+		if (show?.seasons) {
+			for (const season of show.seasons) {
+				const ep = season.episodes.find(e => e.id === episodeId);
+				if (ep?.runtime) {
+					runtime = ep.runtime * 60;
+					break;
+				}
+			}
+		}
 		try {
 			if (watchedEpisodes.has(episodeId)) {
 				await markAsUnwatched('episode', episodeId);
 				watchedEpisodes.delete(episodeId);
 				watchedEpisodes = new Set(watchedEpisodes);
 			} else {
-				await markAsWatched('episode', episodeId, runtime ? runtime * 60 : 2400);
+				await markAsWatched('episode', episodeId, runtime);
 				watchedEpisodes.add(episodeId);
 				watchedEpisodes = new Set(watchedEpisodes);
 			}
@@ -230,34 +244,6 @@
 	}
 
 	let deletingEpisode: number | null = $state(null);
-	let confirmingDeleteEpisodeId: number | null = $state(null);
-
-	function handleDeleteEpisodeClick(episodeId: number, e: Event) {
-		e.stopPropagation();
-		confirmingDeleteEpisodeId = episodeId;
-	}
-
-	function cancelDeleteEpisode(e: Event) {
-		e.stopPropagation();
-		confirmingDeleteEpisodeId = null;
-	}
-
-	async function confirmDeleteEpisode(episodeId: number, e: Event) {
-		e.stopPropagation();
-		deletingEpisode = episodeId;
-		confirmingDeleteEpisodeId = null;
-		try {
-			await deleteEpisode(episodeId);
-			// Refresh show data to update the episode list
-			if (show) {
-				show = await getShow(show.id);
-			}
-		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to delete episode';
-		} finally {
-			deletingEpisode = null;
-		}
-	}
 
 	async function handleToggleWatchlist() {
 		if (!show?.tmdbId) return;
@@ -351,6 +337,29 @@
 		}
 	}
 
+	function handleEpisodePlay(episodeId: number) {
+		goto(`/watch/episode/${episodeId}`);
+	}
+
+	function handleEpisodeSubtitleSearch(episode: { id: number; title: string; seasonNumber: number; episodeNumber: number }) {
+		subtitleSearchEpisode = episode;
+	}
+
+	async function handleEpisodeDelete(episodeId: number) {
+		deletingEpisode = episodeId;
+		try {
+			await deleteEpisode(episodeId);
+			// Refresh show data to update the episode list
+			if (show) {
+				show = await getShow(show.id);
+			}
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'Failed to delete episode';
+		} finally {
+			deletingEpisode = null;
+		}
+	}
+
 	async function handleToggleSeasonMonitoring(seasonNumber: number) {
 		if (!show) return;
 		togglingSeasonMonitor = seasonNumber;
@@ -376,6 +385,22 @@
 	}
 
 	const selectedSeason = $derived(show?.seasons?.[selectedSeasonIndex]);
+
+	// Transform seasons for SeasonEpisodeList component
+	const librarySeasons = $derived(
+		show?.seasons?.map(s => ({
+			seasonNumber: s.seasonNumber,
+			episodes: s.episodes.map(ep => ({
+				id: ep.id,
+				episodeNumber: ep.episodeNumber,
+				title: ep.title,
+				overview: ep.overview,
+				airDate: ep.airDate,
+				runtime: ep.runtime,
+				stillPath: ep.stillPath
+			}))
+		})) || []
+	);
 
 	const nextEpisode = $derived(() => {
 		if (!show?.seasons) return null;
@@ -603,6 +628,27 @@
 			toast.error('Failed to request missing episodes');
 		} finally {
 			requestingSeasonMissing = null;
+		}
+	}
+
+	async function handleDetectIntros() {
+		if (!show) return;
+		detectingIntros = true;
+		try {
+			const result = await detectShowIntros(show.id);
+			if (result.success) {
+				const completed = result.results.filter(r => r.status === 'completed').length;
+				const failed = result.results.filter(r => r.status === 'failed').length;
+				if (failed > 0) {
+					toast.warning();
+				} else {
+					toast.success();
+				}
+			}
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : 'Failed to detect intros');
+		} finally {
+			detectingIntros = false;
 		}
 	}
 
@@ -853,193 +899,24 @@
 
 		{#snippet extraSections()}
 			<!-- Episodes Section -->
-			<section class="px-[60px]">
-				<h2 class="text-lg font-semibold text-text-primary mb-4">Episodes</h2>
-
-				<!-- Season Pills -->
-				{#if show.seasons && show.seasons.length > 0}
-					<div class="flex gap-2 mb-4 overflow-x-auto pb-2 scrollbar-thin">
-						{#each show.seasons as season, i}
-							<div class="flex-shrink-0 flex items-center gap-1">
-								<button
-									onclick={() => selectedSeasonIndex = i}
-									class="px-4 py-2 rounded-l-full text-sm font-medium transition-all {selectedSeasonIndex === i
-										? 'bg-cream text-black'
-										: 'bg-glass border border-border-subtle border-r-0 text-text-secondary hover:bg-glass-hover hover:text-text-primary'}"
-								>
-									Season {season.seasonNumber}
-								</button>
-								<button
-									onclick={() => handleToggleSeasonMonitoring(season.seasonNumber)}
-									disabled={togglingSeasonMonitor === season.seasonNumber}
-									class="px-2 py-2 rounded-r-full text-sm transition-all {selectedSeasonIndex === i
-										? 'bg-cream text-black'
-										: 'bg-glass border border-border-subtle border-l-0 text-text-secondary hover:bg-glass-hover'} {monitoredSeasons.has(season.seasonNumber) ? '' : 'opacity-50'}"
-									title={monitoredSeasons.has(season.seasonNumber) ? 'Monitored (click to disable)' : 'Not monitored (click to enable)'}
-								>
-									{#if togglingSeasonMonitor === season.seasonNumber}
-										<div class="spinner-sm"></div>
-									{:else if monitoredSeasons.has(season.seasonNumber)}
-										<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-										</svg>
-									{:else}
-										<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
-										</svg>
-									{/if}
-								</button>
-							</div>
-						{/each}
-					</div>
-				{/if}
-
-				{#if selectedSeason?.episodes && selectedSeason.episodes.length > 0}
-					<div class="flex gap-3 overflow-x-auto pb-2 scrollbar-thin">
-						{#each selectedSeason.episodes as episode}
-							<div
-								class="group flex-shrink-0 w-64 rounded-xl overflow-hidden bg-bg-elevated cursor-pointer transition-all duration-300 hover:translate-y-[-6px] hover:shadow-lg"
-							>
-								<!-- Image container -->
-								<button
-									onclick={() => goto(`/watch/episode/${episode.id}`)}
-									class="relative aspect-video bg-gradient-to-br from-[#1a1a2e] to-[#2d2d44] w-full"
-								>
-									{#if episode.stillPath}
-										<img
-											src={getImageUrl(episode.stillPath)}
-											alt={episode.title}
-											class="w-full h-full object-cover"
-										/>
-									{:else if show.backdropPath}
-										<img
-											src={getImageUrl(show.backdropPath)}
-											alt={episode.title}
-											class="w-full h-full object-cover opacity-50"
-										/>
-									{/if}
-
-									<!-- Watched badge -->
-									{#if watchedEpisodes.has(episode.id)}
-										<div class="absolute top-2 right-2 px-2 py-1 rounded text-[10px] font-bold uppercase bg-green-500 text-black">
-											Watched
-										</div>
-									{/if}
-
-									<!-- Play overlay on hover -->
-									<div class="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-										<div class="w-12 h-12 rounded-full bg-glass border border-border-subtle backdrop-blur-xl flex items-center justify-center">
-											<svg class="w-6 h-6 text-text-primary ml-0.5" fill="currentColor" viewBox="0 0 24 24">
-												<path d="M8 5v14l11-7z" />
-											</svg>
-										</div>
-									</div>
-								</button>
-
-								<!-- Info section -->
-								<div class="p-3">
-									<div class="flex items-center gap-2 mb-1">
-										<span class="text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded bg-white/10 text-text-secondary">
-											S{selectedSeason.seasonNumber} E{episode.episodeNumber}
-										</span>
-										{#if episode.runtime}
-											<span class="text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded bg-white/10 text-text-secondary">
-												{episode.runtime}m
-											</span>
-										{/if}
-										{#if show.contentRating}
-											<span class="text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded bg-white/10 text-text-secondary">
-												{show.contentRating}
-											</span>
-										{/if}
-									</div>
-									<div class="flex items-center justify-between gap-2">
-										<h3 class="text-sm font-semibold text-text-primary truncate flex-1">
-											{episode.title || `Episode ${episode.episodeNumber}`}
-										</h3>
-										<!-- Episode actions -->
-										<div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-											<button
-												onclick={(e) => handleToggleEpisodeWatched(episode.id, episode.runtime, e)}
-												disabled={togglingEpisode === episode.id}
-												class="p-1.5 rounded-full transition-colors {watchedEpisodes.has(episode.id) ? 'text-green-400 hover:bg-green-500/20' : 'text-text-muted hover:bg-white/10 hover:text-text-primary'}"
-												title={watchedEpisodes.has(episode.id) ? 'Mark as unwatched' : 'Mark as watched'}
-											>
-												{#if togglingEpisode === episode.id}
-													<div class="spinner-sm"></div>
-												{:else if watchedEpisodes.has(episode.id)}
-													<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-														<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-													</svg>
-												{:else}
-													<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-														<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-														<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-													</svg>
-												{/if}
-											</button>
-											{#if user?.role === 'admin'}
-												<!-- Subtitle search button -->
-												<button
-													onclick={(e) => { e.stopPropagation(); subtitleSearchEpisode = { id: episode.id, title: episode.title || `Episode ${episode.episodeNumber}`, seasonNumber: selectedSeason?.seasonNumber || 1, episodeNumber: episode.episodeNumber }; }}
-													class="p-1.5 rounded-full text-text-muted hover:bg-purple-500/20 hover:text-purple-400 transition-colors"
-													title="Search subtitles"
-												>
-													<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-														<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
-													</svg>
-												</button>
-												{#if confirmingDeleteEpisodeId === episode.id}
-													<!-- Confirm button (checkmark) -->
-													<button
-														onclick={(e) => confirmDeleteEpisode(episode.id, e)}
-														disabled={deletingEpisode === episode.id}
-														class="p-1.5 rounded-full text-green-400 hover:bg-green-500/20 transition-colors"
-														title="Confirm delete"
-													>
-														{#if deletingEpisode === episode.id}
-															<div class="spinner-sm"></div>
-														{:else}
-															<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-																<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-															</svg>
-														{/if}
-													</button>
-													<!-- Cancel button (X) -->
-													<button
-														onclick={(e) => cancelDeleteEpisode(e)}
-														class="p-1.5 rounded-full text-text-muted hover:bg-white/10 hover:text-text-primary transition-colors"
-														title="Cancel"
-													>
-														<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-															<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-														</svg>
-													</button>
-												{:else}
-													<button
-														onclick={(e) => handleDeleteEpisodeClick(episode.id, e)}
-														disabled={deletingEpisode === episode.id}
-														class="p-1.5 rounded-full text-text-muted hover:bg-red-500/20 hover:text-red-400 transition-colors"
-														title="Delete episode"
-													>
-														<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-															<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-														</svg>
-													</button>
-												{/if}
-											{/if}
-										</div>
-									</div>
-								</div>
-							</div>
-						{/each}
-					</div>
-				{:else}
-					<div class="text-center py-12 text-text-muted">
-						<p>No episodes found for this season.</p>
-					</div>
-				{/if}
+			<section class="px-[60px] py-6">
+				<h2 class="text-xl font-semibold text-text-primary mb-4">Episodes</h2>
+				<SeasonEpisodeList
+					tmdbId={show.tmdbId}
+					librarySeasons={librarySeasons}
+					showBackdrop={show.backdropPath}
+					isLibrary={true}
+					watchedEpisodes={watchedEpisodes}
+					onPlay={handleEpisodePlay}
+					onToggleWatched={handleToggleEpisodeWatched}
+					onSubtitleSearch={handleEpisodeSubtitleSearch}
+					onDelete={handleEpisodeDelete}
+					isAdmin={user?.role === 'admin'}
+					togglingEpisodeId={togglingEpisode}
+					monitoredSeasons={monitoredSeasons}
+					onToggleSeasonMonitor={handleToggleSeasonMonitoring}
+					togglingSeasonMonitor={togglingSeasonMonitor}
+				/>
 			</section>
 
 			<!-- Missing Episodes Section -->
@@ -1163,7 +1040,24 @@
 			<!-- Skip Segments Section -->
 			{#if user?.role === 'admin'}
 				<section class="px-[60px] mt-8">
-					<h2 class="text-lg font-semibold text-text-primary mb-4">Playback Settings</h2>
+					<div class="flex items-center justify-between mb-4">
+						<h2 class="text-lg font-semibold text-text-primary">Playback Settings</h2>
+						<button
+							onclick={handleDetectIntros}
+							disabled={detectingIntros}
+							class="px-4 py-2 bg-purple-600 text-white text-sm font-medium rounded-lg hover:bg-purple-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+						>
+							{#if detectingIntros}
+								<div class="spinner-sm"></div>
+								Detecting...
+							{:else}
+								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+								</svg>
+								Auto-Detect Intros
+							{/if}
+						</button>
+					</div>
 					<p class="text-sm text-text-muted mb-4">These skip times apply to all episodes of this show.</p>
 
 					<div class="space-y-4 max-w-xl">

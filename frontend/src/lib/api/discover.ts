@@ -109,6 +109,45 @@ export interface SeasonSummary {
 	episode_count: number;
 }
 
+// Episode-level types for detailed season info
+export interface EpisodeGuestStar {
+	id: number;
+	name: string;
+	character: string;
+	profile_path: string | null;
+}
+
+export interface EpisodeCrew {
+	id: number;
+	name: string;
+	job: string;
+	department: string;
+	profile_path: string | null;
+}
+
+export interface EpisodeInfo {
+	id: number;
+	episode_number: number;
+	name: string;
+	overview: string;
+	air_date: string;
+	runtime: number;
+	still_path: string | null;
+	vote_average: number;
+	guest_stars?: EpisodeGuestStar[];
+	crew?: EpisodeCrew[];
+}
+
+export interface SeasonDetails {
+	id: number;
+	season_number: number;
+	name: string;
+	overview: string;
+	poster_path: string | null;
+	air_date: string;
+	episodes: EpisodeInfo[];
+}
+
 export interface DiscoverMovieDetail {
 	id: number;
 	title: string;
@@ -257,6 +296,13 @@ export async function getDiscoverShowDetailWithStatus(id: number): Promise<Disco
 	return response.json();
 }
 
+// Get detailed season info with episodes from TMDB
+export async function getSeasonDetails(showTmdbId: number, seasonNumber: number): Promise<SeasonDetails> {
+	const response = await apiFetch(`${API_BASE}/discover/show-season/${showTmdbId}/${seasonNumber}`);
+	if (!response.ok) throw new Error(`API error: ${response.status}`);
+	return response.json();
+}
+
 // Trailer types
 
 export interface TrailerInfo {
@@ -366,6 +412,7 @@ export interface Request {
 	backdropPath?: string;
 	qualityProfileId?: number;
 	qualityPresetId?: number;
+	seasons?: string; // JSON array of season numbers for TV shows
 	status: 'requested' | 'approved' | 'denied' | 'available';
 	statusReason?: string;
 	requestedAt: string;
@@ -391,6 +438,7 @@ export async function createRequest(request: {
 	backdropPath?: string;
 	qualityProfileId?: number;
 	qualityPresetId?: number;
+	seasons?: number[];
 }): Promise<Request> {
 	const response = await apiFetch(`${API_BASE}/requests`, {
 		method: 'POST',

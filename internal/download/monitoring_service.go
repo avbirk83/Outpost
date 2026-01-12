@@ -2,6 +2,7 @@ package download
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
 	"strings"
 	"sync"
@@ -126,6 +127,7 @@ func (m *MonitoringService) poll() {
 	for _, dl := range clientDownloads {
 		key := m.makeKey(dl.ClientID, dl.ID)
 		clientMap[key] = dl
+		log.Printf("poll: client download key=%s name=%s", key, dl.Name)
 	}
 
 	// Get active tracked downloads
@@ -135,9 +137,12 @@ func (m *MonitoringService) poll() {
 		return
 	}
 
+	log.Printf("poll: found %d client downloads, %d tracked downloads", len(clientDownloads), len(tracked))
+
 	// Update tracked downloads from client state
 	for _, td := range tracked {
 		key := m.makeKey(td.DownloadClientID, td.ExternalID)
+		log.Printf("poll: checking tracked download key=%s title=%s", key, td.Title)
 		if clientDL, ok := clientMap[key]; ok {
 			m.updateFromClient(td, clientDL)
 			delete(clientMap, key) // Remove from map so we know what's new
@@ -148,6 +153,7 @@ func (m *MonitoringService) poll() {
 	}
 
 	// Handle new downloads in clients that we're not tracking
+	log.Printf("poll: %d new downloads to track", len(clientMap))
 	for _, dl := range clientMap {
 		m.handleNewDownload(dl)
 	}
@@ -161,7 +167,7 @@ func (m *MonitoringService) poll() {
 
 // makeKey creates a unique key for client+external ID
 func (m *MonitoringService) makeKey(clientID int64, externalID string) string {
-	return string(rune(clientID)) + ":" + externalID
+	return fmt.Sprintf("%d:%s", clientID, externalID)
 }
 
 // updateFromClient updates a tracked download from client state
@@ -173,6 +179,16 @@ func (m *MonitoringService) updateFromClient(td *TrackedDownload, dl downloadcli
 	td.Ratio = dl.Ratio
 	if td.CompletedAt != nil {
 		td.SeedingTime = time.Since(*td.CompletedAt)
+	}
+
+	// If missing MediaID, try to link from grab history
+	if td.MediaID == nil {
+		if gh := m.getGrabHistoryByTitle(td.Title); gh != nil && gh.MediaID != nil {
+			td.MediaID = gh.MediaID
+			td.MediaType = gh.MediaType
+			m.repo.Update(td)
+			log.Printf("Linked existing download to grab history: %s -> mediaID=%d", td.Title, *gh.MediaID)
+		}
 	}
 
 	// Map client status to our state
@@ -246,6 +262,33 @@ func (m *MonitoringService) handleMissingFromClient(td *TrackedDownload) {
 	}
 }
 
+// grabHistoryResult represents a row from grab_history
+type grabHistoryResult struct {
+	MediaID   *int64
+	MediaType string
+	RequestID *int64
+}
+
+// getGrabHistoryByTitle looks up a grab history entry by release title
+func (m *MonitoringService) getGrabHistoryByTitle(title string) *grabHistoryResult {
+	row := m.db.QueryRow(`
+		SELECT media_id, media_type
+		FROM grab_history
+		WHERE release_title = ?
+		ORDER BY grabbed_at DESC LIMIT 1
+	`, title)
+
+	var gh grabHistoryResult
+	err := row.Scan(&gh.MediaID, &gh.MediaType)
+	if err != nil {
+		if err != sql.ErrNoRows {
+			log.Printf("Error looking up grab history: %v", err)
+		}
+		return nil
+	}
+	return &gh
+}
+
 // handleNewDownload processes a download found in client that we're not tracking
 func (m *MonitoringService) handleNewDownload(dl downloadclient.Download) {
 	// Check if we already have this download
@@ -280,6 +323,16 @@ func (m *MonitoringService) handleNewDownload(dl downloadclient.Download) {
 		td.MediaType = "show"
 	} else {
 		td.MediaType = "movie"
+	}
+
+	// Try to link to grab history to get MediaID
+	if gh := m.getGrabHistoryByTitle(dl.Name); gh != nil {
+		td.MediaID = gh.MediaID
+		td.MediaType = gh.MediaType
+		if gh.RequestID != nil {
+			td.RequestID = gh.RequestID
+		}
+		log.Printf("Linked download to grab history: mediaID=%v, mediaType=%s", gh.MediaID, gh.MediaType)
 	}
 
 	// Set initial state based on client status

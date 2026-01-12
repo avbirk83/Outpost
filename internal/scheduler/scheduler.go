@@ -117,6 +117,13 @@ func (s *Scheduler) initDefaultTasks() {
 			Enabled:         true,
 			IntervalMinutes: 60, // 1 hour
 		},
+		{
+			Name:            "Intro Detection",
+			Description:     "Detect intro/credits segments using audio fingerprinting",
+			TaskType:        "intro_detection",
+			Enabled:         true, // Enabled by default for auto skip
+			IntervalMinutes: 360,  // 6 hours
+		},
 	}
 
 	for _, task := range defaultTasks {
@@ -166,6 +173,7 @@ func (s *Scheduler) Start() {
 	go s.runRSSJob()
 
 	log.Printf("Scheduler started (search: %dm, rss: %dm)", s.searchInterval, s.rssInterval)
+
 }
 
 func (s *Scheduler) Stop() {
@@ -297,6 +305,8 @@ func (s *Scheduler) executeTask(task *database.ScheduledTask) {
 		itemsProcessed, itemsFound = s.runUpgradeSearchTask()
 	case "trakt_sync":
 		itemsProcessed = s.runTraktSyncTask()
+	case "intro_detection":
+		itemsProcessed = s.runIntroDetectionTask()
 	}
 
 	finishedAt := time.Now()
@@ -382,6 +392,9 @@ func (s *Scheduler) runImportTask() int {
 // runCleanupTask cleans up old data
 func (s *Scheduler) runCleanupTask() int {
 	processed := 0
+	// Clear old fingerprint-based segments to allow re-detection with improved algorithm
+	s.db.DeleteMediaSegmentsBySource("fingerprint")
+	log.Printf("Scheduler: cleared old fingerprint-based intro segments")
 
 	// Cleanup task history older than 30 days
 	if err := s.db.CleanupTaskHistory(30); err == nil {
@@ -412,6 +425,7 @@ func (s *Scheduler) runLibraryScanTask() int {
 	}
 
 	scanned := 0
+	hasTVLibrary := false
 	for _, lib := range libraries {
 		log.Printf("Scheduler: scanning library %s (%s)", lib.Name, lib.Path)
 		if err := s.scanner.ScanLibrary(&lib); err != nil {
@@ -419,6 +433,17 @@ func (s *Scheduler) runLibraryScanTask() int {
 			continue
 		}
 		scanned++
+		if lib.Type == "tv" || lib.Type == "anime" {
+			hasTVLibrary = true
+		}
+	}
+
+	// Trigger intro detection for TV libraries after scan completes
+	if hasTVLibrary && scanner.CheckFFmpegChromaprint() {
+		go func() {
+			log.Printf("Scheduler: triggering intro detection after library scan")
+			s.runIntroDetectionTask()
+		}()
 	}
 
 	return scanned
@@ -997,19 +1022,21 @@ func (s *Scheduler) searchAndGrab(item *database.WantedItem) {
 	// Try each acceptable result until one succeeds
 	var grabbed bool
 	for i, result := range acceptableResults {
+		log.Printf("Scheduler: trying to grab %s (score: %d, seeders: %d, indexer: %s)",
+			result.Title, result.TotalScore, result.Seeders, result.IndexerName)
 		err = s.grabRelease(result, item.Type, item.TmdbID)
 		if err == nil {
-			log.Printf("Scheduler: grabbed %s for %s (score: %d)", result.Title, item.Title, result.TotalScore)
+			log.Printf("Scheduler: grabbed %s for %s (score: %d, seeders: %d)", result.Title, item.Title, result.TotalScore, result.Seeders)
 			grabbed = true
 			break
 		}
 		log.Printf("Scheduler: grab failed for %s, trying next: %v", result.Title, err)
-		// Add delay between retries to avoid rate limiting (like Sonarr does)
+		// Add delay between retries to avoid rate limiting
 		if i < len(acceptableResults)-1 {
 			if strings.Contains(err.Error(), "429") {
-				time.Sleep(2 * time.Second) // Longer delay for rate limit errors
+				time.Sleep(5 * time.Second) // 5 second delay for rate limit errors
 			} else {
-				time.Sleep(500 * time.Millisecond) // Short delay for other errors
+				time.Sleep(1 * time.Second) // 1 second delay for other errors
 			}
 		}
 	}
@@ -1515,6 +1542,29 @@ func (s *Scheduler) scoreResultsWithPreset(results []indexer.SearchResult, prese
 			scored.TotalScore += 10
 		}
 
+		// Seeder bonus/penalty - prefer well-seeded torrents to avoid dead downloads
+		// Only applies to torznab (torrent) indexers
+		if result.IndexerType == "torznab" {
+			// Reject torrents with 0 seeders - they will never complete
+			if result.Seeders == 0 {
+				scored.Rejected = true
+				scored.RejectionReason = "no seeders"
+				log.Printf("Scheduler: rejecting %s - no seeders reported", result.Title)
+			} else if result.Seeders >= 50 {
+				scored.TotalScore += 50 // Excellent seeding
+			} else if result.Seeders >= 20 {
+				scored.TotalScore += 30 // Good seeding
+			} else if result.Seeders >= 10 {
+				scored.TotalScore += 15 // Decent seeding
+			} else if result.Seeders >= 5 {
+				scored.TotalScore += 5 // Minimal seeding
+			} else if result.Seeders < 3 {
+				// Heavy penalty for very low seeds - likely to stall or fail
+				scored.TotalScore -= 100
+				log.Printf("Scheduler: penalizing low-seeder release %s (seeders: %d)", result.Title, result.Seeders)
+			}
+		}
+
 		scoredResults = append(scoredResults, scored)
 	}
 
@@ -1575,7 +1625,7 @@ func (s *Scheduler) shouldDelayGrab(result *indexer.ScoredSearchResult, libraryI
 
 // shouldPauseDownloads checks if downloads should be paused due to low storage
 // getIndexerIDsForMediaType returns indexer IDs suitable for the given media type
-// based on library tag assignments, indexer capabilities, and category filtering
+// based on library tag assignments, indexer capabilities, and content type filtering
 func (s *Scheduler) getIndexerIDsForMediaType(mediaType string) []int64 {
 	// Find the library for this media type
 	libraries, err := s.db.GetLibraries()
@@ -1626,12 +1676,45 @@ func (s *Scheduler) getIndexerIDsForMediaType(mediaType string) []int64 {
 		return nil
 	}
 
-	// Extract IDs
-	ids := make([]int64, len(indexers))
-	for i, idx := range indexers {
-		ids[i] = idx.ID
+	// Filter by ContentTypes field (if set)
+	// ContentTypes is a comma-separated list like "movie,tv" or "anime"
+	// Empty means "allow all" for backwards compatibility
+	var filteredIDs []int64
+	for _, idx := range indexers {
+		if idx.ContentTypes == "" {
+			// No restriction - include this indexer
+			filteredIDs = append(filteredIDs, idx.ID)
+			continue
+		}
+
+		// Check if this indexer supports the requested media type
+		contentTypes := strings.Split(idx.ContentTypes, ",")
+		typeMatches := false
+		for _, ct := range contentTypes {
+			ct = strings.TrimSpace(strings.ToLower(ct))
+			if ct == mediaType {
+				typeMatches = true
+				break
+			}
+			// Also handle "tv" matching "show"
+			if ct == "tv" && mediaType == "show" {
+				typeMatches = true
+				break
+			}
+			if ct == "show" && mediaType == "tv" {
+				typeMatches = true
+				break
+			}
+		}
+
+		if typeMatches {
+			filteredIDs = append(filteredIDs, idx.ID)
+		} else {
+			log.Printf("Scheduler: excluding indexer %s for %s search (content_types: %s)", idx.Name, mediaType, idx.ContentTypes)
+		}
 	}
-	return ids
+
+	return filteredIDs
 }
 
 func (s *Scheduler) shouldPauseDownloads() bool {
@@ -2258,6 +2341,9 @@ func (s *Scheduler) runTraktSyncTask() int {
 	}
 
 	processed := 0
+	// Clear old fingerprint-based segments to allow re-detection with improved algorithm
+	s.db.DeleteMediaSegmentsBySource("fingerprint")
+	log.Printf("Scheduler: cleared old fingerprint-based intro segments")
 	for _, config := range configs {
 		if !config.SyncEnabled || config.AccessToken == "" {
 			continue
@@ -2418,5 +2504,118 @@ func (s *Scheduler) syncTraktWatched(profileID int64, client *trakt.Client) int 
 	}
 
 	return synced
+}
+
+// runIntroDetectionTask analyzes episodes to detect intro/credits segments
+func (s *Scheduler) runIntroDetectionTask() int {
+	if s.scanner == nil {
+		log.Printf("Scheduler: scanner not available for intro detection")
+		return 0
+	}
+
+	// Create intro detector
+	detector := scanner.NewIntroDetector(s.db)
+
+	// Check if FFmpeg has chromaprint support
+	if !scanner.CheckFFmpegChromaprint() {
+		log.Printf("Scheduler: FFmpeg chromaprint not available, skipping intro detection")
+		return 0
+	}
+
+	processed := 0
+	// Clear old fingerprint-based segments to allow re-detection with improved algorithm
+	s.db.DeleteMediaSegmentsBySource("fingerprint")
+	log.Printf("Scheduler: cleared old fingerprint-based intro segments")
+
+	// Get all TV libraries
+	libraries, err := s.db.GetLibraries()
+	if err != nil {
+		log.Printf("Scheduler: failed to get libraries: %v", err)
+		return 0
+	}
+
+	for _, lib := range libraries {
+		if lib.Type != "tv" && lib.Type != "anime" {
+			log.Printf("Scheduler: skipping library %s (type=%s)", lib.Name, lib.Type)
+			continue
+		}
+
+		log.Printf("Scheduler: processing TV library %s", lib.Name)
+
+		// Get shows in this library
+		shows, err := s.db.GetShowsByLibrary(lib.ID)
+		if err != nil {
+			log.Printf("Scheduler: failed to get shows for library %s: %v", lib.Name, err)
+			continue
+		}
+
+		log.Printf("Scheduler: found %d shows in library %s", len(shows), lib.Name)
+
+		for _, show := range shows {
+			// Get seasons for this show
+			seasons, err := s.db.GetSeasonsByShow(show.ID)
+			if err != nil {
+				continue
+			}
+
+			for _, season := range seasons {
+				// Check if season has at least 2 episodes (needed for comparison)
+				episodes, err := s.db.GetEpisodesBySeason(season.ID)
+				if err != nil || len(episodes) < 2 {
+					continue
+				}
+
+				// Check if any episodes need fingerprinting
+				needsAnalysis, err := s.db.GetEpisodesWithoutFingerprints(season.ID, 100)
+				if err != nil {
+					log.Printf("Scheduler: error checking fingerprints for %s S%d: %v", show.Title, season.SeasonNumber, err)
+					continue
+				}
+
+				// Check if intro segments already exist for this season
+				hasIntros := false
+				for _, ep := range episodes {
+					segments, _ := s.db.GetMediaSegments(ep.ID)
+					for _, seg := range segments {
+						if seg.SegmentType == "intro" {
+							hasIntros = true
+							break
+						}
+					}
+					if hasIntros {
+						break
+					}
+				}
+
+				if false && len(needsAnalysis) == 0 && hasIntros {
+					log.Printf("Scheduler: %s Season %d already has intros detected, skipping", show.Title, season.SeasonNumber)
+					continue
+				}
+
+				log.Printf("Scheduler: %s Season %d - %d episodes need fingerprints, hasIntros=%v",
+					show.Title, season.SeasonNumber, len(needsAnalysis), hasIntros)
+
+				log.Printf("Scheduler: analyzing intro for %s Season %d (%d episodes)",
+					show.Title, season.SeasonNumber, len(episodes))
+
+				// Analyze the season (this will fingerprint missing episodes and detect intros)
+				if err := detector.AnalyzeSeason(season.ID); err != nil {
+					log.Printf("Scheduler: intro detection failed for %s S%d: %v",
+						show.Title, season.SeasonNumber, err)
+					continue
+				}
+
+				processed++
+
+				// Limit processing per run to avoid long-running tasks
+				if processed >= 5 {
+					log.Printf("Scheduler: intro detection limit reached, will continue next run")
+					return processed
+				}
+			}
+		}
+	}
+
+	return processed
 }
 

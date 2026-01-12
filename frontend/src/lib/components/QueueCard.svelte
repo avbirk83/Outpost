@@ -20,6 +20,7 @@
 		type: 'movie' | 'show';
 		posterPath?: string | null;
 		state: QueueState;
+		seasons?: string; // JSON array of season numbers (for TV shows)
 
 		// Progress info (for download/import)
 		progress?: number;
@@ -46,6 +47,7 @@
 		processing?: boolean;
 		searching?: boolean;
 		isAdmin?: boolean;
+		confirmingCancel?: boolean;
 	}
 
 	let {
@@ -56,6 +58,7 @@
 		type,
 		posterPath,
 		state,
+		seasons,
 		progress = 0,
 		downloaded = 0,
 		size = 0,
@@ -73,8 +76,24 @@
 		onRemove,
 		processing = false,
 		searching = false,
-		isAdmin = false
+		isAdmin = false,
+		confirmingCancel = false
 	}: Props = $props();
+
+	// Format seasons for display
+	function formatSeasons(seasonsJson?: string): string | null {
+		if (!seasonsJson) return null;
+		try {
+			const arr = JSON.parse(seasonsJson) as number[];
+			if (arr.length === 0) return null;
+			if (arr.length === 1) return `S${arr[0]}`;
+			return `S${arr.join(', S')}`;
+		} catch {
+			return null;
+		}
+	}
+
+	const formattedSeasons = $derived(formatSeasons(seasons));
 
 	// Badge colors and text based on state
 	const stateConfig: Record<QueueState, { color: string; bg: string; text: string }> = {
@@ -92,6 +111,11 @@
 	const showProgress = $derived(['downloading', 'importing'].includes(state));
 	const showActions = $derived(!['denied'].includes(state));
 	const isFailed = $derived(state === 'failed');
+
+	// Debug: log component state
+	$effect(() => {
+		console.log('QueueCard rendered:', { id, title, state, hasOnCancel: !!onCancel, hasOnRemove: !!onRemove });
+	});
 	// Only show poster overlay for active states
 	const showPosterOverlay = $derived(['searching', 'downloading', 'importing', 'failed'].includes(state));
 
@@ -170,6 +194,10 @@
 						<span class="{config.color} font-medium">{config.text}</span>
 						<span>·</span>
 						<span class="capitalize">{type}</span>
+						{#if formattedSeasons}
+							<span>·</span>
+							<span>{formattedSeasons}</span>
+						{/if}
 						{#if quality}
 							<span>·</span>
 							<span>{quality}</span>
@@ -214,7 +242,7 @@
 						{:else if state === 'pending'}
 							<button
 								class="px-2 py-1 text-xs rounded-lg bg-white/5 text-text-secondary hover:text-text-primary hover:bg-white/10 transition-colors disabled:opacity-50"
-								onclick={onRemove}
+								onclick={() => { console.log('QueueCard cancel (pending) clicked, onRemove:', typeof onRemove); if (onRemove) onRemove(); }}
 								disabled={processing}
 							>
 								Cancel
@@ -222,18 +250,18 @@
 						{:else if state === 'searching'}
 							<button
 								class="px-2 py-1 text-xs rounded-lg bg-white/5 text-text-secondary hover:text-text-primary hover:bg-white/10 transition-colors disabled:opacity-50"
-								onclick={onRemove}
+								onclick={() => { console.log('QueueCard cancel (searching) clicked, onRemove:', typeof onRemove); if (onRemove) onRemove(); }}
 								disabled={processing}
 							>
 								Cancel
 							</button>
 						{:else if ['downloading', 'paused', 'stalled'].includes(state)}
 							<button
-								class="px-2 py-1 text-xs rounded-lg bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors disabled:opacity-50"
-								onclick={onCancel}
+								class="px-2 py-1 text-xs rounded-lg transition-colors disabled:opacity-50 {confirmingCancel ? 'bg-red-500 text-white' : 'bg-red-500/20 text-red-400 hover:bg-red-500/30'}"
+								onclick={() => { console.log('QueueCard cancel button clicked, state:', state, 'onCancel:', typeof onCancel); if (onCancel) onCancel(); }}
 								disabled={processing}
 							>
-								{processing ? '...' : 'Cancel'}
+								{processing ? '...' : confirmingCancel ? 'Confirm?' : 'Cancel'}
 							</button>
 						{:else if state === 'importing'}
 							<!-- No actions during import -->

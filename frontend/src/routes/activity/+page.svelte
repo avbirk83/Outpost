@@ -44,6 +44,8 @@
 	let refreshInterval: ReturnType<typeof setInterval> | null = null;
 	let processingIds: Set<string> = $state(new Set());
 	let searchingIds: Set<number> = $state(new Set());
+	let confirmingCancel: string | null = $state(null);
+	let confirmingRemove: string | null = $state(null);
 
 	// Unified queue item - merges request, wanted, download by tmdbId
 	interface QueueItem {
@@ -63,6 +65,7 @@
 		username?: string;
 		timestamp?: string;
 		error?: string;
+		seasons?: string; // JSON array of season numbers (for TV shows)
 		// Source IDs for actions
 		requestId?: number;
 		wantedId?: number;
@@ -103,6 +106,7 @@
 				state,
 				username: r.username,
 				timestamp: formatRelativeTime(r.requestedAt),
+				seasons: r.seasons,
 				requestId: r.id
 			});
 		}
@@ -120,6 +124,7 @@
 				state: 'searching',
 				username: existing?.username,
 				timestamp: existing?.timestamp,
+				seasons: w.seasons || existing?.seasons,
 				requestId: existing?.requestId,
 				wantedId: w.id
 			});
@@ -127,16 +132,44 @@
 
 		// Finally add downloads (highest priority) - skip imported (they're in history)
 		for (const d of downloads) {
-			if (!d.tmdbId) continue;
 			if (d.state === 'imported') continue;
-			const existing = itemMap.get(d.tmdbId);
-			itemMap.set(d.tmdbId, {
+
+			let key: number;
+			let existing: QueueItem | undefined;
+
+			if (d.tmdbId) {
+				// Download has tmdbId - use it directly
+				key = d.tmdbId;
+				existing = itemMap.get(d.tmdbId);
+			} else {
+				// Download has no tmdbId - try to find a matching wanted/request item by title
+				// This handles cases where the download wasn't linked to grab history
+				// Normalize release title: replace periods/underscores with spaces, lowercase
+				const normalizedTitle = d.title.toLowerCase().replace(/[._]/g, ' ');
+				let matchedKey: number | undefined;
+				for (const [k, item] of itemMap.entries()) {
+					if (item.title) {
+						// Get first few words of the wanted item title
+						const itemWords = item.title.toLowerCase().split(' ').filter(w => w.length > 0);
+						// Check if the normalized download title starts with these words
+						const searchPattern = itemWords.slice(0, Math.min(3, itemWords.length)).join(' ');
+						if (normalizedTitle.includes(searchPattern)) {
+							matchedKey = k;
+							existing = item;
+							break;
+						}
+					}
+				}
+				key = matchedKey || -d.id;
+			}
+
+			itemMap.set(key, {
 				id: `dl-${d.id}`,
-				tmdbId: d.tmdbId,
-				title: d.title,
-				year: d.year,
-				type: d.mediaType as 'movie' | 'show',
-				posterPath: d.posterPath,
+				tmdbId: existing?.tmdbId || d.tmdbId || 0,
+				title: existing?.title || d.title,
+				year: existing?.year || d.year,
+				type: existing?.type || (d.mediaType || 'movie') as 'movie' | 'show',
+				posterPath: existing?.posterPath || d.posterPath,
 				state: mapDownloadState(d.state),
 				progress: d.progress,
 				downloaded: d.downloaded,
@@ -146,6 +179,7 @@
 				quality: d.quality,
 				username: existing?.username,
 				timestamp: existing?.timestamp,
+				seasons: existing?.seasons,
 				error: d.errors?.[0] || d.importBlockReason,
 				requestId: existing?.requestId,
 				wantedId: existing?.wantedId,
@@ -257,66 +291,73 @@
 	}
 
 	async function handleCancel(item: QueueItem) {
-		if (!item.downloadId) return;
-		const key = `dl-${item.downloadId}`;
+		console.log('handleCancel called:', { id: item.id, downloadId: item.downloadId, state: item.state });
+		if (!item.downloadId) {
+			console.log('handleCancel: no downloadId, returning early');
+			return;
+		}
+		// First click shows confirm, second click cancels
+		if (confirmingCancel !== item.id) {
+			console.log('handleCancel: setting confirm state');
+			confirmingCancel = item.id;
+			setTimeout(() => { if (confirmingCancel === item.id) confirmingCancel = null; }, 3000);
+			return;
+		}
+		console.log('handleCancel: proceeding with delete');
+		const key = item.id;
 		processingIds.add(key);
 		processingIds = processingIds;
 		try {
+			// Cancel download and delete files
+			console.log('handleCancel: calling deleteDownloadItem with id:', item.downloadId);
 			await deleteDownloadItem(item.downloadId, { deleteFiles: true });
+			console.log('handleCancel: deleteDownloadItem succeeded');
+			// Also remove from wanted list if present
+			if (item.wantedId) {
+				await deleteWantedItem(item.wantedId);
+			}
+			// Also remove the request if present
+			if (item.requestId) {
+				await deleteRequest(item.requestId);
+			}
 			await loadAll();
 			toast.success('Download cancelled');
 		} catch (e) {
-			toast.error('Failed to cancel');
+			console.error('handleCancel error:', e);
+			toast.error(`Failed to cancel: ${e instanceof Error ? e.message : 'Unknown error'}`);
 		} finally {
+			confirmingCancel = null;
 			processingIds.delete(key);
 			processingIds = processingIds;
 		}
 	}
 
 	async function handleRemove(item: QueueItem) {
-		// Remove from highest to lowest: download -> wanted -> request
-		if (item.downloadId) {
-			const key = `dl-${item.downloadId}`;
-			processingIds.add(key);
-			processingIds = processingIds;
-			try {
+		// Remove ALL related items: download, wanted, AND request
+		const key = item.id;
+		processingIds.add(key);
+		processingIds = processingIds;
+
+		try {
+			// Remove download first (includes files)
+			if (item.downloadId) {
 				await deleteDownloadItem(item.downloadId, { deleteFiles: true });
-				await loadAll();
-				toast.success('Removed');
-			} catch (e) {
-				toast.error('Failed to remove');
-			} finally {
-				processingIds.delete(key);
-				processingIds = processingIds;
 			}
-		} else if (item.wantedId) {
-			const key = `wanted-${item.wantedId}`;
-			processingIds.add(key);
-			processingIds = processingIds;
-			try {
+			// Then remove from wanted list
+			if (item.wantedId) {
 				await deleteWantedItem(item.wantedId);
-				await loadAll();
-				toast.success('Removed from wanted');
-			} catch (e) {
-				toast.error('Failed to remove');
-			} finally {
-				processingIds.delete(key);
-				processingIds = processingIds;
 			}
-		} else if (item.requestId) {
-			const key = `req-${item.requestId}`;
-			processingIds.add(key);
-			processingIds = processingIds;
-			try {
+			// Finally remove the request
+			if (item.requestId) {
 				await deleteRequest(item.requestId);
-				await loadAll();
-				toast.success('Request removed');
-			} catch (e) {
-				toast.error('Failed to remove');
-			} finally {
-				processingIds.delete(key);
-				processingIds = processingIds;
 			}
+			await loadAll();
+			toast.success('Removed');
+		} catch (e) {
+			toast.error('Failed to remove');
+		} finally {
+			processingIds.delete(key);
+			processingIds = processingIds;
 		}
 	}
 
@@ -427,6 +468,7 @@
 						type={item.type}
 						posterPath={item.posterPath}
 						state={item.state}
+						seasons={item.seasons}
 						progress={item.progress}
 						downloaded={item.downloaded}
 						size={item.size}
@@ -444,6 +486,7 @@
 						processing={isProcessing(item)}
 						searching={isSearching(item)}
 						isAdmin={user?.role === 'admin'}
+						confirmingCancel={confirmingCancel === item.id}
 					/>
 				{/each}
 			</div>

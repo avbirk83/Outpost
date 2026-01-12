@@ -17,26 +17,7 @@
 	import TrailerModal from '$lib/components/TrailerModal.svelte';
 	import RequestModal from '$lib/components/RequestModal.svelte';
 	import ScrollableRow from '$lib/components/ScrollableRow.svelte';
-
-	// Season expansion state
-	let expandedSeason = $state<number | null>(null);
-
-	function toggleSeason(seasonNumber: number) {
-		if (expandedSeason === seasonNumber) {
-			expandedSeason = null;
-		} else {
-			expandedSeason = seasonNumber;
-		}
-	}
-
-	function formatAirDate(date: string | undefined): string {
-		if (!date) return '';
-		try {
-			return new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-		} catch {
-			return date;
-		}
-	}
+	import SeasonEpisodeList from '$lib/components/SeasonEpisodeList.svelte';
 
 	let show: DiscoverShowDetailWithStatus | null = $state(null);
 	let loading = $state(true);
@@ -71,7 +52,7 @@
 		showRequestModal = true;
 	}
 
-	async function handleRequest(qualityPresetId: number) {
+	async function handleRequest(qualityPresetId: number, selectedSeasons?: number[]) {
 		if (!show) return;
 		showRequestModal = false;
 		requesting = true;
@@ -86,7 +67,8 @@
 				overview: show.overview || undefined,
 				posterPath: show.posterPath || undefined,
 				backdropPath: show.backdropPath || undefined,
-				qualityPresetId
+				qualityPresetId,
+				seasons: selectedSeasons
 			});
 			requested = true;
 			toast.success('Request submitted! It will be searched once approved.');
@@ -168,62 +150,13 @@
 		{#snippet extraSections()}
 			{#if show.seasonDetails && show.seasonDetails.length > 0}
 				<section class="px-[60px] py-6">
-					<h2 class="text-xl font-semibold text-text-primary mb-4">Seasons</h2>
-					<div class="space-y-3">
-						{#each show.seasonDetails.filter(s => s.season_number > 0) as season}
-							<div class="liquid-card overflow-hidden">
-								<button
-									onclick={() => toggleSeason(season.season_number)}
-									class="w-full p-4 flex items-center gap-4 hover:bg-white/5 transition-colors text-left"
-								>
-									<!-- Season Poster -->
-									{#if season.poster_path}
-										<img
-											src={getTmdbImageUrl(season.poster_path, 'w92')}
-											alt={season.name}
-											class="w-12 h-18 object-cover rounded-lg flex-shrink-0"
-										/>
-									{:else}
-										<div class="w-12 h-18 bg-bg-elevated rounded-lg flex items-center justify-center flex-shrink-0">
-											<svg class="w-6 h-6 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-												<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4" />
-											</svg>
-										</div>
-									{/if}
-
-									<!-- Season Info -->
-									<div class="flex-1 min-w-0">
-										<div class="flex items-center gap-2">
-											<h3 class="font-medium text-text-primary">{season.name}</h3>
-											<span class="text-sm text-text-muted">{season.episode_count} episodes</span>
-										</div>
-										{#if season.air_date}
-											<p class="text-sm text-text-secondary mt-0.5">{formatAirDate(season.air_date)}</p>
-										{/if}
-									</div>
-
-									<!-- Expand Arrow -->
-									<svg
-										class="w-5 h-5 text-text-muted transition-transform {expandedSeason === season.season_number ? 'rotate-180' : ''}"
-										fill="none"
-										stroke="currentColor"
-										viewBox="0 0 24 24"
-									>
-										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-									</svg>
-								</button>
-
-								<!-- Expanded Overview -->
-								{#if expandedSeason === season.season_number && season.overview}
-									<div class="px-4 pb-4 pt-0">
-										<div class="pl-16">
-											<p class="text-sm text-text-secondary leading-relaxed">{season.overview}</p>
-										</div>
-									</div>
-								{/if}
-							</div>
-						{/each}
-					</div>
+					<h2 class="text-xl font-semibold text-text-primary mb-4">Episodes</h2>
+					<SeasonEpisodeList
+						tmdbId={show.id}
+						seasonSummaries={show.seasonDetails}
+						showBackdrop={show.backdropPath}
+						isLibrary={false}
+					/>
 				</section>
 			{/if}
 		{/snippet}

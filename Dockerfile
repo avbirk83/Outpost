@@ -23,7 +23,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o outpost .
 # Stage 3: Final image
 FROM alpine:3.20
 
-RUN apk add --no-cache ca-certificates ffmpeg mkvtoolnix
+RUN apk add --no-cache ca-certificates ffmpeg mkvtoolnix chromaprint
 
 WORKDIR /app
 

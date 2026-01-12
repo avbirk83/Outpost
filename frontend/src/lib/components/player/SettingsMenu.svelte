@@ -5,12 +5,27 @@
 		open: boolean;
 		playbackSpeed: number;
 		aspectRatio: AspectRatio;
+		autoSkipIntro?: boolean;
+		autoSkipCredits?: boolean;
 		onToggle: () => void;
 		onSpeedChange: (speed: number) => void;
 		onAspectChange: (ratio: AspectRatio) => void;
+		onAutoSkipIntroChange?: (enabled: boolean) => void;
+		onAutoSkipCreditsChange?: (enabled: boolean) => void;
 	}
 
-	let { open, playbackSpeed, aspectRatio, onToggle, onSpeedChange, onAspectChange }: Props = $props();
+	let {
+		open,
+		playbackSpeed,
+		aspectRatio,
+		autoSkipIntro = false,
+		autoSkipCredits = false,
+		onToggle,
+		onSpeedChange,
+		onAspectChange,
+		onAutoSkipIntroChange,
+		onAutoSkipCreditsChange
+	}: Props = $props();
 
 	const speedOptions = [0.5, 0.75, 1, 1.25, 1.5, 2];
 	const aspectOptions: { value: AspectRatio; label: string }[] = [
@@ -65,6 +80,33 @@
 					{/if}
 				</button>
 			{/each}
+
+			{#if onAutoSkipIntroChange || onAutoSkipCreditsChange}
+				<div class="settings-divider"></div>
+				<div class="settings-header">Auto Skip</div>
+				{#if onAutoSkipIntroChange}
+					<button
+						class="settings-item {autoSkipIntro ? 'active' : ''}"
+						onclick={() => onAutoSkipIntroChange?.(!autoSkipIntro)}
+					>
+						<span>Skip Intros</span>
+						<div class="toggle {autoSkipIntro ? 'on' : ''}">
+							<div class="toggle-knob"></div>
+						</div>
+					</button>
+				{/if}
+				{#if onAutoSkipCreditsChange}
+					<button
+						class="settings-item {autoSkipCredits ? 'active' : ''}"
+						onclick={() => onAutoSkipCreditsChange?.(!autoSkipCredits)}
+					>
+						<span>Skip Credits</span>
+						<div class="toggle {autoSkipCredits ? 'on' : ''}">
+							<div class="toggle-knob"></div>
+						</div>
+					</button>
+				{/if}
+			{/if}
 		</div>
 	{/if}
 </div>
@@ -145,5 +187,33 @@
 
 	.text-amber {
 		color: #E8A849;
+	}
+
+	.toggle {
+		width: 36px;
+		height: 20px;
+		background: rgba(245, 230, 200, 0.2);
+		border-radius: 10px;
+		position: relative;
+		transition: background 0.2s;
+	}
+
+	.toggle.on {
+		background: #E8A849;
+	}
+
+	.toggle-knob {
+		position: absolute;
+		top: 2px;
+		left: 2px;
+		width: 16px;
+		height: 16px;
+		background: #F5E6C8;
+		border-radius: 50%;
+		transition: transform 0.2s;
+	}
+
+	.toggle.on .toggle-knob {
+		transform: translateX(16px);
 	}
 </style>

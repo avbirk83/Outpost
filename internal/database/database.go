@@ -156,6 +156,27 @@ type SkipSegments struct {
 	Credits *SkipSegment `json:"credits,omitempty"`
 }
 
+// MediaSegment represents a detected segment (intro, credits, etc.) for an episode
+type MediaSegment struct {
+	ID           int64     `json:"id"`
+	EpisodeID    int64     `json:"episodeId"`
+	SegmentType  string    `json:"segmentType"`  // intro, credits, recap, preview
+	StartSeconds float64   `json:"startSeconds"`
+	EndSeconds   float64   `json:"endSeconds"`
+	Confidence   float64   `json:"confidence"`   // 0.0-1.0
+	Source       string    `json:"source"`       // chapter, fingerprint, blackframe, user
+	CreatedAt    time.Time `json:"createdAt"`
+}
+
+// AudioFingerprint stores chromaprint fingerprint data for intro detection
+type AudioFingerprint struct {
+	ID          int64     `json:"id"`
+	EpisodeID   int64     `json:"episodeId"`
+	Fingerprint []byte    `json:"-"` // Raw chromaprint data
+	Duration    float64   `json:"duration"`
+	AnalyzedAt  time.Time `json:"analyzedAt"`
+}
+
 type DownloadClient struct {
 	ID       int64  `json:"id"`
 	Name     string `json:"name"`
@@ -191,6 +212,7 @@ type Indexer struct {
 	SupportsIMDB       bool   `json:"supportsImdb"`
 	SupportsTMDB       bool   `json:"supportsTmdb"`
 	SupportsTVDB       bool   `json:"supportsTvdb"`
+	ContentTypes       string `json:"contentTypes,omitempty"` // Comma-separated: movie,tv,anime - restricts what this indexer searches for
 }
 
 type ProwlarrConfig struct {
@@ -262,7 +284,8 @@ type Request struct {
 	BackdropPath     *string   `json:"backdropPath,omitempty"`
 	QualityProfileID *int64    `json:"qualityProfileId,omitempty"` // Deprecated, use QualityPresetID
 	QualityPresetID  *int64    `json:"qualityPresetId,omitempty"`
-	Status           string    `json:"status"` // requested, approved, denied, available
+	Seasons          *string   `json:"seasons,omitempty"` // JSON array of season numbers for TV shows
+	Status           string    `json:"status"`            // requested, approved, denied, available
 	StatusReason     *string   `json:"statusReason,omitempty"`
 	RequestedAt      time.Time `json:"requestedAt"`
 	UpdatedAt        time.Time `json:"updatedAt"`
@@ -1038,6 +1061,8 @@ func (d *Database) migrate() error {
 		poster_path TEXT,
 		backdrop_path TEXT,
 		quality_profile_id INTEGER,
+		quality_preset_id INTEGER,
+		seasons TEXT,
 		status TEXT NOT NULL DEFAULT 'requested',
 		status_reason TEXT,
 		requested_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -1432,6 +1457,32 @@ func (d *Database) migrate() error {
 	);
 	CREATE INDEX IF NOT EXISTS idx_skip_segments_show ON skip_segments(show_id);
 
+	-- Media segments (intro/credits/etc.) for episodes - per-episode detection
+	CREATE TABLE IF NOT EXISTS media_segments (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		episode_id INTEGER NOT NULL,
+		segment_type TEXT NOT NULL,
+		start_seconds REAL NOT NULL,
+		end_seconds REAL NOT NULL,
+		confidence REAL DEFAULT 1.0,
+		source TEXT NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE(episode_id, segment_type, source),
+		FOREIGN KEY (episode_id) REFERENCES episodes(id) ON DELETE CASCADE
+	);
+	CREATE INDEX IF NOT EXISTS idx_media_segments_episode ON media_segments(episode_id);
+
+	-- Audio fingerprints for intro/credits detection
+	CREATE TABLE IF NOT EXISTS audio_fingerprints (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		episode_id INTEGER NOT NULL UNIQUE,
+		fingerprint BLOB NOT NULL,
+		duration REAL NOT NULL,
+		analyzed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (episode_id) REFERENCES episodes(id) ON DELETE CASCADE
+	);
+	CREATE INDEX IF NOT EXISTS idx_audio_fingerprints_episode ON audio_fingerprints(episode_id);
+
 	-- In-app notifications
 	CREATE TABLE IF NOT EXISTS notifications (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1668,6 +1719,10 @@ func (d *Database) migrate() error {
 		"ALTER TABLE episodes ADD COLUMN match_confidence REAL DEFAULT 1.0",
 		// Pause upgrades for specific items
 		"ALTER TABLE media_quality_status ADD COLUMN upgrade_paused INTEGER DEFAULT 0",
+		// Content type filtering for indexers (e.g., "anime" for nyaa.si to prevent non-anime searches)
+		"ALTER TABLE indexers ADD COLUMN content_types TEXT DEFAULT ''",
+		// Season selection for TV show requests
+		"ALTER TABLE requests ADD COLUMN seasons TEXT",
 	}
 	for _, m := range migrations {
 		// Ignore errors (column may already exist)
@@ -2105,6 +2160,201 @@ func (d *Database) DeleteSkipSegment(showID int64, segmentType string) error {
 	return err
 }
 
+// Media Segment operations (per-episode intro/credits detection)
+
+func (d *Database) CreateMediaSegment(segment *MediaSegment) error {
+	result, err := d.db.Exec(`
+		INSERT INTO media_segments (episode_id, segment_type, start_seconds, end_seconds, confidence, source)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(episode_id, segment_type, source) DO UPDATE SET
+			start_seconds = excluded.start_seconds,
+			end_seconds = excluded.end_seconds,
+			confidence = excluded.confidence`,
+		segment.EpisodeID, segment.SegmentType, segment.StartSeconds, segment.EndSeconds, segment.Confidence, segment.Source,
+	)
+	if err != nil {
+		return err
+	}
+	segment.ID, _ = result.LastInsertId()
+	return nil
+}
+
+func (d *Database) GetMediaSegments(episodeID int64) ([]MediaSegment, error) {
+	rows, err := d.db.Query(`
+		SELECT id, episode_id, segment_type, start_seconds, end_seconds, confidence, source, created_at
+		FROM media_segments WHERE episode_id = ?
+		ORDER BY start_seconds`,
+		episodeID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var segments []MediaSegment
+	for rows.Next() {
+		var seg MediaSegment
+		if err := rows.Scan(&seg.ID, &seg.EpisodeID, &seg.SegmentType, &seg.StartSeconds, &seg.EndSeconds, &seg.Confidence, &seg.Source, &seg.CreatedAt); err != nil {
+			return nil, err
+		}
+		segments = append(segments, seg)
+	}
+	return segments, nil
+}
+
+func (d *Database) GetMediaSegmentsByType(episodeID int64, segmentType string) (*MediaSegment, error) {
+	var seg MediaSegment
+	err := d.db.QueryRow(`
+		SELECT id, episode_id, segment_type, start_seconds, end_seconds, confidence, source, created_at
+		FROM media_segments WHERE episode_id = ? AND segment_type = ?
+		ORDER BY confidence DESC LIMIT 1`,
+		episodeID, segmentType,
+	).Scan(&seg.ID, &seg.EpisodeID, &seg.SegmentType, &seg.StartSeconds, &seg.EndSeconds, &seg.Confidence, &seg.Source, &seg.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &seg, nil
+}
+
+func (d *Database) DeleteMediaSegment(id int64) error {
+	_, err := d.db.Exec("DELETE FROM media_segments WHERE id = ?", id)
+	return err
+}
+
+func (d *Database) DeleteMediaSegmentsByEpisode(episodeID int64) error {
+	_, err := d.db.Exec("DELETE FROM media_segments WHERE episode_id = ?", episodeID)
+	return err
+}
+
+func (d *Database) GetEpisodesWithoutSegments(libraryID int64, limit int) ([]Episode, error) {
+	rows, err := d.db.Query(`
+		SELECT e.id, e.season_id, e.episode_number, e.episode_end, e.absolute_number,
+		       e.title, e.overview, e.air_date, e.runtime, e.still_path, e.path, e.size,
+		       e.missing_since, e.match_confidence
+		FROM episodes e
+		JOIN seasons s ON e.season_id = s.id
+		JOIN shows sh ON s.show_id = sh.id
+		LEFT JOIN media_segments ms ON e.id = ms.episode_id
+		WHERE sh.library_id = ? AND ms.id IS NULL AND e.path != ''
+		LIMIT ?`,
+		libraryID, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var episodes []Episode
+	for rows.Next() {
+		var ep Episode
+		if err := rows.Scan(&ep.ID, &ep.SeasonID, &ep.EpisodeNumber, &ep.EpisodeEnd, &ep.AbsoluteNumber,
+			&ep.Title, &ep.Overview, &ep.AirDate, &ep.Runtime, &ep.StillPath, &ep.Path, &ep.Size,
+			&ep.MissingSince, &ep.MatchConfidence); err != nil {
+			return nil, err
+		}
+		episodes = append(episodes, ep)
+	}
+	return episodes, nil
+}
+
+// Audio Fingerprint operations
+
+func (d *Database) SaveAudioFingerprint(fp *AudioFingerprint) error {
+	result, err := d.db.Exec(`
+		INSERT INTO audio_fingerprints (episode_id, fingerprint, duration)
+		VALUES (?, ?, ?)
+		ON CONFLICT(episode_id) DO UPDATE SET
+			fingerprint = excluded.fingerprint,
+			duration = excluded.duration,
+			analyzed_at = CURRENT_TIMESTAMP`,
+		fp.EpisodeID, fp.Fingerprint, fp.Duration,
+	)
+	if err != nil {
+		return err
+	}
+	fp.ID, _ = result.LastInsertId()
+	return nil
+}
+
+func (d *Database) GetAudioFingerprint(episodeID int64) (*AudioFingerprint, error) {
+	var fp AudioFingerprint
+	err := d.db.QueryRow(`
+		SELECT id, episode_id, fingerprint, duration, analyzed_at
+		FROM audio_fingerprints WHERE episode_id = ?`,
+		episodeID,
+	).Scan(&fp.ID, &fp.EpisodeID, &fp.Fingerprint, &fp.Duration, &fp.AnalyzedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &fp, nil
+}
+
+func (d *Database) GetSeasonFingerprints(seasonID int64) ([]AudioFingerprint, error) {
+	rows, err := d.db.Query(`
+		SELECT af.id, af.episode_id, af.fingerprint, af.duration, af.analyzed_at
+		FROM audio_fingerprints af
+		JOIN episodes e ON af.episode_id = e.id
+		WHERE e.season_id = ?
+		ORDER BY e.episode_number`,
+		seasonID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var fingerprints []AudioFingerprint
+	for rows.Next() {
+		var fp AudioFingerprint
+		if err := rows.Scan(&fp.ID, &fp.EpisodeID, &fp.Fingerprint, &fp.Duration, &fp.AnalyzedAt); err != nil {
+			return nil, err
+		}
+		fingerprints = append(fingerprints, fp)
+	}
+	return fingerprints, nil
+}
+
+func (d *Database) GetEpisodesWithoutFingerprints(seasonID int64, limit int) ([]Episode, error) {
+	rows, err := d.db.Query(`
+		SELECT e.id, e.season_id, e.episode_number, e.episode_end, e.absolute_number,
+		       e.title, e.overview, e.air_date, e.runtime, e.still_path, e.path, e.size,
+		       e.missing_since, e.match_confidence
+		FROM episodes e
+		LEFT JOIN audio_fingerprints af ON e.id = af.episode_id
+		WHERE e.season_id = ? AND af.id IS NULL AND e.path != ''
+		ORDER BY e.episode_number
+		LIMIT ?`,
+		seasonID, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var episodes []Episode
+	for rows.Next() {
+		var ep Episode
+		if err := rows.Scan(&ep.ID, &ep.SeasonID, &ep.EpisodeNumber, &ep.EpisodeEnd, &ep.AbsoluteNumber,
+			&ep.Title, &ep.Overview, &ep.AirDate, &ep.Runtime, &ep.StillPath, &ep.Path, &ep.Size,
+			&ep.MissingSince, &ep.MatchConfidence); err != nil {
+			return nil, err
+		}
+		episodes = append(episodes, ep)
+	}
+	return episodes, nil
+}
+
+func (d *Database) DeleteAudioFingerprint(episodeID int64) error {
+	_, err := d.db.Exec("DELETE FROM audio_fingerprints WHERE episode_id = ?", episodeID)
+	return err
+}
+
 // Download Client operations
 
 func (d *Database) CreateDownloadClient(client *DownloadClient) error {
@@ -2215,7 +2465,7 @@ func (d *Database) GetIndexers() ([]Indexer, error) {
 			COALESCE(prowlarr_id, 0), COALESCE(synced_from_prowlarr, 0), COALESCE(protocol, ''),
 			COALESCE(supports_movies, 1), COALESCE(supports_tv, 1), COALESCE(supports_music, 0),
 			COALESCE(supports_books, 0), COALESCE(supports_anime, 0), COALESCE(supports_imdb, 0),
-			COALESCE(supports_tmdb, 0), COALESCE(supports_tvdb, 0)
+			COALESCE(supports_tmdb, 0), COALESCE(supports_tvdb, 0), COALESCE(content_types, '')
 		FROM indexers ORDER BY priority DESC, name`)
 	if err != nil {
 		return nil, err
@@ -2232,7 +2482,7 @@ func (d *Database) GetIndexers() ([]Indexer, error) {
 			&prowlarrID, &syncedFromProwlarr, &i.Protocol,
 			&i.SupportsMovies, &i.SupportsTV, &i.SupportsMusic,
 			&i.SupportsBooks, &i.SupportsAnime, &i.SupportsIMDB,
-			&i.SupportsTMDB, &i.SupportsTVDB); err != nil {
+			&i.SupportsTMDB, &i.SupportsTVDB, &i.ContentTypes); err != nil {
 			return nil, err
 		}
 		if prowlarrID > 0 {
@@ -2253,14 +2503,14 @@ func (d *Database) GetIndexer(id int64) (*Indexer, error) {
 			COALESCE(prowlarr_id, 0), COALESCE(synced_from_prowlarr, 0), COALESCE(protocol, ''),
 			COALESCE(supports_movies, 1), COALESCE(supports_tv, 1), COALESCE(supports_music, 0),
 			COALESCE(supports_books, 0), COALESCE(supports_anime, 0), COALESCE(supports_imdb, 0),
-			COALESCE(supports_tmdb, 0), COALESCE(supports_tvdb, 0)
+			COALESCE(supports_tmdb, 0), COALESCE(supports_tvdb, 0), COALESCE(content_types, '')
 		FROM indexers WHERE id = ?`, id,
 	).Scan(&i.ID, &i.Name, &i.Type, &i.URL, &i.APIKey,
 		&i.Categories, &i.Priority, &i.Enabled,
 		&prowlarrID, &syncedFromProwlarr, &i.Protocol,
 		&i.SupportsMovies, &i.SupportsTV, &i.SupportsMusic,
 		&i.SupportsBooks, &i.SupportsAnime, &i.SupportsIMDB,
-		&i.SupportsTMDB, &i.SupportsTVDB)
+		&i.SupportsTMDB, &i.SupportsTVDB, &i.ContentTypes)
 	if err != nil {
 		return nil, err
 	}
@@ -2274,10 +2524,10 @@ func (d *Database) GetIndexer(id int64) (*Indexer, error) {
 func (d *Database) UpdateIndexer(indexer *Indexer) error {
 	_, err := d.db.Exec(`
 		UPDATE indexers SET
-			name = ?, type = ?, url = ?, api_key = ?, categories = ?, priority = ?, enabled = ?
+			name = ?, type = ?, url = ?, api_key = ?, categories = ?, priority = ?, enabled = ?, content_types = ?
 		WHERE id = ?`,
 		indexer.Name, indexer.Type, indexer.URL, indexer.APIKey,
-		indexer.Categories, indexer.Priority, indexer.Enabled, indexer.ID,
+		indexer.Categories, indexer.Priority, indexer.Enabled, indexer.ContentTypes, indexer.ID,
 	)
 	return err
 }
@@ -2293,7 +2543,7 @@ func (d *Database) GetEnabledIndexers() ([]Indexer, error) {
 			COALESCE(prowlarr_id, 0), COALESCE(synced_from_prowlarr, 0), COALESCE(protocol, ''),
 			COALESCE(supports_movies, 1), COALESCE(supports_tv, 1), COALESCE(supports_music, 0),
 			COALESCE(supports_books, 0), COALESCE(supports_anime, 0), COALESCE(supports_imdb, 0),
-			COALESCE(supports_tmdb, 0), COALESCE(supports_tvdb, 0)
+			COALESCE(supports_tmdb, 0), COALESCE(supports_tvdb, 0), COALESCE(content_types, '')
 		FROM indexers WHERE enabled = 1 ORDER BY priority DESC, name`)
 	if err != nil {
 		return nil, err
@@ -2310,7 +2560,7 @@ func (d *Database) GetEnabledIndexers() ([]Indexer, error) {
 			&prowlarrID, &syncedFromProwlarr, &i.Protocol,
 			&i.SupportsMovies, &i.SupportsTV, &i.SupportsMusic,
 			&i.SupportsBooks, &i.SupportsAnime, &i.SupportsIMDB,
-			&i.SupportsTMDB, &i.SupportsTVDB); err != nil {
+			&i.SupportsTMDB, &i.SupportsTVDB, &i.ContentTypes); err != nil {
 			return nil, err
 		}
 		if prowlarrID > 0 {
@@ -2550,13 +2800,19 @@ func (d *Database) DeleteWantedItem(id int64) error {
 	return err
 }
 
+// DeleteWantedByTmdb removes a wanted item by type and tmdb ID (used after successful import)
+func (d *Database) DeleteWantedByTmdb(itemType string, tmdbID int64) error {
+	_, err := d.db.Exec("DELETE FROM wanted WHERE type = ? AND tmdb_id = ? AND COALESCE(is_upgrade, 0) = 0", itemType, tmdbID)
+	return err
+}
+
 // Request operations
 
 func (d *Database) CreateRequest(req *Request) error {
 	result, err := d.db.Exec(`
-		INSERT INTO requests (user_id, type, tmdb_id, title, year, overview, poster_path, backdrop_path, quality_profile_id, quality_preset_id, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		req.UserID, req.Type, req.TmdbID, req.Title, req.Year, req.Overview, req.PosterPath, req.BackdropPath, req.QualityProfileID, req.QualityPresetID, "requested",
+		INSERT INTO requests (user_id, type, tmdb_id, title, year, overview, poster_path, backdrop_path, quality_profile_id, quality_preset_id, seasons, status)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		req.UserID, req.Type, req.TmdbID, req.Title, req.Year, req.Overview, req.PosterPath, req.BackdropPath, req.QualityProfileID, req.QualityPresetID, req.Seasons, "requested",
 	)
 	if err != nil {
 		return err
@@ -2571,7 +2827,7 @@ func (d *Database) CreateRequest(req *Request) error {
 func (d *Database) GetRequests() ([]Request, error) {
 	rows, err := d.db.Query(`
 		SELECT r.id, r.user_id, u.username, r.type, r.tmdb_id, r.title, r.year, r.overview,
-		       r.poster_path, r.backdrop_path, r.quality_profile_id, r.quality_preset_id, r.status, r.status_reason, r.requested_at, r.updated_at
+		       r.poster_path, r.backdrop_path, r.quality_profile_id, r.quality_preset_id, r.seasons, r.status, r.status_reason, r.requested_at, r.updated_at
 		FROM requests r
 		LEFT JOIN users u ON r.user_id = u.id
 		WHERE r.status != 'denied'
@@ -2586,7 +2842,7 @@ func (d *Database) GetRequests() ([]Request, error) {
 		var req Request
 		if err := rows.Scan(&req.ID, &req.UserID, &req.Username, &req.Type, &req.TmdbID, &req.Title,
 			&req.Year, &req.Overview, &req.PosterPath, &req.BackdropPath, &req.QualityProfileID, &req.QualityPresetID,
-			&req.Status, &req.StatusReason, &req.RequestedAt, &req.UpdatedAt); err != nil {
+			&req.Seasons, &req.Status, &req.StatusReason, &req.RequestedAt, &req.UpdatedAt); err != nil {
 			return nil, err
 		}
 		requests = append(requests, req)
@@ -2597,7 +2853,7 @@ func (d *Database) GetRequests() ([]Request, error) {
 func (d *Database) GetRequestsByUser(userID int64) ([]Request, error) {
 	rows, err := d.db.Query(`
 		SELECT r.id, r.user_id, u.username, r.type, r.tmdb_id, r.title, r.year, r.overview,
-		       r.poster_path, r.backdrop_path, r.quality_profile_id, r.quality_preset_id, r.status, r.status_reason, r.requested_at, r.updated_at
+		       r.poster_path, r.backdrop_path, r.quality_profile_id, r.quality_preset_id, r.seasons, r.status, r.status_reason, r.requested_at, r.updated_at
 		FROM requests r
 		LEFT JOIN users u ON r.user_id = u.id
 		WHERE r.user_id = ? AND r.status != 'denied'
@@ -2612,7 +2868,7 @@ func (d *Database) GetRequestsByUser(userID int64) ([]Request, error) {
 		var req Request
 		if err := rows.Scan(&req.ID, &req.UserID, &req.Username, &req.Type, &req.TmdbID, &req.Title,
 			&req.Year, &req.Overview, &req.PosterPath, &req.BackdropPath, &req.QualityProfileID, &req.QualityPresetID,
-			&req.Status, &req.StatusReason, &req.RequestedAt, &req.UpdatedAt); err != nil {
+			&req.Seasons, &req.Status, &req.StatusReason, &req.RequestedAt, &req.UpdatedAt); err != nil {
 			return nil, err
 		}
 		requests = append(requests, req)
@@ -2623,7 +2879,7 @@ func (d *Database) GetRequestsByUser(userID int64) ([]Request, error) {
 func (d *Database) GetRequestsByStatus(status string) ([]Request, error) {
 	rows, err := d.db.Query(`
 		SELECT r.id, r.user_id, u.username, r.type, r.tmdb_id, r.title, r.year, r.overview,
-		       r.poster_path, r.backdrop_path, r.quality_profile_id, r.quality_preset_id, r.status, r.status_reason, r.requested_at, r.updated_at
+		       r.poster_path, r.backdrop_path, r.quality_profile_id, r.quality_preset_id, r.seasons, r.status, r.status_reason, r.requested_at, r.updated_at
 		FROM requests r
 		LEFT JOIN users u ON r.user_id = u.id
 		WHERE r.status = ?
@@ -2638,7 +2894,7 @@ func (d *Database) GetRequestsByStatus(status string) ([]Request, error) {
 		var req Request
 		if err := rows.Scan(&req.ID, &req.UserID, &req.Username, &req.Type, &req.TmdbID, &req.Title,
 			&req.Year, &req.Overview, &req.PosterPath, &req.BackdropPath, &req.QualityProfileID, &req.QualityPresetID,
-			&req.Status, &req.StatusReason, &req.RequestedAt, &req.UpdatedAt); err != nil {
+			&req.Seasons, &req.Status, &req.StatusReason, &req.RequestedAt, &req.UpdatedAt); err != nil {
 			return nil, err
 		}
 		requests = append(requests, req)
@@ -2650,12 +2906,12 @@ func (d *Database) GetRequest(id int64) (*Request, error) {
 	var req Request
 	err := d.db.QueryRow(`
 		SELECT r.id, r.user_id, u.username, r.type, r.tmdb_id, r.title, r.year, r.overview,
-		       r.poster_path, r.backdrop_path, r.quality_profile_id, r.quality_preset_id, r.status, r.status_reason, r.requested_at, r.updated_at
+		       r.poster_path, r.backdrop_path, r.quality_profile_id, r.quality_preset_id, r.seasons, r.status, r.status_reason, r.requested_at, r.updated_at
 		FROM requests r
 		LEFT JOIN users u ON r.user_id = u.id
 		WHERE r.id = ?`, id).Scan(&req.ID, &req.UserID, &req.Username, &req.Type, &req.TmdbID,
 		&req.Title, &req.Year, &req.Overview, &req.PosterPath, &req.BackdropPath, &req.QualityProfileID, &req.QualityPresetID,
-		&req.Status, &req.StatusReason, &req.RequestedAt, &req.UpdatedAt)
+		&req.Seasons, &req.Status, &req.StatusReason, &req.RequestedAt, &req.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -2667,13 +2923,13 @@ func (d *Database) GetRequestByTmdb(userID int64, mediaType string, tmdbID int64
 	// Exclude denied requests so users can re-request
 	err := d.db.QueryRow(`
 		SELECT r.id, r.user_id, u.username, r.type, r.tmdb_id, r.title, r.year, r.overview,
-		       r.poster_path, r.backdrop_path, r.quality_profile_id, r.quality_preset_id, r.status, r.status_reason, r.requested_at, r.updated_at
+		       r.poster_path, r.backdrop_path, r.quality_profile_id, r.quality_preset_id, r.seasons, r.status, r.status_reason, r.requested_at, r.updated_at
 		FROM requests r
 		LEFT JOIN users u ON r.user_id = u.id
 		WHERE r.user_id = ? AND r.type = ? AND r.tmdb_id = ? AND r.status != 'denied'`,
 		userID, mediaType, tmdbID).Scan(&req.ID, &req.UserID, &req.Username, &req.Type, &req.TmdbID,
 		&req.Title, &req.Year, &req.Overview, &req.PosterPath, &req.BackdropPath, &req.QualityProfileID, &req.QualityPresetID,
-		&req.Status, &req.StatusReason, &req.RequestedAt, &req.UpdatedAt)
+		&req.Seasons, &req.Status, &req.StatusReason, &req.RequestedAt, &req.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -2684,13 +2940,13 @@ func (d *Database) GetDeniedRequestByTmdb(userID int64, mediaType string, tmdbID
 	var req Request
 	err := d.db.QueryRow(`
 		SELECT r.id, r.user_id, u.username, r.type, r.tmdb_id, r.title, r.year, r.overview,
-		       r.poster_path, r.backdrop_path, r.quality_profile_id, r.quality_preset_id, r.status, r.status_reason, r.requested_at, r.updated_at
+		       r.poster_path, r.backdrop_path, r.quality_profile_id, r.quality_preset_id, r.seasons, r.status, r.status_reason, r.requested_at, r.updated_at
 		FROM requests r
 		LEFT JOIN users u ON r.user_id = u.id
 		WHERE r.user_id = ? AND r.type = ? AND r.tmdb_id = ? AND r.status = 'denied'`,
 		userID, mediaType, tmdbID).Scan(&req.ID, &req.UserID, &req.Username, &req.Type, &req.TmdbID,
 		&req.Title, &req.Year, &req.Overview, &req.PosterPath, &req.BackdropPath, &req.QualityProfileID, &req.QualityPresetID,
-		&req.Status, &req.StatusReason, &req.RequestedAt, &req.UpdatedAt)
+		&req.Seasons, &req.Status, &req.StatusReason, &req.RequestedAt, &req.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -2702,6 +2958,15 @@ func (d *Database) UpdateRequestStatus(id int64, status string, reason *string) 
 		UPDATE requests
 		SET status = ?, status_reason = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?`, status, reason, id)
+	return err
+}
+
+// UpdateRequestSeasons updates the seasons field for a request (used when reactivating a denied request)
+func (d *Database) UpdateRequestSeasons(id int64, seasons *string) error {
+	_, err := d.db.Exec(`
+		UPDATE requests
+		SET seasons = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?`, seasons, id)
 	return err
 }
 
@@ -4527,6 +4792,30 @@ func (d *Database) UpdateGrabHistoryStatus(id int64, status string, errorMsg *st
 	return err
 }
 
+// GetGrabHistoryByTitle returns the most recent grab history entry for a release title
+func (d *Database) GetGrabHistoryByTitle(releaseTitle string) (*GrabHistory, error) {
+	row := d.db.QueryRow(`
+		SELECT id, media_id, media_type, release_title, indexer_id, indexer_name,
+			quality_resolution, quality_source, quality_codec, quality_audio, quality_hdr,
+			release_group, size, download_client_id, download_id, status, error_message, grabbed_at, imported_at
+		FROM grab_history
+		WHERE release_title = ?
+		ORDER BY grabbed_at DESC LIMIT 1
+	`, releaseTitle)
+
+	var gh GrabHistory
+	err := row.Scan(&gh.ID, &gh.MediaID, &gh.MediaType, &gh.ReleaseTitle, &gh.IndexerID, &gh.IndexerName,
+		&gh.QualityResolution, &gh.QualitySource, &gh.QualityCodec, &gh.QualityAudio, &gh.QualityHDR,
+		&gh.ReleaseGroup, &gh.Size, &gh.DownloadClientID, &gh.DownloadID, &gh.Status, &gh.ErrorMessage, &gh.GrabbedAt, &gh.ImportedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &gh, nil
+}
+
 // UpdateGrabHistoryByTitle updates grab history status for a release by its title
 func (d *Database) UpdateGrabHistoryByTitle(releaseTitle string, status string, errorMsg *string) error {
 	if status == "imported" {
@@ -5060,7 +5349,9 @@ func (d *Database) UpsertTask(task *ScheduledTask) error {
 		VALUES (?, ?, ?, ?, ?, datetime('now', '+' || ? || ' minutes'))
 		ON CONFLICT(name) DO UPDATE SET
 			description = excluded.description,
-			task_type = excluded.task_type
+			task_type = excluded.task_type,
+			enabled = excluded.enabled,
+			interval_minutes = excluded.interval_minutes
 		WHERE scheduled_tasks.name = excluded.name`,
 		task.Name, task.Description, task.TaskType, task.Enabled, task.IntervalMinutes, task.IntervalMinutes)
 	if err != nil {
@@ -6810,4 +7101,9 @@ func (d *Database) GetAllTraktConfigs() ([]TraktConfig, error) {
 		configs = append(configs, config)
 	}
 	return configs, nil
+}
+
+func (d *Database) DeleteMediaSegmentsBySource(source string) error {
+	_, err := d.db.Exec("DELETE FROM media_segments WHERE source = ?", source)
+	return err
 }

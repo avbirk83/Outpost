@@ -177,14 +177,23 @@
 		}
 	}
 
+	let deletingClient: number | null = $state(null);
+
 	async function handleDeleteClient(id: number) {
-		if (!confirm('Are you sure you want to delete this download client?')) return;
+		// First click shows confirm, second click deletes
+		if (deletingClient !== id) {
+			deletingClient = id;
+			setTimeout(() => { if (deletingClient === id) deletingClient = null; }, 3000);
+			return;
+		}
 		try {
 			await deleteDownloadClient(id);
 			await loadDownloadClients();
 			toast.success('Download client deleted');
 		} catch (e) {
 			toast.error('Failed to delete client');
+		} finally {
+			deletingClient = null;
 		}
 	}
 
@@ -338,14 +347,24 @@
 		}
 	}
 
+	let deletingIndexer: number | null = $state(null);
+
 	async function handleDeleteIndexer(id: number) {
-		if (!confirm('Are you sure you want to delete this indexer?')) return;
+		// First click shows confirm, second click deletes
+		if (deletingIndexer !== id) {
+			deletingIndexer = id;
+			// Reset after 3 seconds if not confirmed
+			setTimeout(() => { if (deletingIndexer === id) deletingIndexer = null; }, 3000);
+			return;
+		}
 		try {
 			await deleteIndexer(id);
 			await loadIndexers();
 			toast.success('Indexer deleted');
 		} catch (e) {
 			toast.error('Failed to delete indexer');
+		} finally {
+			deletingIndexer = null;
 		}
 	}
 
@@ -356,6 +375,36 @@
 		} catch (e) {
 			console.error('Failed to update indexer:', e);
 		}
+	}
+
+	let editingContentTypes: number | null = $state(null);
+
+	async function handleContentTypesChange(idx: Indexer, contentTypes: string) {
+		try {
+			await updateIndexer(idx.id, { ...idx, contentTypes });
+			await loadIndexers();
+			toast.success('Content types updated');
+		} catch (e) {
+			toast.error('Failed to update content types');
+		} finally {
+			editingContentTypes = null;
+		}
+	}
+
+	function getContentTypesArray(contentTypes: string | undefined): string[] {
+		if (!contentTypes) return [];
+		return contentTypes.split(',').map(t => t.trim()).filter(t => t);
+	}
+
+	function toggleContentType(idx: Indexer, type: string) {
+		const current = getContentTypesArray(idx.contentTypes);
+		let newTypes: string[];
+		if (current.includes(type)) {
+			newTypes = current.filter(t => t !== type);
+		} else {
+			newTypes = [...current, type];
+		}
+		handleContentTypesChange(idx, newTypes.join(','));
 	}
 
 	function getIndexerTypeLabel(type: string): string {
@@ -520,10 +569,10 @@
 								Edit
 							</button>
 							<button
-								class="liquid-btn-sm !bg-white/5 !border-t-white/10 text-text-secondary hover:text-red-400"
+								class="liquid-btn-sm !bg-white/5 !border-t-white/10 {deletingClient === client.id ? 'text-red-400' : 'text-text-secondary hover:text-red-400'}"
 								onclick={() => handleDeleteClient(client.id)}
 							>
-								Delete
+								{deletingClient === client.id ? 'Confirm?' : 'Delete'}
 							</button>
 						</div>
 					</div>
@@ -766,6 +815,25 @@
 										{idx.url}
 									</p>
 								{/if}
+								<!-- Content type restrictions -->
+								<div class="flex items-center gap-2 mt-2">
+									<span class="text-[10px] text-text-muted">Limit to:</span>
+									<button
+										class="px-1.5 py-0.5 text-[10px] rounded transition-colors {getContentTypesArray(idx.contentTypes).includes('movie') ? 'bg-green-600/30 text-green-300' : 'bg-white/5 text-text-muted hover:bg-white/10'}"
+										onclick={() => toggleContentType(idx, 'movie')}
+									>Movie</button>
+									<button
+										class="px-1.5 py-0.5 text-[10px] rounded transition-colors {getContentTypesArray(idx.contentTypes).includes('tv') ? 'bg-green-600/30 text-green-300' : 'bg-white/5 text-text-muted hover:bg-white/10'}"
+										onclick={() => toggleContentType(idx, 'tv')}
+									>TV</button>
+									<button
+										class="px-1.5 py-0.5 text-[10px] rounded transition-colors {getContentTypesArray(idx.contentTypes).includes('anime') ? 'bg-green-600/30 text-green-300' : 'bg-white/5 text-text-muted hover:bg-white/10'}"
+										onclick={() => toggleContentType(idx, 'anime')}
+									>Anime</button>
+									{#if !idx.contentTypes}
+										<span class="text-[10px] text-text-muted italic">All types</span>
+									{/if}
+								</div>
 							</div>
 						</div>
 						<div class="flex gap-2">
@@ -777,10 +845,10 @@
 								{testingIndexer[idx.id] ? 'Testing...' : 'Test'}
 							</button>
 							<button
-								class="liquid-btn-sm !bg-white/5 !border-t-white/10 text-text-secondary hover:text-text-primary"
+								class="liquid-btn-sm !bg-white/5 !border-t-white/10 {deletingIndexer === idx.id ? 'text-red-400' : 'text-text-secondary hover:text-red-400'}"
 								onclick={() => handleDeleteIndexer(idx.id)}
 							>
-								Delete
+								{deletingIndexer === idx.id ? 'Confirm?' : 'Delete'}
 							</button>
 						</div>
 					</div>

@@ -131,3 +131,52 @@ export async function deleteSkipSegment(showId: number, type: 'intro' | 'credits
 		throw new Error(`API error: ${response.status}`);
 	}
 }
+
+// Per-episode media segments (intro/credits detection)
+export interface MediaSegment {
+	id: number;
+	episodeId: number;
+	segmentType: 'intro' | 'credits' | 'recap' | 'preview';
+	startSeconds: number;
+	endSeconds: number;
+	confidence: number;
+	source: 'chapter' | 'fingerprint' | 'blackframe' | 'user';
+	createdAt: string;
+}
+
+export async function getMediaSegments(episodeId: number): Promise<MediaSegment[]> {
+	const response = await apiFetch(`${API_BASE}/episodes/${episodeId}/segments`);
+	if (!response.ok) {
+		if (response.status === 404) {
+			return [];
+		}
+		throw new Error(`API error: ${response.status}`);
+	}
+	return response.json();
+}
+
+export async function saveMediaSegment(
+	episodeId: number,
+	segmentType: 'intro' | 'credits' | 'recap' | 'preview',
+	startSeconds: number,
+	endSeconds: number
+): Promise<MediaSegment> {
+	const response = await apiFetch(`${API_BASE}/episodes/${episodeId}/segments`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ segmentType, startSeconds, endSeconds })
+	});
+	if (!response.ok) {
+		throw new Error(`API error: ${response.status}`);
+	}
+	return response.json();
+}
+
+export async function deleteMediaSegment(episodeId: number, segmentId: number): Promise<void> {
+	const response = await apiFetch(`${API_BASE}/episodes/${episodeId}/segments/${segmentId}`, {
+		method: 'DELETE'
+	});
+	if (!response.ok) {
+		throw new Error(`API error: ${response.status}`);
+	}
+}

@@ -2,6 +2,7 @@ package downloadclient
 
 import (
 	"fmt"
+	"log"
 
 	"github.com/outpost/outpost/internal/database"
 )
@@ -85,20 +86,28 @@ func NewManager(db *database.Database) *Manager {
 func (m *Manager) GetAllDownloads() ([]Download, error) {
 	clients, err := m.db.GetEnabledDownloadClients()
 	if err != nil {
+		log.Printf("GetAllDownloads: error getting enabled clients: %v", err)
 		return nil, err
 	}
 
+	log.Printf("GetAllDownloads: found %d enabled download clients", len(clients))
+
 	var allDownloads []Download
 	for _, clientConfig := range clients {
+		log.Printf("GetAllDownloads: checking client %s (ID=%d, type=%s)", clientConfig.Name, clientConfig.ID, clientConfig.Type)
 		client, err := New(&clientConfig)
 		if err != nil {
+			log.Printf("GetAllDownloads: failed to initialize client %s: %v", clientConfig.Name, err)
 			continue // Skip clients we can't initialize
 		}
 
 		downloads, err := client.GetDownloads()
 		if err != nil {
+			log.Printf("GetAllDownloads: failed to get downloads from %s: %v", clientConfig.Name, err)
 			continue // Skip clients we can't connect to
 		}
+
+		log.Printf("GetAllDownloads: got %d downloads from %s", len(downloads), clientConfig.Name)
 
 		// Add client info to each download
 		for i := range downloads {
@@ -110,6 +119,7 @@ func (m *Manager) GetAllDownloads() ([]Download, error) {
 		allDownloads = append(allDownloads, downloads...)
 	}
 
+	log.Printf("GetAllDownloads: returning %d total downloads", len(allDownloads))
 	return allDownloads, nil
 }
 

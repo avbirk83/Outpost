@@ -361,6 +361,7 @@ func (s *Server) handleIndexer(w http.ResponseWriter, r *http.Request) {
 		idx.Categories = req.Categories
 		idx.Priority = req.Priority
 		idx.Enabled = req.Enabled
+		idx.ContentTypes = req.ContentTypes
 
 		if err := s.db.UpdateIndexer(idx); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)

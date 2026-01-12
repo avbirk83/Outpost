@@ -176,7 +176,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/movies/", s.requireAuth(s.handleMovie))
 	s.mux.HandleFunc("/api/shows", s.requireAuth(s.handleShows))
 	s.mux.HandleFunc("/api/shows/", s.requireAuth(s.handleShow))
-	s.mux.HandleFunc("/api/episodes/", s.requireAdmin(s.handleEpisode))
+	s.mux.HandleFunc("/api/episodes/", s.requireAuth(s.handleEpisode))
 
 	// Music routes (authenticated)
 	s.mux.HandleFunc("/api/artists", s.requireAuth(s.handleArtists))
@@ -324,6 +324,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/discover/genres/movie", s.requireAuth(s.handleMovieGenres))
 	s.mux.HandleFunc("/api/discover/genres/tv", s.requireAuth(s.handleTVGenres))
 	s.mux.HandleFunc("/api/discover/movie/", s.requireAuth(s.handleDiscoverMovieDetail))
+	s.mux.HandleFunc("/api/discover/show-season/", s.requireAuth(s.handleDiscoverShowSeason)) // Must be before /show/
 	s.mux.HandleFunc("/api/discover/show/", s.requireAuth(s.handleDiscoverShowDetail))
 	s.mux.HandleFunc("/api/trailers/movie/", s.requireAuth(s.handleMovieTrailers))
 	s.mux.HandleFunc("/api/trailers/tv/", s.requireAuth(s.handleTVTrailers))
@@ -2914,6 +2915,49 @@ func (s *Server) handleDiscoverShowDetail(w http.ResponseWriter, r *http.Request
 	json.NewEncoder(w).Encode(response)
 }
 
+// handleDiscoverShowSeason returns season details with episodes from TMDB
+// Path: /api/discover/show-season/{showId}/{seasonNumber}
+func (s *Server) handleDiscoverShowSeason(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract showId and seasonNumber from path: /api/discover/show-season/{showId}/{seasonNumber}
+	pathParts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/discover/show-season/"), "/")
+	if len(pathParts) != 2 {
+		http.Error(w, "Invalid path - expected /api/discover/show-season/{showId}/{seasonNumber}", http.StatusBadRequest)
+		return
+	}
+
+	showID, err := strconv.ParseInt(pathParts[0], 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid show ID", http.StatusBadRequest)
+		return
+	}
+
+	seasonNumber, err := strconv.Atoi(pathParts[1])
+	if err != nil {
+		http.Error(w, "Invalid season number", http.StatusBadRequest)
+		return
+	}
+
+	tmdbClient := s.metadata.GetTMDBClient()
+	if tmdbClient == nil {
+		http.Error(w, "TMDB not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	seasonDetails, err := tmdbClient.GetSeasonDetails(showID, seasonNumber)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(seasonDetails)
+}
+
 func (s *Server) handleMovieTrailers(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -3658,6 +3702,7 @@ func (s *Server) handleRequests(w http.ResponseWriter, r *http.Request) {
 			BackdropPath     *string `json:"backdropPath"`
 			QualityProfileID *int64  `json:"qualityProfileId"`
 			QualityPresetID  *int64  `json:"qualityPresetId"`
+			Seasons          []int   `json:"seasons"` // Season numbers for TV shows
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -3667,6 +3712,14 @@ func (s *Server) handleRequests(w http.ResponseWriter, r *http.Request) {
 		if req.Type == "" || req.TmdbID == 0 || req.Title == "" {
 			http.Error(w, "type, tmdbId, and title are required", http.StatusBadRequest)
 			return
+		}
+
+		// Convert seasons array to JSON string for storage
+		var seasonsJSON *string
+		if len(req.Seasons) > 0 {
+			seasonsBytes, _ := json.Marshal(req.Seasons)
+			seasonsStr := string(seasonsBytes)
+			seasonsJSON = &seasonsStr
 		}
 
 		// Check if already requested (excludes denied)
@@ -3681,14 +3734,22 @@ func (s *Server) handleRequests(w http.ResponseWriter, r *http.Request) {
 		var request *database.Request
 
 		if deniedRequest != nil {
-			// Reactivate the denied request
+			// Reactivate the denied request with potentially new seasons
 			if err := s.db.UpdateRequestStatus(deniedRequest.ID, "requested", nil); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
+			// Update seasons if provided
+			if seasonsJSON != nil {
+				if err := s.db.UpdateRequestSeasons(deniedRequest.ID, seasonsJSON); err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+			}
+			deniedRequest.Seasons = seasonsJSON
 			request = deniedRequest
 			request.Status = "requested"
-			log.Printf("Request reactivated: id=%d type=%s tmdbId=%d title=%s", request.ID, request.Type, request.TmdbID, request.Title)
+			log.Printf("Request reactivated: id=%d type=%s tmdbId=%d title=%s seasons=%v", request.ID, request.Type, request.TmdbID, request.Title, req.Seasons)
 		} else {
 			// Create new request
 			request = &database.Request{
@@ -3702,13 +3763,14 @@ func (s *Server) handleRequests(w http.ResponseWriter, r *http.Request) {
 				BackdropPath:     req.BackdropPath,
 				QualityProfileID: req.QualityProfileID,
 				QualityPresetID:  req.QualityPresetID,
+				Seasons:          seasonsJSON,
 			}
 
 			if err := s.db.CreateRequest(request); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-			log.Printf("Request created: id=%d type=%s tmdbId=%d title=%s", request.ID, request.Type, request.TmdbID, request.Title)
+			log.Printf("Request created: id=%d type=%s tmdbId=%d title=%s seasons=%v", request.ID, request.Type, request.TmdbID, request.Title, req.Seasons)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -3820,6 +3882,11 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 
+				// Pass seasons from request (already in JSON format)
+				seasonsStr := ""
+				if request.Seasons != nil {
+					seasonsStr = *request.Seasons
+				}
 				wanted := &database.WantedItem{
 					Type:            request.Type,
 					TmdbID:          request.TmdbID,
@@ -3828,6 +3895,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 					PosterPath:      request.PosterPath,
 					QualityPresetID: presetID,
 					Monitored:       true,
+					Seasons:         seasonsStr,
 				}
 				if err := s.db.CreateWantedItem(wanted); err != nil {
 					log.Printf("Failed to create wanted item: %v", err)
@@ -5027,16 +5095,61 @@ func (s *Server) handleDownloadItems(w http.ResponseWriter, r *http.Request) {
 		downloads = []*download.TrackedDownload{}
 	}
 
-	// Enrich downloads with poster info from wanted items
+	// Enrich downloads with poster/TmdbID info
 	for _, dl := range downloads {
-		if dl.MediaID != nil {
-			wanted, _ := s.db.GetWantedByTmdb(dl.MediaType, *dl.MediaID)
-			if wanted != nil {
-				dl.TmdbID = wanted.TmdbID
-				if wanted.PosterPath != nil {
-					dl.PosterPath = *wanted.PosterPath
+		// Skip if already has TmdbID
+		if dl.TmdbID > 0 {
+			continue
+		}
+
+		// MediaID from grab_history is actually the TMDB ID (set from item.TmdbID during grab)
+		// Use it directly as TmdbID, then try to get poster from library media
+		if dl.MediaID != nil && *dl.MediaID > 0 {
+			dl.TmdbID = *dl.MediaID
+
+			// Try to get poster from library media by TMDB ID
+			if dl.MediaType == "movie" {
+				if movie, err := s.db.GetMovieByTmdb(*dl.MediaID); err == nil && movie != nil {
+					if movie.PosterPath != nil {
+						dl.PosterPath = *movie.PosterPath
+					}
+					if movie.Year > 0 {
+						dl.Year = movie.Year
+					}
 				}
-				dl.Year = wanted.Year
+			} else if dl.MediaType == "show" {
+				if show, err := s.db.GetShowByTmdb(*dl.MediaID); err == nil && show != nil {
+					if show.PosterPath != nil {
+						dl.PosterPath = *show.PosterPath
+					}
+					if show.Year > 0 {
+						dl.Year = show.Year
+					}
+				}
+			}
+
+			// If no poster from library, try wanted item
+			if dl.PosterPath == "" {
+				if wanted, err := s.db.GetWantedByTmdb(dl.MediaType, *dl.MediaID); err == nil && wanted != nil {
+					if wanted.PosterPath != nil {
+						dl.PosterPath = *wanted.PosterPath
+					}
+					if wanted.Year > 0 && dl.Year == 0 {
+						dl.Year = wanted.Year
+					}
+				}
+			}
+			continue
+		}
+
+		// Fallback: try to get info from request (using RequestID if available)
+		if dl.RequestID != nil {
+			if req, err := s.db.GetRequest(*dl.RequestID); err == nil && req != nil {
+				dl.TmdbID = req.TmdbID
+				if req.PosterPath != nil {
+					dl.PosterPath = *req.PosterPath
+				}
+				dl.Year = req.Year
 			}
 		}
 	}

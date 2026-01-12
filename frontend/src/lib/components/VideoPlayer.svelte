@@ -8,10 +8,12 @@
 		getSubtitleTrackUrl,
 		getChapters,
 		getSkipSegments,
+		getMediaSegments,
 		type SubtitleTrack,
 		type MediaInfo,
 		type Chapter,
-		type SkipSegments
+		type SkipSegments,
+		type MediaSegment
 	} from '$lib/api';
 	import { formatTime } from '$lib/utils';
 	import {
@@ -146,6 +148,9 @@
 	let showSkipCredits = $state(false);
 	let skipIntroTimeout: ReturnType<typeof setTimeout> | null = null;
 	let inCreditsRange = $state(false);
+	let autoSkipIntro = $state(false);
+	let autoSkipCredits = $state(false);
+	let hasAutoSkippedIntro = false; // Prevent multiple auto-skips
 
 	// Custom subtitle rendering
 	interface SubtitleCue {
@@ -178,6 +183,10 @@
 		if (savedTimeDisplay === 'true') {
 			showTimeRemaining = true;
 		}
+
+		// Load auto-skip preferences
+		autoSkipIntro = localStorage.getItem('outpost_auto_skip_intro') === 'true';
+		autoSkipCredits = localStorage.getItem('outpost_auto_skip_credits') === 'true';
 
 		// Load playback speed for episodes (per show) or reset for movies
 		if (mediaType === 'episode' && showId) {
@@ -213,9 +222,27 @@
 		}
 
 		// Load skip segments for episodes
-		if (mediaType === 'episode' && showId) {
+		console.log('VideoPlayer mediaType:', mediaType, 'mediaId:', mediaId);
+		if (mediaType === 'episode') {
 			try {
-				skipSegments = await getSkipSegments(showId);
+				// Try episode-level segments first (from chapter detection)
+				console.log('Fetching segments for episode:', mediaId);
+				const episodeSegments = await getMediaSegments(mediaId);
+				console.log('Got segments:', episodeSegments);
+				if (episodeSegments.length > 0) {
+					// Convert MediaSegment[] to SkipSegments format
+					skipSegments = {};
+					for (const seg of episodeSegments) {
+						if (seg.segmentType === 'intro') {
+							skipSegments.intro = { startTime: seg.startSeconds, endTime: seg.endSeconds };
+						} else if (seg.segmentType === 'credits') {
+							skipSegments.credits = { startTime: seg.startSeconds, endTime: seg.endSeconds };
+						}
+					}
+				} else if (showId) {
+					// Fall back to show-level segments
+					skipSegments = await getSkipSegments(showId);
+				}
 			} catch (e) {
 				// Ignore errors - skip segments are optional
 			}
@@ -586,6 +613,12 @@
 		if (skipSegments.intro) {
 			const inIntro = time >= skipSegments.intro.startTime && time < skipSegments.intro.endTime;
 			if (inIntro && !showSkipIntro) {
+				// Auto-skip if enabled and hasn't already skipped this intro
+				if (autoSkipIntro && !hasAutoSkippedIntro) {
+					hasAutoSkippedIntro = true;
+					skipIntro();
+					return;
+				}
 				showSkipIntro = true;
 				// Auto-hide after 5 seconds
 				if (skipIntroTimeout) clearTimeout(skipIntroTimeout);
@@ -609,8 +642,11 @@
 			if (inCreditsRange && !wasInCredits) {
 				// Entered credits range
 				if (nextEpisode && onNextEpisode) {
-					// Start next episode countdown
+					// Start next episode countdown (or auto-skip to it)
 					startNextEpisodeCountdown();
+				} else if (autoSkipCredits) {
+					// Auto-skip credits if enabled and no next episode
+					skipCredits();
 				} else {
 					// Show skip credits button
 					showSkipCredits = true;
@@ -1210,6 +1246,8 @@
 						open={showSettingsMenu}
 						{playbackSpeed}
 						{aspectRatio}
+						{autoSkipIntro}
+						{autoSkipCredits}
 						onToggle={() => { showSettingsMenu = !showSettingsMenu; showSubtitleMenu = false; showAudioMenu = false; }}
 						onSpeedChange={(s) => {
 							playbackSpeed = s;
@@ -1220,6 +1258,14 @@
 							}
 						}}
 						onAspectChange={(r) => aspectRatio = r}
+						onAutoSkipIntroChange={(enabled) => {
+							autoSkipIntro = enabled;
+							localStorage.setItem('outpost_auto_skip_intro', String(enabled));
+						}}
+						onAutoSkipCreditsChange={(enabled) => {
+							autoSkipCredits = enabled;
+							localStorage.setItem('outpost_auto_skip_credits', String(enabled));
+						}}
 					/>
 
 					<!-- Speed indicator badge -->

@@ -746,7 +746,7 @@
 						{/if}
 					</div>
 
-					<div class="overflow-y-auto max-h-[400px]">
+					<div class="notifications-list overflow-y-auto max-h-[400px]">
 						{#if loadingNotifications}
 							<div class="flex items-center justify-center py-8">
 								<div class="w-5 h-5 border-2 border-cream/30 border-t-cream rounded-full animate-spin"></div>
@@ -913,5 +913,22 @@
 	}
 	.search-results::-webkit-scrollbar {
 		display: none;
+	}
+	.notifications-list {
+		scrollbar-width: thin;
+		scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+	}
+	.notifications-list::-webkit-scrollbar {
+		width: 6px;
+	}
+	.notifications-list::-webkit-scrollbar-track {
+		background: transparent;
+	}
+	.notifications-list::-webkit-scrollbar-thumb {
+		background: rgba(255, 255, 255, 0.2);
+		border-radius: 3px;
+	}
+	.notifications-list::-webkit-scrollbar-thumb:hover {
+		background: rgba(255, 255, 255, 0.3);
 	}
 </style>

@@ -168,7 +168,7 @@ func (d *Database) GetSyncedIndexers() ([]Indexer, error) {
 			COALESCE(prowlarr_id, 0), synced_from_prowlarr, COALESCE(protocol, ''),
 			COALESCE(supports_movies, 1), COALESCE(supports_tv, 1), COALESCE(supports_music, 0),
 			COALESCE(supports_books, 0), COALESCE(supports_anime, 0), COALESCE(supports_imdb, 0),
-			COALESCE(supports_tmdb, 0), COALESCE(supports_tvdb, 0)
+			COALESCE(supports_tmdb, 0), COALESCE(supports_tvdb, 0), COALESCE(content_types, '')
 		FROM indexers WHERE synced_from_prowlarr = 1 ORDER BY priority DESC, name`)
 	if err != nil {
 		return nil, err
@@ -185,7 +185,7 @@ func (d *Database) GetSyncedIndexers() ([]Indexer, error) {
 			&prowlarrID, &syncedFromProwlarr, &i.Protocol,
 			&i.SupportsMovies, &i.SupportsTV, &i.SupportsMusic,
 			&i.SupportsBooks, &i.SupportsAnime, &i.SupportsIMDB,
-			&i.SupportsTMDB, &i.SupportsTVDB); err != nil {
+			&i.SupportsTMDB, &i.SupportsTVDB, &i.ContentTypes); err != nil {
 			return nil, err
 		}
 		if prowlarrID > 0 {
@@ -281,11 +281,11 @@ func (d *Database) GetIndexersByTags(tagIDs []int64, mediaType string) ([]Indexe
 	}
 
 	query := `
-		SELECT DISTINCT i.id, i.name, i.type, i.url, i.api_key, i.categories, i.priority, i.enabled,
+		SELECT DISTINCT i.id, i.name, i.type, i.url, i.api_key, COALESCE(i.categories, ''), i.priority, i.enabled,
 			COALESCE(i.prowlarr_id, 0), COALESCE(i.synced_from_prowlarr, 0), COALESCE(i.protocol, ''),
 			COALESCE(i.supports_movies, 1), COALESCE(i.supports_tv, 1), COALESCE(i.supports_music, 0),
 			COALESCE(i.supports_books, 0), COALESCE(i.supports_anime, 0), COALESCE(i.supports_imdb, 0),
-			COALESCE(i.supports_tmdb, 0), COALESCE(i.supports_tvdb, 0)
+			COALESCE(i.supports_tmdb, 0), COALESCE(i.supports_tvdb, 0), COALESCE(i.content_types, '')
 		FROM indexers i
 		INNER JOIN indexer_tag_map tm ON i.id = tm.indexer_id
 		WHERE i.enabled = 1 AND tm.tag_id IN (` + strings.Join(placeholders, ",") + `) ` + mediaFilter + `
@@ -307,7 +307,7 @@ func (d *Database) GetIndexersByTags(tagIDs []int64, mediaType string) ([]Indexe
 			&prowlarrID, &syncedFromProwlarr, &i.Protocol,
 			&i.SupportsMovies, &i.SupportsTV, &i.SupportsMusic,
 			&i.SupportsBooks, &i.SupportsAnime, &i.SupportsIMDB,
-			&i.SupportsTMDB, &i.SupportsTVDB); err != nil {
+			&i.SupportsTMDB, &i.SupportsTVDB, &i.ContentTypes); err != nil {
 			return nil, err
 		}
 		if prowlarrID > 0 {
@@ -516,7 +516,7 @@ func (d *Database) GetIndexersWithCategories(mediaType string) ([]Indexer, error
 			COALESCE(i.prowlarr_id, 0), COALESCE(i.synced_from_prowlarr, 0), COALESCE(i.protocol, ''),
 			COALESCE(i.supports_movies, 1), COALESCE(i.supports_tv, 1), COALESCE(i.supports_music, 0),
 			COALESCE(i.supports_books, 0), COALESCE(i.supports_anime, 0), COALESCE(i.supports_imdb, 0),
-			COALESCE(i.supports_tmdb, 0), COALESCE(i.supports_tvdb, 0)
+			COALESCE(i.supports_tmdb, 0), COALESCE(i.supports_tvdb, 0), COALESCE(i.content_types, '')
 		FROM indexers i
 		INNER JOIN indexer_categories c ON i.id = c.indexer_id
 		WHERE i.enabled = 1 AND (` + categoryFilter + `)
@@ -538,7 +538,7 @@ func (d *Database) GetIndexersWithCategories(mediaType string) ([]Indexer, error
 			&prowlarrID, &syncedFromProwlarr, &i.Protocol,
 			&i.SupportsMovies, &i.SupportsTV, &i.SupportsMusic,
 			&i.SupportsBooks, &i.SupportsAnime, &i.SupportsIMDB,
-			&i.SupportsTMDB, &i.SupportsTVDB); err != nil {
+			&i.SupportsTMDB, &i.SupportsTVDB, &i.ContentTypes); err != nil {
 			return nil, err
 		}
 		if prowlarrID > 0 {
@@ -571,7 +571,7 @@ func (d *Database) GetIndexersExcludingAnimeOnly(mediaType string) ([]Indexer, e
 			COALESCE(i.prowlarr_id, 0), COALESCE(i.synced_from_prowlarr, 0), COALESCE(i.protocol, ''),
 			COALESCE(i.supports_movies, 1), COALESCE(i.supports_tv, 1), COALESCE(i.supports_music, 0),
 			COALESCE(i.supports_books, 0), COALESCE(i.supports_anime, 0), COALESCE(i.supports_imdb, 0),
-			COALESCE(i.supports_tmdb, 0), COALESCE(i.supports_tvdb, 0)
+			COALESCE(i.supports_tmdb, 0), COALESCE(i.supports_tvdb, 0), COALESCE(i.content_types, '')
 		FROM indexers i
 		WHERE i.enabled = 1 AND ` + supportFilter + `
 		AND (
@@ -603,7 +603,7 @@ func (d *Database) GetIndexersExcludingAnimeOnly(mediaType string) ([]Indexer, e
 			&prowlarrID, &syncedFromProwlarr, &i.Protocol,
 			&i.SupportsMovies, &i.SupportsTV, &i.SupportsMusic,
 			&i.SupportsBooks, &i.SupportsAnime, &i.SupportsIMDB,
-			&i.SupportsTMDB, &i.SupportsTVDB); err != nil {
+			&i.SupportsTMDB, &i.SupportsTVDB, &i.ContentTypes); err != nil {
 			return nil, err
 		}
 		if prowlarrID > 0 {
